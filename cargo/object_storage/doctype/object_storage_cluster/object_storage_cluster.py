@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import typing
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -10,6 +12,9 @@ from frappe.model.document import Document
 from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema, Role
+
+if typing.TYPE_CHECKING:
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
 class ObjectStorageCluster(Document):
@@ -73,7 +78,7 @@ class ObjectStorageCluster(Document):
 		)
 
 	def atlas_client(self) -> AtlasClient:
-		settings = frappe.get_cached_doc("Cargo Settings")
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
 		return AtlasClient(
 			url=settings.atlas_url,
@@ -82,7 +87,7 @@ class ObjectStorageCluster(Document):
 		)
 
 	def central_client(self) -> CentralClient:
-		settings = frappe.get_cached_doc("Cargo Settings")
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
 		return CentralClient(url=settings.central_url, token=settings.get_password("central_token"))
 
@@ -94,7 +99,7 @@ class ObjectStorageCluster(Document):
 			frappe.throw(_(f"This cluster is already {self.status}."))
 
 		self.request_machines()
-		self.db_set({"status": "Pending", "error": None})
+		self.mark("Pending")
 
 	def request_machines(self) -> None:
 		"""Ask Atlas for the machines and record one `Machine` per VM id it returns.
@@ -108,7 +113,7 @@ class ObjectStorageCluster(Document):
 				base_image=self.base_image,
 			)
 		except Exception as exception:
-			self.db_set({"status": "Failed", "error": str(exception)})
+			self.mark("Failed", error=str(exception))
 			raise
 
 		for vm_id, role in zip(vm_ids, self.roles_for(len(vm_ids)), strict=False):
@@ -129,6 +134,12 @@ class ObjectStorageCluster(Document):
 		roles: list[Role] = [GATEWAY] * self.gateway_count + [STORAGE] * self.storage_count
 
 		return roles[:count]
+
+	def mark(self, status: str, error: str | None = None) -> None:
+		"""Persist a status change."""
+		self.status = status
+		self.error = error
+		self.save(ignore_permissions=True)
 
 	def machine_names(self, status: str | None = None) -> list[str]:
 		filters = {"reference_doctype": self.doctype, "reference_name": self.name}
@@ -161,10 +172,10 @@ class ObjectStorageCluster(Document):
 
 		failed = [state for state in states if state in ("Broken", "Terminated")]
 		if failed:
-			self.db_set({"status": "Failed", "error": f"{len(failed)} of {len(states)} machines failed"})
+			self.mark("Failed", error=f"{len(failed)} of {len(states)} machines failed")
 			return
 
-		self.db_set({"status": "Machines Ready", "error": None})
+		self.mark("Machines Ready")
 		self.mint_credentials()
 
 	def mint_credentials(self) -> None:
@@ -177,10 +188,11 @@ class ObjectStorageCluster(Document):
 				region=self.region, vm_ids=self.machine_names()
 			)
 		except Exception as exception:
-			self.db_set({"status": "Failed", "error": str(exception)})
+			self.mark("Failed", error=str(exception))
 			raise
 
-		self.db_set({**tokens, "status": "Credentials Minted", "error": None})
+		self.update(tokens)
+		self.mark("Credentials Minted")
 
 
 def sync_pending_machines() -> None:

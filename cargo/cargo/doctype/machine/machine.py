@@ -46,36 +46,33 @@ class Machine(Document):
 		``client`` is anything with ``get_vm(vm_id) -> dict``; untyped to keep this free of
 		service imports.
 		"""
+		self.last_synced_at = now_datetime()
+
 		try:
 			payload = client.get_vm(self.vm_id)
 		except Exception as exception:
-			self.db_set({"last_synced_at": now_datetime(), "error": str(exception)})
-			return self.status
+			return self.record(self.status, error=str(exception))
 
 		status = payload.get("status")
 		if status in DEAD_STATES:
-			self.db_set(
-				{
-					"status": "Terminated" if status == "Terminated" else "Broken",
-					"last_synced_at": now_datetime(),
-					"error": f"Atlas reported {status}",
-				}
+			return self.record(
+				"Terminated" if status == "Terminated" else "Broken",
+				error=f"Atlas reported {status}",
 			)
-			return self.status
 
 		# Running without an address is still booting, and cannot be configured yet.
 		if status != "Running" or not payload.get("ipv4_address"):
-			self.db_set({"last_synced_at": now_datetime(), "error": None})
-			return self.status
+			return self.record(self.status)
 
-		self.db_set(
-			{
-				"status": "Running",
-				"ipv4_address": payload["ipv4_address"],
-				"server": payload.get("server"),
-				"last_synced_at": now_datetime(),
-				"error": None,
-			}
-		)
+		self.ipv4_address = payload["ipv4_address"]
+		self.server = payload.get("server")
+
+		return self.record("Running")
+
+	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
+		"""Persist the state this sync found."""
+		self.status = status
+		self.error = error
+		self.save(ignore_permissions=True)
 
 		return self.status
