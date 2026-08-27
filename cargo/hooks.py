@@ -262,3 +262,12 @@ app_license = "mit"
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+
+scheduler_events = {
+	"cron": {
+		# Machines boot on their own clock; walk the pending ones to Running.
+		"*/2 * * * *": [
+			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.sync_pending_machines"
+		],
+	},
+}
