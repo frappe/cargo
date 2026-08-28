@@ -11,7 +11,6 @@
   "column_break_head",
   "status",
   "section_break_topology",
-  "gateway_count",
   "storage_count",
   "replication_factor",
   "column_break_placement",
@@ -66,13 +65,6 @@
    "fieldname": "section_break_topology",
    "fieldtype": "Section Break",
    "label": "Topology"
-  },
-  {
-   "default": "1",
-   "fieldname": "gateway_count",
-   "fieldtype": "Int",
-   "label": "Gateway Count",
-   "reqd": 1
   },
   {
    "default": "3",

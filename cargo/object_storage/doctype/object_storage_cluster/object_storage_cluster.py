@@ -11,7 +11,7 @@ from frappe.model.document import Document
 
 from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
-from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema, Role
+from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -37,7 +37,6 @@ class ObjectStorageCluster(Document):
 		cpu: DF.Int
 		disk_gb: DF.Int
 		error: DF.SmallText | None
-		gateway_count: DF.Int
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
 		ram_gb: DF.Int
@@ -60,12 +59,11 @@ class ObjectStorageCluster(Document):
 					f"of {self.replication_factor}."
 				)
 			)
-		if self.gateway_count < 1:
-			frappe.throw(_("A cluster needs at least one gateway."))
 
 	@property
 	def instance_count(self) -> int:
-		return self.gateway_count + self.storage_count
+		"""Storage nodes plus the one gateway."""
+		return self.storage_count + 1
 
 	def placement(self) -> PlacementGroupSchema:
 		"""The spread this cluster wants."""
@@ -102,10 +100,7 @@ class ObjectStorageCluster(Document):
 		self.mark("Pending")
 
 	def request_machines(self) -> None:
-		"""Ask Atlas for the machines and record one `Machine` per VM id it returns.
-
-		Atlas returns interchangeable machines, so roles are assigned in id order.
-		"""
+		"""Ask Atlas for the machines and record one `Machine` per VM id it returns."""
 		try:
 			vm_ids = self.atlas_client().create_vms(
 				title=f"{self.name} object storage",
@@ -116,7 +111,8 @@ class ObjectStorageCluster(Document):
 			self.mark("Failed", error=str(exception))
 			raise
 
-		for vm_id, role in zip(vm_ids, self.roles_for(len(vm_ids)), strict=False):
+		roles = [GATEWAY] + [STORAGE] * self.storage_count
+		for vm_id, role in zip(vm_ids, roles, strict=True):
 			frappe.get_doc(
 				{
 					"doctype": "Machine",
@@ -128,12 +124,6 @@ class ObjectStorageCluster(Document):
 					"status": "Pending",
 				}
 			).insert(ignore_permissions=True)
-
-	def roles_for(self, count: int) -> list[Role]:
-		"""Gateways first, then storage, capped at what Atlas delivered."""
-		roles: list[Role] = [GATEWAY] * self.gateway_count + [STORAGE] * self.storage_count
-
-		return roles[:count]
 
 	def mark(self, status: str, error: str | None = None) -> None:
 		"""Persist a status change."""

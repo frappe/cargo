@@ -8,8 +8,8 @@ frappe.ui.form.on("Object Storage Cluster", {
 		if (frm.doc.status === "Draft") {
 			frm.add_custom_button(__("Provision"), () => {
 				frappe.confirm(
-					__("Ask Atlas for {0} machines?", [
-						frm.doc.gateway_count + frm.doc.storage_count,
+					__("Ask Atlas for one gateway and {0} storage nodes?", [
+						frm.doc.storage_count,
 					]),
 					() =>
 						frm.call("provision").then(() => {
