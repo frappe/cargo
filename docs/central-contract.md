@@ -1,29 +1,32 @@
-# Central contract for Cargo
+# What Cargo needs from Central
 
-What Cargo needs from Central. **Draft — the Central side is not built yet.**
-`cargo/object_storage/central_client.py` is written against this.
+**Draft. The Central side isn't built yet.**
 
-Cargo asks Central for one thing: the secrets a cluster's machines boot with. Cargo never
-invents them, because Central is the side that later has to speak to the cluster.
+Cargo asks Central for one thing: the secrets a cluster's machines need to start up. Cargo
+never makes these up itself, because Central is the one that has to talk to the cluster
+afterwards. The code is `cargo/object_storage/central_client.py`.
 
-## Transport
+## How the calls work
 
-- `POST {central_url}/api/method/central.api.atlas.<fn>`, JSON in and out
-- Responses are unwrapped from Frappe's `{"message": ...}` envelope
-- `Authorization: Bearer <token>`
+```
+POST {central_url}/api/method/central.api.atlas.<name>
+Authorization: Bearer <token>
+```
 
-Central already signs RS256 tokens and publishes a JWKS (`central/sso.py`,
-`central/api/jwks.py`), so the same key material that authenticates Cargo to Atlas
-authenticates it here. Central verifies its own signature.
+JSON in, JSON out, unwrapped from Frappe's `{"message": ...}`.
 
-## `garage_tokens`
+Central already signs tokens and publishes its public keys (`central/sso.py`,
+`central/api/jwks.py`), so the same token that gets Cargo into Atlas works here. Central is
+just checking its own signature.
 
-| Field | Type | Notes |
-|---|---|---|
-| `region` | string | The cluster's region — its identity as far as Central is concerned |
-| `vm_ids` | string[] | The machines that will run it |
+## Asking for secrets — `garage_tokens`
 
-Returns all three, every time:
+| Send | What it is |
+|---|---|
+| `region` | Which cluster this is. Central identifies a cluster by its region |
+| `vm_ids` | The machines that will run it |
+
+Send back all three:
 
 ```json
 {
@@ -33,24 +36,30 @@ Returns all three, every time:
 }
 ```
 
-Cargo rejects a response missing any of them rather than booting a half-configured cluster.
+If any of them is missing, Cargo refuses the whole reply rather than starting a cluster
+that's half configured.
 
-**Must be idempotent per region.** Every node of a cluster boots with the same three
-secrets — that is what makes them peers. If a retry returned fresh values, a cluster would
-split into nodes that cannot authenticate to each other.
+**Answer the same thing every time for a region.** Every machine in a cluster starts with
+the identical three secrets — that's what lets them recognise each other as one cluster. If
+a retry got fresh values, you'd end up with machines that can't talk to each other, and it
+would look like a network problem rather than a secrets problem.
 
-> **Open:** Central has `garage_tokens` today, but it is HMAC-authenticated
-> (`verify_atlas_webhook`), takes a single `host`, and mints per host rather than per
-> region. It needs to move to bearer auth and key on region.
+Which secrets get asked for is the *service's* choice, not Central's — Cargo sends the list
+it wants. Object storage wants these three
+(`cargo/object_storage/credentials.py`). Print or email will want their own.
 
-## The credential split
+> **Not built yet.** Central has a `garage_tokens` endpoint already, but it's authenticated
+> with a shared secret, takes a single `host`, and makes secrets per host. It needs to move
+> to bearer tokens and work per region.
 
-Central holds the **scoped** token, Cargo holds the **unscoped** one.
+## Who holds which key
 
-Once a cluster is configured, Cargo mints Central a Garage admin token limited to the
-bucket and key endpoints it actually calls — `CreateBucket`, `AddBucketAlias`,
+Cargo keeps the powerful token. Central gets a limited one.
+
+Once a cluster is running, Cargo asks Garage for a second admin token that can only do the
+bucket and key operations Central actually performs — `CreateBucket`, `AddBucketAlias`,
 `GetBucketInfo`, `DeleteBucket`, `CreateKey`, `AllowBucketKey`, `DeleteKey`, `GetKeyInfo`.
-The cluster's own `admin_token` (scope `["*"]`) never leaves Cargo.
+The cluster's real admin token, which can do anything, never leaves Cargo.
 
-Verified against Garage v2.3.0: `CreateAdminToken` with a `scope` array returns 200, so
-this split is available today. Not yet implemented — it belongs to the configuration step.
+Checked against Garage v2.3.0: asking for a token with a limited `scope` works. Not wired up
+yet — it belongs with the configuration step.

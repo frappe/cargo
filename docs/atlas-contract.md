@@ -1,37 +1,47 @@
-# Atlas contract for Cargo
+# What Cargo needs from Atlas
 
-What Cargo needs from Atlas to provision service machines. **Draft — not agreed with the
-Atlas team.** `cargo/object_storage/atlas_client.py` is written against this, so a change
-on either side breaks provisioning until both move.
+**Draft. Not agreed with the Atlas team yet.**
 
-Cargo asks Atlas only for machines. Never for buckets, tenants, or services.
+Cargo asks Atlas for machines. That's all — never buckets, tenants, or services. The code
+that makes these calls is `cargo/object_storage/atlas_client.py`, so if this changes, that
+breaks.
 
-## Transport
+## How the calls work
 
-- `POST {atlas_url}/api/method/atlas.atlas.api.service.<fn>`, JSON in and out
-- Responses are unwrapped from Frappe's `{"message": ...}` envelope
-- Errors may arrive as **HTTP 200 with an `exc` / `_server_messages` payload**, so a status
-  check alone cannot tell success from failure
+Every call is a POST to:
 
-### Authentication
+```
+{atlas_url}/api/method/atlas.atlas.api.service.<name>
+```
 
-`Authorization: Bearer <token>` — minted and RS256-signed by Central, verified by Atlas
-against Central's JWKS at `{central_url}/api/method/central.api.jwks.get_jwks`. No shared
-secret, and revocation is Central rotating its signing key.
+JSON in, JSON out. The answer comes wrapped as `{"message": ...}` and Cargo unwraps it.
 
-> **Open:** Atlas authenticates service callers with `token <key>:<secret>` today. Bearer
-> is the agreed direction, not yet implemented on the Atlas side.
+**Watch out:** Frappe can return HTTP 200 with an error inside the body (`exc` or
+`_server_messages`). Checking the status code alone isn't enough, so Cargo checks both.
 
-## `create_bare_vms`
+### Logging in
 
-Creates a whole placement group in one call.
+```
+Authorization: Bearer <token>
+```
 
-| Field | Type | Notes |
-|---|---|---|
-| `title` | string | Human label for the group |
-| `base_image` | string | e.g. `ubuntu-22.04` |
-| `placement_group` | object | See below |
-| `ssh_public_key` | string | Stamped onto every machine; the private half never leaves Cargo |
+Central signs the token with its private key. Atlas checks it against Central's public keys
+at `{central_url}/api/method/central.api.jwks.get_jwks`. Nothing is shared between Cargo and
+Atlas, and Central can revoke everything by rotating its key.
+
+> **Not built yet.** Atlas currently uses `token <key>:<secret>` for service callers. We
+> agreed on bearer tokens, but nothing has changed on the Atlas side.
+
+## Making machines — `create_bare_vms`
+
+Cargo asks for a whole cluster in one call.
+
+| Send | What it is |
+|---|---|
+| `title` | A label for the group |
+| `base_image` | e.g. `ubuntu-22.04` |
+| `placement_group` | The machines wanted, below |
+| `ssh_public_key` | Put on every machine as root's key. Cargo keeps the private half |
 
 ```json
 {
@@ -45,42 +55,46 @@ Creates a whole placement group in one call.
 }
 ```
 
-One entry per role, since a gateway proxies and needs almost no disk while a storage node
-holds the data.
+One entry per role, because a gateway just passes traffic through and barely needs a disk,
+while a storage node holds all the data.
 
-Returns `{"vm_ids": ["...", "..."]}` — one id per instance, as soon as the request is
-accepted. The machines are still booting and have no address yet.
+Send back `{"vm_ids": [...]}` as soon as you accept the request. Don't wait for the machines
+to boot — Cargo polls for that.
 
-**Order matters:** ids must come back in the order the specs declare them, one per `count`.
-Cargo assigns roles positionally, so a reordered reply mislabels every machine.
+**Order matters.** Return the ids in the same order as `specs`, one per `count`. Cargo
+decides which machine is the gateway purely by position, so a shuffled list labels every
+machine wrong.
 
-> **Open:** this endpoint does not exist. Atlas creates one VM at a time
-> (`create_bare_vm`) with an optional `server` pin and no notion of a placement group.
+> **Not built yet.** Atlas makes one VM at a time (`create_bare_vm`) and has no idea what a
+> placement group is.
 >
-> Cargo needs the group honoured as a real constraint, and the request **failed** when it
-> cannot be satisfied rather than placed anyway. Garage's replication assumes independent
-> failure domains: three replicas in one rack survive a disk, not a rack. Approximating
-> this by pinning nodes to different servers spreads across hosts rather than racks, and
-> degrades silently when there are fewer servers than nodes.
+> Cargo needs the spread to actually happen, and needs the call to **fail** if it can't
+> rather than putting the machines anywhere. Garage keeps copies of data on separate
+> machines to survive a failure — but if all three copies land in the same rack, they die
+> together. Cargo can fake this today by pinning machines to different servers, which
+> spreads them across hosts rather than racks, and quietly stops working when there are
+> fewer servers than machines.
 
-## `get_virtual_machine`
+## Checking on a machine — `get_virtual_machine`
 
-`{"name": "<vm-id>"}` → the VM. Polled on a schedule until the machine is usable.
+Send `{"name": "<vm-id>"}`. Cargo calls this every 2 minutes until the machine is usable.
 
-| Field | Type | Notes |
-|---|---|---|
-| `name` | string | |
-| `status` | string | `Running` means booted; `Failed`/`Error`/`Terminated`/`Archived`/`Broken` are terminal |
-| `ipv4_address` | string | **Public and reachable** |
-| `server` | string | The host it landed on |
+| Send back | What it is |
+|---|---|
+| `name` | The id |
+| `status` | `Running` when booted. `Failed`, `Error`, `Terminated`, `Archived`, `Broken` mean it's never coming up |
+| `ipv4_address` | A public address that Cargo can SSH to |
+| `server` | Which host it ended up on |
 
-Cargo treats `Running` **without** an `ipv4_address` as still booting, not as ready.
+A machine that says `Running` but has no address is still starting up, and Cargo keeps
+waiting.
 
-> **Assumption Cargo is built on:** every service VM gets a public, reachable
-> `ipv4_address`. These are infrastructure machines, not tenant benches — no ProxyJump
-> through a hypervisor, no private network. If Atlas cannot guarantee this, Cargo's SSH
-> path changes.
+> **What Cargo assumes.** Every machine gets a public IPv4 address you can reach from the
+> internet. These are infrastructure machines, not customer benches — there's no jumping
+> through a hypervisor and no private network. If Atlas can't promise this, Cargo's whole
+> approach to reaching machines has to change.
 
-## `terminate_vm`
+## Throwing a machine away — `terminate_vm`
 
-`{"vm": "<vm-id>"}`. Must be idempotent — used in cleanup where the VM may already be gone.
+Send `{"vm": "<vm-id>"}`. Cargo calls this while cleaning up, so it must be safe to call on
+a machine that's already gone.

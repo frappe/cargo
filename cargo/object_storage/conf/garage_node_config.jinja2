@@ -1,16 +1,14 @@
-metadata_dir = "{{ metadata_dir }}"
-data_dir     = "{{ data_dir }}"
+metadata_dir = "{{ cluster.metadata_dir }}"
+data_dir     = "{{ cluster.data_dir }}"
 db_engine    = "lmdb"
 
-replication_factor = {{ replication_factor }}
+replication_factor = {{ cluster.replication_factor }}
 consistency_mode   = "consistent"
 
-rpc_bind_addr   = "{{ rpc_bind_addr }}:{{ rpc_port }}"
-rpc_public_addr = "{{ rpc_public_addr }}:{{ rpc_port }}"
+rpc_bind_addr   = "[::]:{{ cluster.rpc_port }}"
+rpc_public_addr = "{{ rpc_public_addr }}:{{ cluster.rpc_port }}"
 rpc_secret      = "{{ rpc_secret }}"
 
-{# Filled on a second pass: a node's id is generated at first start, so peers are #}
-{# unknowable until every node has run once. #}
 bootstrap_peers = [
 {%- for peer in bootstrap_peers %}
 	"{{ peer }}",
@@ -18,19 +16,19 @@ bootstrap_peers = [
 ]
 
 [s3_api]
-s3_region     = "{{ region }}"
-api_bind_addr = "{{ api_bind_addr }}:{{ s3_port }}"
-root_domain   = ".s3.{{ region }}.{{ base_domain }}"
+s3_region     = "{{ cluster.region }}"
+api_bind_addr = "[::]:{{ cluster.s3_port }}"
+root_domain   = ".s3.{{ cluster.region }}.{{ cluster.base_domain }}"
 
 [s3_web]
-bind_addr   = "{{ web_bind_addr }}:{{ web_port }}"
-root_domain = ".web.{{ region }}.{{ base_domain }}"
+bind_addr   = "[::]:{{ cluster.web_port }}"
+root_domain = ".web.{{ cluster.region }}.{{ cluster.base_domain }}"
 index       = "index.html"
 
 [k2v_api]
-api_bind_addr = "{{ api_bind_addr }}:{{ k2v_port }}"
+api_bind_addr = "[::]:{{ cluster.k2v_port }}"
 
 [admin]
-api_bind_addr = "{{ api_bind_addr }}:{{ admin_port }}"
+api_bind_addr = "[::]:{{ cluster.admin_port }}"
 admin_token   = "{{ admin_token }}"
 metrics_token = "{{ metrics_token }}"

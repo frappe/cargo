@@ -1,12 +1,11 @@
 #!/bin/bash
-# Install and start one Garage node. Re-runnable: every step overwrites or is a no-op.
 set -euo pipefail
 
-install -d -m 700 {{ metadata_dir }} {{ data_dir }}
+install -d -m 700 {{ cluster.metadata_dir }} {{ cluster.data_dir }}
 
-if [ ! -x {{ garage_binary }} ] || ! {{ garage_binary }} --version | grep -q '{{ garage_version }}'; then
+if ! {{ cluster.garage_binary }} --version 2>/dev/null | grep -q '{{ cluster.garage_version }}'; then
 	curl -fsSL -o /tmp/garage '{{ binary_url }}'
-	install -m 755 /tmp/garage {{ garage_binary }}
+	install -m 755 /tmp/garage {{ cluster.garage_binary }}
 	rm -f /tmp/garage
 fi
 
@@ -24,8 +23,7 @@ systemctl enable garage
 systemctl restart garage
 
 for _ in $(seq 1 30); do
-	if {{ garage_binary }} status >/dev/null 2>&1; then
-		{{ garage_binary }} node id -q
+	if {{ cluster.garage_binary }} status >/dev/null 2>&1; then
 		exit 0
 	fi
 	sleep 2
