@@ -9,7 +9,7 @@ afterwards. The code is `cargo/object_storage/central_client.py`.
 ## How the calls work
 
 ```
-POST {central_url}/api/method/central.api.atlas.<name>
+POST {central_url}/api/method/central.api.cargo.<name>
 Authorization: Bearer <token>
 ```
 
@@ -48,9 +48,12 @@ Which secrets get asked for is the *service's* choice, not Central's — Cargo s
 it wants. Object storage wants these three
 (`cargo/object_storage/credentials.py`). Print or email will want their own.
 
-> **Not built yet.** Central has a `garage_tokens` endpoint already, but it's authenticated
-> with a shared secret, takes a single `host`, and makes secrets per host. It needs to move
-> to bearer tokens and work per region.
+Built. `central/api/cargo.py` verifies the bearer token, and `mint_cluster_tokens(region)`
+stores the secrets on a `Service Backend` row for that region.
+
+That row starts inactive with no endpoint — Central knows the cluster's secrets before it
+knows where the cluster is. Cargo fills the endpoint in and activates it once the cluster is
+running, which is not built yet.
 
 ## Who holds which key
 

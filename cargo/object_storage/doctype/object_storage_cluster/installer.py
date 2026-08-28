@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import typing
 from functools import cached_property
+from typing import TypedDict
 
 import frappe
 from frappe import _
@@ -25,6 +26,23 @@ INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 SSH_TIMEOUT = 600
 
+#: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
+MachineName = str
+
+#: What Garage calls a node identifier: ``<node id>@<address>:<rpc port>``, exactly as
+#: ``garage node id`` prints it. Goes straight into `bootstrap_peers`.
+NodeIdentifier = str
+
+
+class MachineRow(TypedDict):
+	"""The `Machine` fields the installer reads."""
+
+	name: MachineName
+	vm_id: str
+	role: str
+	zone: str
+	ipv4_address: str
+
 
 class InstallError(RuntimeError):
 	"""A node failed to install or start."""
@@ -43,7 +61,7 @@ class ClusterSetup:
 			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
 
 	@cached_property
-	def machines(self) -> list[dict]:
+	def machines(self) -> list[MachineRow]:
 		return frappe.get_all(
 			"Machine",
 			filters={"reference_doctype": self.cluster.doctype, "reference_name": self.cluster.name},
@@ -55,24 +73,15 @@ class ClusterSetup:
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
 
-	def get_node_ids(self) -> dict[str, str]:
-		"""Each machine's ``<node id>@<address>:<rpc port>``. Only answers once the node has
-		started, since Garage generates the key on first launch."""
+	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
+		"""Only answers once a node has started, since Garage generates its key on first
+		launch."""
 		return {
 			machine["name"]: run_over_ssh(machine["ipv4_address"], "garage node id -q", self.ssh_key).strip()
 			for machine in self.machines
 		}
 
-	def bootstrap_peers(self, node_ids: dict[str, str]) -> dict[str, list[str]]:
-		"""Every other machine, never itself."""
-		return {
-			machine["name"]: [
-				node_ids[peer["name"]] for peer in self.machines if peer["name"] != machine["name"]
-			]
-			for machine in self.machines
-		}
-
-	def install_script(self, machine: dict, peers: list[str]) -> str:
+	def install_script(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return frappe.render_template(
 			INSTALL_TEMPLATE,
 			{
@@ -86,7 +95,7 @@ class ClusterSetup:
 			is_path=True,
 		)
 
-	def node_config(self, machine: dict, peers: list[str]) -> str:
+	def node_config(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return frappe.render_template(
 			CONFIG_TEMPLATE,
 			{
@@ -103,10 +112,24 @@ class ClusterSetup:
 			UNIT_TEMPLATE, {"garage_binary": self.cluster.garage_binary}, is_path=True
 		)
 
-	def bootstrap_machine(self, machine: dict, peers: list[str]) -> str:
+	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return run_over_ssh(machine["ipv4_address"], self.install_script(machine, peers), self.ssh_key)
 
-	def bootstrap_machines(self) -> dict[str, str]:
+	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
+		"""Give every node its role and apply as one version."""
+		commands = []
+		for machine in self.machines:
+			node_id = identifiers[machine["name"]].split("@")[0]
+			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
+			commands.append(
+				f"garage layout assign {shape} -z {machine['zone']} -t {machine['name']} {node_id}"
+			)
+
+		commands.append("garage layout apply --version 1")
+
+		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
+
+	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
 		"""Bring the cluster up.
 
 		Twice: peers are unknown until the nodes have run once.
@@ -117,26 +140,13 @@ class ClusterSetup:
 		for machine in self.machines:
 			self.bootstrap_machine(machine, peers=[])
 
-		node_ids = self.get_node_ids()
-		peers = self.bootstrap_peers(node_ids)
+		identifiers = self.node_identifiers()
 		for machine in self.machines:
-			self.bootstrap_machine(machine, peers[machine["name"]])
+			self.bootstrap_machine(machine, list(identifiers.values()))
 
-		return node_ids
+		self.assign_layout(identifiers)
 
-	def assign_layout(self, node_ids: dict[str, str]) -> str:
-		"""Give every node its role and apply as one version."""
-		commands = []
-		for machine in self.machines:
-			node_id = node_ids[machine["name"]].split("@")[0]
-			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
-			commands.append(
-				f"garage layout assign {shape} -z {machine['zone']} -t {machine['name']} {node_id}"
-			)
-
-		commands.append("garage layout apply --version 1")
-
-		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
+		return identifiers
 
 
 def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:

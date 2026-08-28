@@ -13,6 +13,7 @@ from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
+from cargo.object_storage.doctype.object_storage_cluster.installer import ClusterSetup
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -197,6 +198,19 @@ class ObjectStorageCluster(Document):
 
 		self.update(tokens)
 		self.mark("Credentials Minted")
+
+	def setup_cluster(self) -> None:
+		"""Trigger the actual installation of service on the machines."""
+		if self.status != "Credentials Minted":
+			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
+
+		setup = ClusterSetup(self)
+		frappe.enqueue(
+			setup.bootstrap_machines,
+			queue="long",
+			timeout=3600,
+			job_name=f"Install {self.name}",
+		)
 
 
 def sync_pending_machines() -> None:

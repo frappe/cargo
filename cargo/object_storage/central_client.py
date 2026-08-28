@@ -34,7 +34,7 @@ class CentralClient:
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:
 			response = requests.post(
-				f"{self.url}/api/method/central.api.atlas.{endpoint}",
+				f"{self.url}/api/method/central.api.cargo.{endpoint}",
 				headers=self.headers,
 				json=data,
 				timeout=self.timeout,
