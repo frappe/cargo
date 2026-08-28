@@ -86,8 +86,8 @@
    "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nFailed",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure."
+   "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nActive\nFailed",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure.\nActive \u2014 Garage is running and Central can use it."
   },
   {
    "fieldname": "error",

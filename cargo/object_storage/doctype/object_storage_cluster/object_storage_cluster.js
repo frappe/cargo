@@ -23,10 +23,23 @@ frappe.ui.form.on("Object Storage Cluster", {
 			}).addClass("btn-primary");
 		}
 
+		if (frm.doc.status === "Credentials Minted") {
+			frm.add_custom_button(__("Set Up Cluster"), () =>
+				frm.call("setup_cluster").then(() => {
+					frappe.show_alert({
+						message: __("Installing Garage. This takes a few minutes."),
+						indicator: "green",
+					});
+					frm.reload_doc();
+				})
+			).addClass("btn-primary");
+		}
+
 		const headlines = {
 			Pending: __("Waiting for machines to boot."),
 			"Machines Ready": __("Machines are up. Asking Central for the cluster's secrets."),
-			"Credentials Minted": __("Secrets issued. Configuration is not implemented yet."),
+			"Credentials Minted": __("Secrets issued. Ready to install Garage."),
+			Active: __("Garage is running and Central can use this cluster."),
 		};
 		if (headlines[frm.doc.status]) frm.dashboard.set_headline(headlines[frm.doc.status]);
 	},

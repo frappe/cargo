@@ -31,6 +31,14 @@ class CentralClient:
 
 		return {name: tokens[name] for name in required}
 
+	def register_cluster(self, region: str, base_url: str, s3_endpoint: str) -> dict[str, Any]:
+		"""Tell Central the cluster is running and where to reach it. Until this lands
+		Central holds the secrets but cannot create a bucket."""
+		return self.call(
+			"register_cluster",
+			data={"region": region, "base_url": base_url, "s3_endpoint": s3_endpoint},
+		)
+
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:
 			response = requests.post(

@@ -54,7 +54,7 @@ class ObjectStorageCluster(Document):
 		s3_port: DF.Int
 		ssh_private_key: DF.Password
 		ssh_public_key: DF.SmallText
-		status: DF.Literal["Draft", "Pending", "Machines Ready", "Credentials Minted", "Failed"]
+		status: DF.Literal["Draft", "Pending", "Machines Ready", "Credentials Minted", "Active", "Failed"]
 		storage_count: DF.Int
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
@@ -199,18 +199,53 @@ class ObjectStorageCluster(Document):
 		self.update(tokens)
 		self.mark("Credentials Minted")
 
+	@frappe.whitelist()
 	def setup_cluster(self) -> None:
 		"""Trigger the actual installation of service on the machines."""
 		if self.status != "Credentials Minted":
 			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
 
-		setup = ClusterSetup(self)
-		frappe.enqueue(
-			setup.bootstrap_machines,
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"run_setup",
 			queue="long",
 			timeout=3600,
 			job_name=f"Install {self.name}",
 		)
+
+	def run_setup(self) -> None:
+		"""Install Garage everywhere, lay the cluster out, then hand Central its endpoints."""
+		setup = ClusterSetup(self)
+		try:
+			setup.assign_layout(setup.bootstrap_machines())
+			self.register_with_central()
+		except Exception as exception:
+			self.mark("Failed", error=str(exception))
+			raise
+
+		self.mark("Active")
+
+	def register_with_central(self) -> None:
+		"""Central holds this cluster's secrets already but has nowhere to send them until
+		it knows the gateway's address."""
+		gateway = self.gateway_address()
+		self.central_client().register_cluster(
+			region=self.region,
+			base_url=f"http://{gateway}:{self.admin_port}",
+			s3_endpoint=f"http://{gateway}:{self.s3_port}",
+		)
+
+	def gateway_address(self) -> str:
+		address = frappe.db.get_value(
+			"Machine",
+			{"reference_doctype": self.doctype, "reference_name": self.name, "role": GATEWAY},
+			"ipv4_address",
+		)
+		if not address:
+			frappe.throw(_("This cluster has no gateway to reach it at."))
+
+		return address
 
 
 def sync_pending_machines() -> None:
