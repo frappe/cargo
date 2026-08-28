@@ -25,10 +25,8 @@ class NodeSpec:
 
 @dataclass
 class PlacementGroupSchema:
-	"""How a cluster's machines should be spread.
-
-	Declared, not enforced: Atlas has no placement API. See `docs/atlas-contract.md`.
-	"""
+	"""How a cluster's machines should be spread. Declared, not enforced -- Atlas has no
+	placement API."""
 
 	strategy: str
 	topology_key: str
@@ -40,7 +38,7 @@ class PlacementGroupSchema:
 		return sum(spec.count for spec in self.specs)
 
 	def roles(self) -> list[Role]:
-		"""One role per machine, in the order the specs are declared."""
+		"""One role per machine, in spec order."""
 		return [spec.role for spec in self.specs for _ in range(spec.count)]
 
 	def asdict(self) -> dict[str, Any]:

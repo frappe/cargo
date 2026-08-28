@@ -19,11 +19,7 @@ if typing.TYPE_CHECKING:
 
 
 class ObjectStorageCluster(Document):
-	"""One Garage cluster: the machines it needs, and the secrets they run on.
-
-	Ask Atlas for machines, wait for them to boot, ask Central for the secrets. Configuring
-	the machines is not implemented yet.
-	"""
+	"""One Garage cluster: the machines it needs, and the secrets they run on."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -77,11 +73,9 @@ class ObjectStorageCluster(Document):
 
 	@property
 	def instance_count(self) -> int:
-		"""Storage nodes plus the one gateway."""
 		return self.storage_count + 1
 
 	def placement(self) -> PlacementGroupSchema:
-		"""The spread this cluster wants."""
 		return PlacementGroupSchema(
 			strategy=self.strategy,
 			topology_key=self.topology_key,
@@ -116,8 +110,7 @@ class ObjectStorageCluster(Document):
 
 	@frappe.whitelist()
 	def provision(self) -> None:
-		"""Ask Atlas for the machines. Atlas answers with ids without waiting for boots, so
-		this runs inline; the waiting is what gets scheduled."""
+		"""Ask Atlas for the machines. Fast: ids come back without waiting for boots."""
 		if self.status != "Draft":
 			frappe.throw(_(f"This cluster is already {self.status}."))
 
@@ -125,7 +118,7 @@ class ObjectStorageCluster(Document):
 		self.mark("Pending")
 
 	def request_machines(self) -> None:
-		"""Ask Atlas for the machines and record one `Machine` per VM id it returns."""
+		"""Record one `Machine` per VM id Atlas returns."""
 		placement = self.placement()
 		try:
 			vm_ids = self.atlas_client().create_vms(
@@ -151,7 +144,6 @@ class ObjectStorageCluster(Document):
 			).insert(ignore_permissions=True)
 
 	def mark(self, status: str, error: str | None = None) -> None:
-		"""Persist a status change."""
 		self.status = status
 		self.error = error
 		self.save(ignore_permissions=True)
@@ -173,10 +165,7 @@ class ObjectStorageCluster(Document):
 		self.refresh_machine_states()
 
 	def refresh_machine_states(self) -> None:
-		"""Move the cluster on once its machines have settled.
-
-		Ready only when every machine is Running: a partly up cluster cannot be configured.
-		"""
+		"""Move the cluster on once its machines have settled."""
 		states = frappe.get_all(
 			"Machine",
 			filters={"reference_doctype": self.doctype, "reference_name": self.name},

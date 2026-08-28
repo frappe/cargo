@@ -14,10 +14,7 @@ DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 
 
 class Machine(Document):
-	"""One VM Atlas created, for whichever service asked for it.
-
-	Knows no service: `role` is free text, and the Atlas client is passed in.
-	"""
+	"""One VM Atlas created, for whichever service asked for it."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -40,11 +37,8 @@ class Machine(Document):
 	# end: auto-generated types
 
 	def sync(self, client: Any) -> MachineStatus:
-		"""Record this machine's state from Atlas.
-
-		``client`` is anything with ``get_vm(vm_id) -> dict``; untyped to keep this free of
-		service imports.
-		"""
+		"""Record this machine's state from Atlas. ``client`` is anything with
+		``get_vm(vm_id) -> dict``."""
 		self.last_synced_at = now_datetime()
 
 		try:
@@ -68,7 +62,6 @@ class Machine(Document):
 		return self.record("Running")
 
 	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
-		"""Persist the state this sync found."""
 		self.status = status
 		self.error = error
 		self.save(ignore_permissions=True)

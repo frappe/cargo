@@ -60,11 +60,8 @@ class AtlasClient:
 		*,
 		base_image: str = "ubuntu-22.04",
 	) -> list[str]:
-		"""Ask for a placement group's machines and return their VM ids.
-
-		Returns as soon as Atlas accepts the request; the machines are still booting and
-		have no address yet.
-		"""
+		"""Ask for a placement group's machines and return their VM ids. They are still
+		booting and have no address yet."""
 		created = self.call(
 			"create_bare_vms",
 			title=title,
