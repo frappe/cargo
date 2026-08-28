@@ -38,13 +38,21 @@ Creates a whole placement group in one call.
   "strategy": "partition",
   "topology_key": "rack",
   "partition_count": 2,
-  "instance_count": 4,
-  "spec": { "cpu": 2, "ram_gb": 4, "disk_gb": 100 }
+  "specs": [
+    { "role": "gateway", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 20 },
+    { "role": "storage", "count": 3, "cpu": 2, "ram_gb": 4, "disk_gb": 500 }
+  ]
 }
 ```
 
+One entry per role, since a gateway proxies and needs almost no disk while a storage node
+holds the data.
+
 Returns `{"vm_ids": ["...", "..."]}` — one id per instance, as soon as the request is
 accepted. The machines are still booting and have no address yet.
+
+**Order matters:** ids must come back in the order the specs declare them, one per `count`.
+Cargo assigns roles positionally, so a reordered reply mislabels every machine.
 
 > **Open:** this endpoint does not exist. Atlas creates one VM at a time
 > (`create_bare_vm`) with an optional `server` pin and no notion of a placement group.

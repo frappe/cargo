@@ -10,7 +10,6 @@ from frappe.utils import now_datetime
 
 MachineStatus = Literal["Pending", "Running", "Broken", "Terminated"]
 
-# Atlas's statuses, not Cargo's.
 DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 
 
@@ -60,7 +59,6 @@ class Machine(Document):
 				error=f"Atlas reported {status}",
 			)
 
-		# Running without an address is still booting, and cannot be configured yet.
 		if status != "Running" or not payload.get("ipv4_address"):
 			return self.record(self.status)
 

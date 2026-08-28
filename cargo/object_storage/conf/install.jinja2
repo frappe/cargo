@@ -1,0 +1,36 @@
+#!/bin/bash
+# Install and start one Garage node. Re-runnable: every step overwrites or is a no-op.
+set -euo pipefail
+
+install -d -m 700 {{ metadata_dir }} {{ data_dir }}
+
+if [ ! -x {{ garage_binary }} ] || ! {{ garage_binary }} --version | grep -q '{{ garage_version }}'; then
+	curl -fsSL -o /tmp/garage '{{ binary_url }}'
+	install -m 755 /tmp/garage {{ garage_binary }}
+	rm -f /tmp/garage
+fi
+
+cat > /etc/garage.toml <<'GARAGE_TOML'
+{{ node_config }}
+GARAGE_TOML
+chmod 600 /etc/garage.toml
+
+cat > /etc/systemd/system/garage.service <<'GARAGE_UNIT'
+{{ systemd_unit }}
+GARAGE_UNIT
+
+systemctl daemon-reload
+systemctl enable garage
+systemctl restart garage
+
+for _ in $(seq 1 30); do
+	if {{ garage_binary }} status >/dev/null 2>&1; then
+		{{ garage_binary }} node id -q
+		exit 0
+	fi
+	sleep 2
+done
+
+echo "garage did not come up within 60s" >&2
+systemctl status garage --no-pager --lines 30 >&2
+exit 1

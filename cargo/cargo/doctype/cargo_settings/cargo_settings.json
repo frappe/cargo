@@ -10,9 +10,7 @@
   "atlas_token",
   "column_break_central",
   "central_url",
-  "central_token",
-  "section_break_ssh",
-  "ssh_public_key"
+  "central_token"
  ],
  "fields": [
   {
@@ -52,17 +50,6 @@
    "fieldtype": "Password",
    "label": "Central Token",
    "reqd": 1
-  },
-  {
-   "fieldname": "section_break_ssh",
-   "fieldtype": "Section Break",
-   "label": "Machine Access"
-  },
-  {
-   "description": "Stamped onto every machine at create time, so Cargo can reach it later.",
-   "fieldname": "ssh_public_key",
-   "fieldtype": "Small Text",
-   "label": "SSH Public Key"
   }
  ],
  "grid_page_length": 50,

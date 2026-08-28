@@ -1,0 +1,16 @@
+[Unit]
+Description=Object Storage Garage Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment="RUST_LOG=garage=info" "RUST_BACKTRACE=1"
+ExecStart={{ garage_binary }} server
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+ProtectHome=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

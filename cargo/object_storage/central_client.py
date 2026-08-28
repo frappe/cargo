@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import requests
-
-REQUIRED_TOKENS = ("rpc_secret", "admin_token", "metrics_token")
 
 
 class CentralError(RuntimeError):
@@ -19,19 +18,22 @@ class CentralClient:
 		self.timeout = timeout
 		self.headers = {"Authorization": f"Bearer {token}"}
 
-	def get_required_credentials(self, region: str, vm_ids: list[str]) -> dict[str, str]:
+	def get_required_credentials(
+		self, region: str, vm_ids: list[str], required: Sequence[str]
+	) -> dict[str, str]:
 		"""The secrets every node of one cluster boots with.
 
-		Idempotent per region, so a retry cannot split a cluster into nodes that fail to
-		recognise each other.
+		``required`` is the asking service's own list, so this client is not tied to any one
+		of them. Idempotent per region, so a retry cannot split a cluster into nodes that
+		fail to recognise each other.
 		"""
 		tokens = self.call("garage_tokens", data={"region": region, "vm_ids": vm_ids})
 
-		missing = [name for name in REQUIRED_TOKENS if not tokens.get(name)]
+		missing = [name for name in required if not tokens.get(name)]
 		if missing:
 			raise CentralError(f"Central returned no {', '.join(missing)}")
 
-		return {name: tokens[name] for name in REQUIRED_TOKENS}
+		return {name: tokens[name] for name in required}
 
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:

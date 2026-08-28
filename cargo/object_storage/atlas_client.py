@@ -48,7 +48,6 @@ class AtlasClient:
 		if not response.ok:
 			raise AtlasError(response.status_code, _error_message(payload, response.text))
 
-		# Frappe reports an exception at HTTP 200, so the status alone proves nothing.
 		if isinstance(payload, dict) and (payload.get("exc") or payload.get("exception")):
 			raise AtlasError(response.status_code, _error_message(payload, response.text))
 

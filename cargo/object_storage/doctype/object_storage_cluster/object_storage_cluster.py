@@ -12,6 +12,7 @@ from frappe.model.document import Document
 from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
+from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -32,21 +33,35 @@ class ObjectStorageCluster(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		admin_port: DF.Int
 		admin_token: DF.Password | None
+		base_domain: DF.Data
 		base_image: DF.Data
 		cpu: DF.Int
+		data_dir: DF.Data
 		disk_gb: DF.Int
 		error: DF.SmallText | None
+		garage_arch: DF.Data
+		garage_binary: DF.Data
+		garage_version: DF.Data
+		gateway_disk_gb: DF.Int
+		k2v_port: DF.Int
+		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
 		ram_gb: DF.Int
 		region: DF.Data
 		replication_factor: DF.Int
+		rpc_port: DF.Int
 		rpc_secret: DF.Password | None
+		s3_port: DF.Int
+		ssh_private_key: DF.Password
+		ssh_public_key: DF.SmallText
 		status: DF.Literal["Draft", "Pending", "Machines Ready", "Credentials Minted", "Failed"]
 		storage_count: DF.Int
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
+		web_port: DF.Int
 	# end: auto-generated types
 
 	def validate(self) -> None:
@@ -71,8 +86,18 @@ class ObjectStorageCluster(Document):
 			strategy=self.strategy,
 			topology_key=self.topology_key,
 			partition_count=self.partition_count,
-			instance_count=self.instance_count,
-			spec=NodeSpec(cpu=self.cpu, ram_gb=self.ram_gb, disk_gb=self.disk_gb),
+			specs=[
+				NodeSpec(
+					role=GATEWAY, count=1, cpu=self.cpu, ram_gb=self.ram_gb, disk_gb=self.gateway_disk_gb
+				),
+				NodeSpec(
+					role=STORAGE,
+					count=self.storage_count,
+					cpu=self.cpu,
+					ram_gb=self.ram_gb,
+					disk_gb=self.disk_gb,
+				),
+			],
 		)
 
 	def atlas_client(self) -> AtlasClient:
@@ -81,7 +106,7 @@ class ObjectStorageCluster(Document):
 		return AtlasClient(
 			url=settings.atlas_url,
 			token=settings.get_password("atlas_token"),
-			public_key=settings.ssh_public_key,
+			public_key=self.ssh_public_key,
 		)
 
 	def central_client(self) -> CentralClient:
@@ -101,18 +126,18 @@ class ObjectStorageCluster(Document):
 
 	def request_machines(self) -> None:
 		"""Ask Atlas for the machines and record one `Machine` per VM id it returns."""
+		placement = self.placement()
 		try:
 			vm_ids = self.atlas_client().create_vms(
 				title=f"{self.name} object storage",
-				placement=self.placement(),
+				placement=placement,
 				base_image=self.base_image,
 			)
 		except Exception as exception:
 			self.mark("Failed", error=str(exception))
 			raise
 
-		roles = [GATEWAY] + [STORAGE] * self.storage_count
-		for vm_id, role in zip(vm_ids, roles, strict=True):
+		for vm_id, role in zip(vm_ids, placement.roles(), strict=True):
 			frappe.get_doc(
 				{
 					"doctype": "Machine",
@@ -175,7 +200,7 @@ class ObjectStorageCluster(Document):
 
 		try:
 			tokens = self.central_client().get_required_credentials(
-				region=self.region, vm_ids=self.machine_names()
+				region=self.region, vm_ids=self.machine_names(), required=REQUIRED_CREDENTIALS
 			)
 		except Exception as exception:
 			self.mark("Failed", error=str(exception))

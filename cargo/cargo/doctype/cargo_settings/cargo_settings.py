@@ -5,10 +5,7 @@ from frappe.model.document import Document
 
 
 class CargoSettings(Document):
-	"""Where Cargo reaches Atlas and Central, and the key it stamps onto machines.
-
-	Shared by every service, so owned by none of them.
-	"""
+	"""Where Cargo reaches Atlas and Central. Shared by every service."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -22,5 +19,4 @@ class CargoSettings(Document):
 		atlas_url: DF.Data
 		central_token: DF.Password
 		central_url: DF.Data
-		ssh_public_key: DF.SmallText | None
 	# end: auto-generated types

@@ -6,10 +6,12 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "section_break_cluster",
   "region",
   "base_image",
-  "column_break_head",
+  "column_break_cluster",
   "status",
+  "error",
   "section_break_topology",
   "storage_count",
   "replication_factor",
@@ -22,136 +24,326 @@
   "ram_gb",
   "column_break_spec",
   "disk_gb",
+  "gateway_disk_gb",
+  "section_break_access",
+  "ssh_public_key",
+  "column_break_access",
+  "ssh_private_key",
+  "section_break_garage",
+  "garage_version",
+  "garage_arch",
+  "garage_binary",
+  "column_break_garage",
+  "metadata_dir",
+  "data_dir",
+  "base_domain",
+  "section_break_ports",
+  "s3_port",
+  "rpc_port",
+  "web_port",
+  "column_break_ports",
+  "admin_port",
+  "k2v_port",
   "section_break_secrets",
   "rpc_secret",
   "admin_token",
   "column_break_secrets",
-  "metrics_token",
-  "section_break_error",
-  "error"
+  "metrics_token"
  ],
  "fields": [
   {
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Region",
-   "reqd": 1,
-   "set_only_once": 1
+   "fieldname": "section_break_cluster",
+   "fieldtype": "Section Break",
+   "label": "Cluster"
   },
   {
-   "default": "ubuntu-22.04",
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Atlas region to build in. Also Garage's S3 region name."
+  },
+  {
    "fieldname": "base_image",
    "fieldtype": "Data",
    "label": "Base Image",
-   "reqd": 1
+   "reqd": 1,
+   "default": "ubuntu-22.04",
+   "description": "Image every machine boots from."
   },
   {
-   "fieldname": "column_break_head",
+   "fieldname": "column_break_cluster",
    "fieldtype": "Column Break"
   },
   {
-   "default": "Draft",
-   "description": "Pending means Atlas has the machines and they are being polled; Machines Ready means every VM booted; Credentials Minted means Central issued the cluster's secrets.",
    "fieldname": "status",
    "fieldtype": "Select",
+   "label": "Status",
+   "read_only": 1,
+   "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Status",
    "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nFailed",
-   "read_only": 1
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure."
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1,
+   "depends_on": "error",
+   "description": "Why the last step failed."
   },
   {
    "fieldname": "section_break_topology",
    "fieldtype": "Section Break",
-   "label": "Topology"
+   "label": "Topology",
+   "description": "Machine count and how safely data is spread."
   },
   {
-   "default": "3",
    "fieldname": "storage_count",
    "fieldtype": "Int",
-   "label": "Storage Count",
-   "reqd": 1
+   "label": "Storage Nodes",
+   "reqd": 1,
+   "default": "3",
+   "in_list_view": 1,
+   "description": "Machines holding data. A gateway is always added, so 3 here builds 4 machines."
   },
   {
-   "default": "3",
-   "description": "Every object is kept on this many storage nodes.",
    "fieldname": "replication_factor",
    "fieldtype": "Int",
    "label": "Replication Factor",
-   "reqd": 1
+   "reqd": 1,
+   "default": "3",
+   "description": "Copies of each object. Can't exceed the storage node count."
   },
   {
    "fieldname": "column_break_placement",
    "fieldtype": "Column Break"
   },
   {
-   "default": "partition",
    "fieldname": "strategy",
    "fieldtype": "Select",
-   "label": "Strategy",
-   "options": "partition\nspread\npack"
+   "label": "Placement Strategy",
+   "default": "partition",
+   "options": "partition\nspread\npack",
+   "description": "Not enforced by Atlas yet."
   },
   {
-   "default": "rack",
    "fieldname": "topology_key",
    "fieldtype": "Data",
-   "label": "Topology Key"
+   "label": "Topology Key",
+   "default": "rack",
+   "description": "Failure domain to spread across, e.g. rack or host."
   },
   {
-   "default": "2",
    "fieldname": "partition_count",
    "fieldtype": "Int",
-   "label": "Partition Count"
+   "label": "Partition Count",
+   "default": "2",
+   "description": "How many domains to use."
   },
   {
    "fieldname": "section_break_spec",
    "fieldtype": "Section Break",
-   "label": "Machine Spec"
+   "label": "Machine Spec",
+   "description": "vCPU and RAM apply to every machine; disks differ by role."
   },
   {
-   "default": "2",
    "fieldname": "cpu",
    "fieldtype": "Int",
    "label": "vCPUs",
-   "reqd": 1
+   "reqd": 1,
+   "default": "2",
+   "description": "Per machine."
   },
   {
-   "default": "4",
    "fieldname": "ram_gb",
    "fieldtype": "Int",
    "label": "RAM (GB)",
-   "reqd": 1
+   "reqd": 1,
+   "default": "4",
+   "description": "Per machine. Grows with object count."
   },
   {
    "fieldname": "column_break_spec",
    "fieldtype": "Column Break"
   },
   {
-   "default": "100",
    "fieldname": "disk_gb",
    "fieldtype": "Int",
-   "label": "Disk (GB)",
-   "reqd": 1
+   "label": "Storage Disk (GB)",
+   "reqd": 1,
+   "default": "100",
+   "description": "Per storage node."
   },
   {
-   "depends_on": "eval:doc.status == 'Credentials Minted'",
+   "fieldname": "gateway_disk_gb",
+   "fieldtype": "Int",
+   "label": "Gateway Disk (GB)",
+   "reqd": 1,
+   "default": "20",
+   "description": "Gateways proxy only, so they need very little."
+  },
+  {
+   "fieldname": "section_break_access",
+   "fieldtype": "Section Break",
+   "label": "Machine Access",
+   "description": "Key pair stamped onto this cluster's machines. Both halves needed."
+  },
+  {
+   "fieldname": "ssh_public_key",
+   "fieldtype": "Small Text",
+   "label": "SSH Public Key",
+   "reqd": 1,
+   "set_only_once": 1,
+   "description": "Installed as root's key on every machine. Can't change once they exist."
+  },
+  {
+   "fieldname": "column_break_access",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ssh_private_key",
+   "fieldtype": "Password",
+   "label": "SSH Private Key",
+   "reqd": 1,
+   "description": "The matching half, used to reach the machines."
+  },
+  {
+   "fieldname": "section_break_garage",
+   "fieldtype": "Section Break",
+   "label": "Garage",
+   "collapsible": 1,
+   "description": "Defaults suit a normal cluster."
+  },
+  {
+   "fieldname": "garage_version",
+   "fieldtype": "Data",
+   "label": "Version",
+   "reqd": 1,
+   "default": "v2.3.0",
+   "description": "Release tag, e.g. v2.3.0."
+  },
+  {
+   "fieldname": "garage_arch",
+   "fieldtype": "Data",
+   "label": "Architecture",
+   "reqd": 1,
+   "default": "x86_64-unknown-linux-musl",
+   "description": "Must match the base image."
+  },
+  {
+   "fieldname": "garage_binary",
+   "fieldtype": "Data",
+   "label": "Binary Path",
+   "reqd": 1,
+   "default": "/usr/local/bin/garage",
+   "description": "Where the binary lands on each machine."
+  },
+  {
+   "fieldname": "column_break_garage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "metadata_dir",
+   "fieldtype": "Data",
+   "label": "Metadata Directory",
+   "reqd": 1,
+   "default": "/var/lib/garage/meta",
+   "description": "Node identity and index. Small, but losing it loses the node."
+  },
+  {
+   "fieldname": "data_dir",
+   "fieldtype": "Data",
+   "label": "Data Directory",
+   "reqd": 1,
+   "default": "/var/lib/garage/data",
+   "description": "Where objects live. Put the big disk here."
+  },
+  {
+   "fieldname": "base_domain",
+   "fieldtype": "Data",
+   "label": "Base Domain",
+   "reqd": 1,
+   "default": "frappe.cloud",
+   "description": "Buckets served at <bucket>.s3.<region>.<this>. Needs wildcard DNS."
+  },
+  {
+   "fieldname": "section_break_ports",
+   "fieldtype": "Section Break",
+   "label": "Ports",
+   "collapsible": 1,
+   "description": "Garage's defaults. Every machine binds all five."
+  },
+  {
+   "fieldname": "s3_port",
+   "fieldtype": "Int",
+   "label": "S3 API",
+   "reqd": 1,
+   "default": "3900",
+   "description": "Where benches and Central speak S3."
+  },
+  {
+   "fieldname": "rpc_port",
+   "fieldtype": "Int",
+   "label": "RPC",
+   "reqd": 1,
+   "default": "3901",
+   "description": "Node to node. Must be open between machines."
+  },
+  {
+   "fieldname": "web_port",
+   "fieldtype": "Int",
+   "label": "Web",
+   "reqd": 1,
+   "default": "3902",
+   "description": "Serves buckets as static sites."
+  },
+  {
+   "fieldname": "column_break_ports",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "admin_port",
+   "fieldtype": "Int",
+   "label": "Admin API",
+   "reqd": 1,
+   "default": "3903",
+   "description": "Layout and bucket management. Keep it private."
+  },
+  {
+   "fieldname": "k2v_port",
+   "fieldtype": "Int",
+   "label": "K2V API",
+   "reqd": 1,
+   "default": "3904",
+   "description": "Garage's key-value API. Unused."
+  },
+  {
    "fieldname": "section_break_secrets",
    "fieldtype": "Section Break",
-   "label": "Cluster Secrets"
+   "label": "Cluster Secrets",
+   "collapsible": 1,
+   "depends_on": "eval:doc.status == 'Credentials Minted'",
+   "description": "Issued by Central. Identical on every node \u2014 that is what makes them one cluster."
   },
   {
-   "description": "Issued by Central. Every node of this cluster boots with the same three.",
    "fieldname": "rpc_secret",
    "fieldtype": "Password",
    "label": "RPC Secret",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Authenticates nodes to each other."
   },
   {
    "fieldname": "admin_token",
    "fieldtype": "Password",
    "label": "Admin Token",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Full admin access. Central gets a narrower one."
   },
   {
    "fieldname": "column_break_secrets",
@@ -161,18 +353,8 @@
    "fieldname": "metrics_token",
    "fieldtype": "Password",
    "label": "Metrics Token",
-   "read_only": 1
-  },
-  {
-   "depends_on": "error",
-   "fieldname": "section_break_error",
-   "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "error",
-   "fieldtype": "Small Text",
-   "label": "Error",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Read-only Prometheus access."
   }
  ],
  "grid_page_length": 50,

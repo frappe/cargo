@@ -11,8 +11,10 @@ STORAGE: Role = "storage"
 
 @dataclass
 class NodeSpec:
-	"""The shape of one machine."""
+	"""What one role's machines look like, and how many of them."""
 
+	role: Role
+	count: int
 	cpu: int
 	ram_gb: int
 	disk_gb: int
@@ -25,15 +27,21 @@ class NodeSpec:
 class PlacementGroupSchema:
 	"""How a cluster's machines should be spread.
 
-	Declared, not enforced: Atlas has no placement API, so this is carried whole until it
-	does. See `docs/atlas-contract.md`.
+	Declared, not enforced: Atlas has no placement API. See `docs/atlas-contract.md`.
 	"""
 
 	strategy: str
 	topology_key: str
 	partition_count: int
-	instance_count: int
-	spec: NodeSpec
+	specs: list[NodeSpec]
+
+	@property
+	def instance_count(self) -> int:
+		return sum(spec.count for spec in self.specs)
+
+	def roles(self) -> list[Role]:
+		"""One role per machine, in the order the specs are declared."""
+		return [spec.role for spec in self.specs for _ in range(spec.count)]
 
 	def asdict(self) -> dict[str, Any]:
 		return asdict(self)
