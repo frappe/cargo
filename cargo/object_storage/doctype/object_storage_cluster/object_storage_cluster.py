@@ -12,7 +12,7 @@ from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
-from cargo.object_storage.doctype.object_storage_cluster.installer import ClusterSetup
+from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -210,9 +210,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def install_garage(self) -> dict[str, str]:
-		"""Install Garage on every machine
-
-		A retry starts a fresh workflow, so each task guards against work it already did."""
+		"""Install Garage on every machine"""
 		setup = ClusterSetup(self)
 		if setup.is_installed():
 			return setup.node_identifiers()

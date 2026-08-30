@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -24,6 +25,9 @@ UNIT_TEMPLATE = "object_storage/conf/garage_service.jinja2"
 INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
+
+#: Fails when the service is down; otherwise counts the peers its config carries.
+PEER_COUNT = "systemctl is-active --quiet garage && grep -c '\"[0-9a-f]\\{64\\}@' /etc/garage.toml"
 SSH_TIMEOUT = 600
 
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
@@ -35,7 +39,7 @@ NodeIdentifier = str
 
 
 class MachineRow(TypedDict):
-	"""The `Machine` fields the installer reads."""
+	"""The `Machine` fields setup reads."""
 
 	name: MachineName
 	vm_id: str
@@ -44,8 +48,8 @@ class MachineRow(TypedDict):
 	ipv4_address: str
 
 
-class InstallError(RuntimeError):
-	"""A node failed to install or start."""
+class SetupError(RuntimeError):
+	"""A node failed to set up."""
 
 
 class ClusterSetup:
@@ -74,28 +78,35 @@ class ClusterSetup:
 		return self.cluster.get_password("ssh_private_key")
 
 	def is_installed(self) -> bool:
-		"""True when every machine already runs the wanted Garage version."""
-		wanted = self.cluster.garage_version
+		"""Every machine runs Garage with the whole cluster in its config."""
+		expected = len(self.machines)
 		for machine in self.machines:
 			try:
-				installed = run_over_ssh(
-					machine["ipv4_address"], f"{self.cluster.garage_binary} --version", self.ssh_key
-				)
-			except InstallError:
+				peers = run_over_ssh(machine["ipv4_address"], PEER_COUNT, self.ssh_key)
+			except SetupError:
 				return False
-			if wanted not in installed:
+			if int(peers.strip() or 0) < expected:
 				return False
 
 		return True
 
-	def is_laid_out(self) -> bool:
-		"""True when the cluster already has an applied layout."""
+	def layout_version(self) -> int:
+		"""The applied layout version. Zero means nothing has been applied yet.
+
+		Read from the version line, not from the roles: `garage layout show` also prints
+		staged changes, so a staged-but-unapplied layout would otherwise look finished.
+		"""
 		try:
 			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage layout show", self.ssh_key)
-		except InstallError:
-			return False
+		except SetupError:
+			return 0
 
-		return "No nodes currently have a role" not in shown
+		found = re.search(r"Current cluster layout version:\s*(\d+)", shown)
+
+		return int(found.group(1)) if found else 0
+
+	def is_laid_out(self) -> bool:
+		return self.layout_version() > 0
 
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage generates its key on first
@@ -139,20 +150,6 @@ class ClusterSetup:
 	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return run_over_ssh(machine["ipv4_address"], self.install_script(machine, peers), self.ssh_key)
 
-	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
-		"""Give every node its role and apply as one version."""
-		commands = []
-		for machine in self.machines:
-			node_id = identifiers[machine["name"]].split("@")[0]
-			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
-			commands.append(
-				f"garage layout assign {shape} -z {machine['zone']} -t {machine['name']} {node_id}"
-			)
-
-		commands.append("garage layout apply --version 1")
-
-		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
-
 	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
 		"""Bring the cluster up.
 
@@ -169,6 +166,20 @@ class ClusterSetup:
 			self.bootstrap_machine(machine, list(identifiers.values()))
 
 		return identifiers
+
+	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
+		"""Give every node its role and apply as one version, run on a single machine and gossips around."""
+		commands = []
+		for machine in self.machines:
+			node_id = identifiers[machine["name"]].split("@")[0]
+			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
+			commands.append(
+				f"garage layout assign {node_id} {shape} -z {machine['zone']} -t {machine['name']}"
+			)
+
+		commands.append(f"garage layout apply --version {self.layout_version() + 1}")
+
+		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
 
 def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:
@@ -208,6 +219,6 @@ def run_over_ssh(address: str, script: str, key: str | None, user: str = "root")
 		os.unlink(path)
 
 	if result.returncode != 0:
-		raise InstallError(f"{address}: {(result.stderr or result.stdout).strip()[:500]}")
+		raise SetupError(f"{address}: {(result.stderr or result.stdout).strip()[:500]}")
 
 	return result.stdout
