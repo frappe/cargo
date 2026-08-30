@@ -73,6 +73,30 @@ class ClusterSetup:
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
 
+	def is_installed(self) -> bool:
+		"""True when every machine already runs the wanted Garage version."""
+		wanted = self.cluster.garage_version
+		for machine in self.machines:
+			try:
+				installed = run_over_ssh(
+					machine["ipv4_address"], f"{self.cluster.garage_binary} --version", self.ssh_key
+				)
+			except InstallError:
+				return False
+			if wanted not in installed:
+				return False
+
+		return True
+
+	def is_laid_out(self) -> bool:
+		"""True when the cluster already has an applied layout."""
+		try:
+			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage layout show", self.ssh_key)
+		except InstallError:
+			return False
+
+		return "No nodes currently have a role" not in shown
+
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage generates its key on first
 		launch."""
@@ -143,8 +167,6 @@ class ClusterSetup:
 		identifiers = self.node_identifiers()
 		for machine in self.machines:
 			self.bootstrap_machine(machine, list(identifiers.values()))
-
-		self.assign_layout(identifiers)
 
 		return identifiers
 

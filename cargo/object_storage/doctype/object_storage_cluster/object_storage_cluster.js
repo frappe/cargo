@@ -23,8 +23,9 @@ frappe.ui.form.on("Object Storage Cluster", {
 			}).addClass("btn-primary");
 		}
 
-		if (frm.doc.status === "Credentials Minted") {
-			frm.add_custom_button(__("Set Up Cluster"), () =>
+		if (["Credentials Minted", "Failed"].includes(frm.doc.status)) {
+			const label = frm.doc.status === "Failed" ? __("Retry Setup") : __("Set Up Cluster");
+			frm.add_custom_button(label, () =>
 				frm.call("setup_cluster").then(() => {
 					frappe.show_alert({
 						message: __("Installing Garage. This takes a few minutes."),

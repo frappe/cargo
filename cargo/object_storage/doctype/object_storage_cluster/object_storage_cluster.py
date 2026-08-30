@@ -7,19 +7,20 @@ import typing
 
 import frappe
 from frappe import _
-from frappe.model.document import Document
 
 from cargo.object_storage.atlas_client import AtlasClient
 from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.installer import ClusterSetup
+from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
+from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
-class ObjectStorageCluster(Document):
+class ObjectStorageCluster(WorkflowBuilder):
 	"""One Garage cluster: the machines it needs, and the secrets they run on."""
 
 	# begin: auto-generated types
@@ -200,41 +201,74 @@ class ObjectStorageCluster(Document):
 		self.mark("Credentials Minted")
 
 	@frappe.whitelist()
-	def setup_cluster(self) -> None:
-		"""Trigger the actual installation of service on the machines."""
-		if self.status != "Credentials Minted":
+	def setup_cluster(self) -> str:
+		"""Install Garage on the machines and hand Central its endpoints."""
+		if self.status not in ("Credentials Minted", "Failed"):
 			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
 
-		frappe.enqueue_doc(
-			self.doctype,
-			self.name,
-			"run_setup",
-			queue="long",
-			timeout=3600,
-			job_name=f"Install {self.name}",
-		)
+		return self.run_setup.run_as_workflow()
 
-	def run_setup(self) -> None:
-		"""Install Garage everywhere, lay the cluster out, then hand Central its endpoints."""
+	@task
+	def install_garage(self) -> dict[str, str]:
+		"""Install Garage on every machine
+
+		A retry starts a fresh workflow, so each task guards against work it already did."""
 		setup = ClusterSetup(self)
-		try:
-			setup.assign_layout(setup.bootstrap_machines())
-			self.register_with_central()
-		except Exception as exception:
-			self.mark("Failed", error=str(exception))
-			raise
+		if setup.is_installed():
+			return setup.node_identifiers()
 
-		self.mark("Active")
+		return setup.bootstrap_machines()
 
+	@task
+	def assign_layout(self, identifiers: dict[str, str]) -> None:
+		"""Assign the cluster layout
+
+		Applying twice is refused by Garage: the version must be exactly one higher than
+		the last."""
+		setup = ClusterSetup(self)
+		if not setup.is_laid_out():
+			setup.assign_layout(identifiers)
+
+	@task
 	def register_with_central(self) -> None:
-		"""Central holds this cluster's secrets already but has nowhere to send them until
-		it knows the gateway's address."""
+		"""Register the cluster with Central
+
+		Central holds this cluster's secrets already but has nowhere to send them until it
+		knows the gateway's address."""
 		gateway = self.gateway_address()
 		self.central_client().register_cluster(
 			region=self.region,
 			base_url=f"http://{gateway}:{self.admin_port}",
 			s3_endpoint=f"http://{gateway}:{self.s3_port}",
 		)
+
+	@flow
+	def run_setup(self) -> None:
+		"""Bring the cluster up"""
+		identifiers = self.install_garage()
+		self.assign_layout(identifiers)
+		self.register_with_central()
+
+	def on_workflow_success(self, workflow) -> None:
+		self.mark("Active")
+
+	def on_workflow_failure(self, workflow) -> None:
+		"""Record which step failed, and tell Central its secrets went nowhere."""
+		failed = next((row for row in workflow.steps if row.status == "Failure"), None)
+		step = failed.step_title if failed else "Setup"
+		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
+		error = (reason or workflow.workflow_traceback or "").strip().splitlines()[-1:] or ["failed"]
+
+		self.mark("Failed", error=f"{step}: {error[0]}"[:400])
+		self.report_failure(step, error[0])
+
+	def report_failure(self, step: str, error: str) -> None:
+		"""Best effort: the cluster is already Failed, and Central being unreachable must
+		not replace that with a less useful error."""
+		try:
+			self.central_client().report_failure(self.region, step, error)
+		except Exception:
+			frappe.log_error(title=f"Could not report {self.name} failure to Central")
 
 	def gateway_address(self) -> str:
 		address = frappe.db.get_value(
@@ -257,4 +291,5 @@ def sync_pending_machines() -> None:
 		distinct=True,
 	)
 	for name in waiting:
-		frappe.get_doc("Object Storage Cluster", name).sync_machines()
+		object_stroage_cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
+		object_stroage_cluster.sync_machines()
