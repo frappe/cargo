@@ -13,14 +13,14 @@ from cargo.object_storage.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
+from cargo.service_cluster import ServiceCluster
+from cargo.workflow_engine.doctype.press_workflow.decorators import task
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
-class ObjectStorageCluster(WorkflowBuilder):
+class ObjectStorageCluster(ServiceCluster):
 	"""One Garage cluster: the machines it needs, and the secrets they run on."""
 
 	# begin: auto-generated types
@@ -145,11 +145,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 				}
 			).insert(ignore_permissions=True)
 
-	def mark(self, status: str, error: str | None = None) -> None:
-		self.status = status
-		self.error = error
-		self.save(ignore_permissions=True)
-
 	def machine_names(self, status: str | None = None) -> list[str]:
 		filters = {"reference_doctype": self.doctype, "reference_name": self.name}
 		if status:
@@ -200,67 +195,33 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.update(tokens)
 		self.mark("Credentials Minted")
 
-	@frappe.whitelist()
-	def setup_cluster(self) -> str:
-		"""Install Garage on the machines and hand Central its endpoints."""
-		if self.status not in ("Credentials Minted", "Failed", "Active"):
-			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
-
-		return self.run_setup.run_as_workflow()
+	@task
+	def terraform(self) -> None:
+		"""Install Garage and lay the cluster out"""
+		setup = ClusterSetup(self)
+		setup.assign_layout(setup.bootstrap_machines())
 
 	@task
-	def install_garage(self) -> dict[str, str]:
-		"""Install Garage on every machine"""
-		return ClusterSetup(self).bootstrap_machines()
+	def verify(self) -> None:
+		"""Check every node joined and the layout applied"""
+		setup = ClusterSetup(self)
+		healthy = setup.healthy_nodes()
+		missing = {machine["name"] for machine in setup.machines} - healthy
+		if missing:
+			frappe.throw(_(f"These nodes have not joined the cluster: {', '.join(sorted(missing))}"))
+
+		if not setup.layout_version():
+			frappe.throw(_("The cluster has no applied layout."))
 
 	@task
-	def assign_layout(self, identifiers: dict[str, str]) -> None:
-		"""Assign the cluster layout
-
-		Applied every run. Garage takes an unchanged layout happily; it just becomes the
-		next version."""
-		ClusterSetup(self).assign_layout(identifiers)
-
-	@task
-	def register_with_central(self) -> None:
-		"""Register the cluster with Central
-
-		Central holds this cluster's secrets already but has nowhere to send them until it
-		knows the gateway's address."""
+	def register(self) -> None:
+		"""Register the cluster with Central"""
 		gateway = self.gateway_address()
 		self.central_client().register_cluster(
 			region=self.region,
 			base_url=f"http://{gateway}:{self.admin_port}",
 			s3_endpoint=f"http://{gateway}:{self.s3_port}",
 		)
-
-	@flow
-	def run_setup(self) -> None:
-		"""Bring the cluster up"""
-		identifiers = self.install_garage()
-		self.assign_layout(identifiers)
-		self.register_with_central()
-
-	def on_workflow_success(self, workflow) -> None:
-		self.mark("Active")
-
-	def on_workflow_failure(self, workflow) -> None:
-		"""Record which step failed, and tell Central its secrets went nowhere."""
-		failed = next((row for row in workflow.steps if row.status == "Failure"), None)
-		step = failed.step_title if failed else "Setup"
-		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
-		error = (reason or workflow.workflow_traceback or "").strip().splitlines()[-1:] or ["failed"]
-
-		self.mark("Failed", error=f"{step}: {error[0]}"[:400])
-		self.report_failure(step, error[0])
-
-	def report_failure(self, step: str, error: str) -> None:
-		"""Best effort: the cluster is already Failed, and Central being unreachable must
-		not replace that with a less useful error."""
-		try:
-			self.central_client().report_failure(self.region, step, error)
-		except Exception:
-			frappe.log_error(title=f"Could not report {self.name} failure to Central")
 
 	def gateway_address(self) -> str:
 		address = frappe.db.get_value(

@@ -90,6 +90,18 @@ class ClusterSetup:
 
 		return int(found.group(1)) if found else 0
 
+	def healthy_nodes(self) -> set[str]:
+		"""The machine names Garage reports as healthy, read from the node tags setup
+		assigned."""
+		try:
+			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage status", self.ssh_key)
+		except SetupError:
+			return set()
+
+		section = shown.split("FAILED NODES")[0]
+
+		return {machine["name"] for machine in self.machines if f"[{machine['name']}]" in section}
+
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage generates its key on first
 		launch."""

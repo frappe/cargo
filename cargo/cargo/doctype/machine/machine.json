@@ -50,13 +50,14 @@
    "reqd": 1
   },
   {
-   "description": "What this machine does in its cluster. Each service names its own roles.",
+   "description": "What this machine does in its deployment. Each service names its own roles, and a single-machine service still names one -- it becomes part of the machine's name.",
    "fieldname": "role",
    "fieldtype": "Data",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Role",
-   "read_only": 1
+   "read_only": 1,
+   "reqd": 1
   },
   {
    "fieldname": "zone",
