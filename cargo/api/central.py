@@ -85,7 +85,6 @@ def issue_api_credentials() -> None:
 		user.api_key = frappe.generate_hash(length=15)
 	user.api_secret = api_secret
 	user.save(ignore_permissions=True)
-	frappe.db.commit()
 
 	print(f"api_key={user.api_key}")
 	print(f"api_secret={api_secret}")
