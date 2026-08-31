@@ -29,7 +29,7 @@ class Machine(Document):
 		last_synced_at: DF.Datetime | None
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
-		role: DF.Data | None
+		role: DF.Data
 		server: DF.Data | None
 		status: DF.Literal["Pending", "Running", "Broken", "Terminated"]
 		vm_id: DF.Data
