@@ -10,8 +10,15 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
+ENROLMENT_VARS = ("CENTRAL_URL", "ATLAS_URL", "CENTRAL_BOOTSTRAPPING_TOKEN")
+
+
 def after_install() -> None:
-	"""Enrol this host with Central, using the bootstrapping token setup.sh passed in."""
+	"""Enrol this host with Central, using the bootstrapping token setup.sh passed in.
+	Skip CI in this case since the environment variables are not set there."""
+	if not any(os.getenv(name) for name in ENROLMENT_VARS):
+		return
+
 	record_bootstrapping_token()
 	request_control_credentials()
 
