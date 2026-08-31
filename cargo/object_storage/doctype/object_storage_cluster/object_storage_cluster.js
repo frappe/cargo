@@ -23,17 +23,26 @@ frappe.ui.form.on("Object Storage Cluster", {
 			}).addClass("btn-primary");
 		}
 
-		if (["Credentials Minted", "Failed"].includes(frm.doc.status)) {
-			const label = frm.doc.status === "Failed" ? __("Retry Setup") : __("Set Up Cluster");
-			frm.add_custom_button(label, () =>
-				frm.call("setup_cluster").then(() => {
-					frappe.show_alert({
-						message: __("Installing Garage. This takes a few minutes."),
-						indicator: "green",
-					});
-					frm.reload_doc();
-				})
-			).addClass("btn-primary");
+		if (["Credentials Minted", "Failed", "Active"].includes(frm.doc.status)) {
+			const first = frm.doc.status === "Credentials Minted";
+			frm.add_custom_button(first ? __("Set Up Cluster") : __("Run Setup Again"), () => {
+				const warning = __(
+					"Setup runs from scratch every time: every node's config is rewritten and Garage is restarted, and the cluster gets a new layout version. Expect brief downtime while nodes come back."
+				);
+				frappe.confirm(
+					first
+						? __("Install Garage on {0} machines?", [frm.doc.storage_count + 1])
+						: warning,
+					() =>
+						frm.call("setup_cluster").then(() => {
+							frappe.show_alert({
+								message: __("Setting up. This takes a few minutes."),
+								indicator: "green",
+							});
+							frm.reload_doc();
+						})
+				);
+			}).addClass(first ? "btn-primary" : "");
 		}
 
 		const headlines = {

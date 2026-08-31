@@ -203,7 +203,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	@frappe.whitelist()
 	def setup_cluster(self) -> str:
 		"""Install Garage on the machines and hand Central its endpoints."""
-		if self.status not in ("Credentials Minted", "Failed"):
+		if self.status not in ("Credentials Minted", "Failed", "Active"):
 			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
 
 		return self.run_setup.run_as_workflow()
@@ -211,21 +211,15 @@ class ObjectStorageCluster(WorkflowBuilder):
 	@task
 	def install_garage(self) -> dict[str, str]:
 		"""Install Garage on every machine"""
-		setup = ClusterSetup(self)
-		if setup.is_installed():
-			return setup.node_identifiers()
-
-		return setup.bootstrap_machines()
+		return ClusterSetup(self).bootstrap_machines()
 
 	@task
 	def assign_layout(self, identifiers: dict[str, str]) -> None:
 		"""Assign the cluster layout
 
-		Applying twice is refused by Garage: the version must be exactly one higher than
-		the last."""
-		setup = ClusterSetup(self)
-		if not setup.is_laid_out():
-			setup.assign_layout(identifiers)
+		Applied every run. Garage takes an unchanged layout happily; it just becomes the
+		next version."""
+		ClusterSetup(self).assign_layout(identifiers)
 
 	@task
 	def register_with_central(self) -> None:

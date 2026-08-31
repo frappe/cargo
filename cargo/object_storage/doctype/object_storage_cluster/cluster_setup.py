@@ -26,8 +26,6 @@ INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 
-#: Fails when the service is down; otherwise counts the peers its config carries.
-PEER_COUNT = "systemctl is-active --quiet garage && grep -c '\"[0-9a-f]\\{64\\}@' /etc/garage.toml"
 SSH_TIMEOUT = 600
 
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
@@ -77,19 +75,6 @@ class ClusterSetup:
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
 
-	def is_installed(self) -> bool:
-		"""Every machine runs Garage with the whole cluster in its config."""
-		expected = len(self.machines)
-		for machine in self.machines:
-			try:
-				peers = run_over_ssh(machine["ipv4_address"], PEER_COUNT, self.ssh_key)
-			except SetupError:
-				return False
-			if int(peers.strip() or 0) < expected:
-				return False
-
-		return True
-
 	def layout_version(self) -> int:
 		"""The applied layout version. Zero means nothing has been applied yet.
 
@@ -104,9 +89,6 @@ class ClusterSetup:
 		found = re.search(r"Current cluster layout version:\s*(\d+)", shown)
 
 		return int(found.group(1)) if found else 0
-
-	def is_laid_out(self) -> bool:
-		return self.layout_version() > 0
 
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage generates its key on first
