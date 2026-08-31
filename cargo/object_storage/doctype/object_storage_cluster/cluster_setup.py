@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ UNIT_TEMPLATE = "object_storage/conf/garage_service.jinja2"
 INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
+
 SSH_TIMEOUT = 600
 
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
@@ -35,7 +37,7 @@ NodeIdentifier = str
 
 
 class MachineRow(TypedDict):
-	"""The `Machine` fields the installer reads."""
+	"""The `Machine` fields setup reads."""
 
 	name: MachineName
 	vm_id: str
@@ -44,8 +46,8 @@ class MachineRow(TypedDict):
 	ipv4_address: str
 
 
-class InstallError(RuntimeError):
-	"""A node failed to install or start."""
+class SetupError(RuntimeError):
+	"""A node failed to set up."""
 
 
 class ClusterSetup:
@@ -72,6 +74,21 @@ class ClusterSetup:
 	@cached_property
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
+
+	def layout_version(self) -> int:
+		"""The applied layout version. Zero means nothing has been applied yet.
+
+		Read from the version line, not from the roles: `garage layout show` also prints
+		staged changes, so a staged-but-unapplied layout would otherwise look finished.
+		"""
+		try:
+			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage layout show", self.ssh_key)
+		except SetupError:
+			return 0
+
+		found = re.search(r"Current cluster layout version:\s*(\d+)", shown)
+
+		return int(found.group(1)) if found else 0
 
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage generates its key on first
@@ -115,20 +132,6 @@ class ClusterSetup:
 	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return run_over_ssh(machine["ipv4_address"], self.install_script(machine, peers), self.ssh_key)
 
-	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
-		"""Give every node its role and apply as one version."""
-		commands = []
-		for machine in self.machines:
-			node_id = identifiers[machine["name"]].split("@")[0]
-			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
-			commands.append(
-				f"garage layout assign {shape} -z {machine['zone']} -t {machine['name']} {node_id}"
-			)
-
-		commands.append("garage layout apply --version 1")
-
-		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
-
 	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
 		"""Bring the cluster up.
 
@@ -144,9 +147,21 @@ class ClusterSetup:
 		for machine in self.machines:
 			self.bootstrap_machine(machine, list(identifiers.values()))
 
-		self.assign_layout(identifiers)
-
 		return identifiers
+
+	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
+		"""Give every node its role and apply as one version, run on a single machine and gossips around."""
+		commands = []
+		for machine in self.machines:
+			node_id = identifiers[machine["name"]].split("@")[0]
+			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
+			commands.append(
+				f"garage layout assign {node_id} {shape} -z {machine['zone']} -t {machine['name']}"
+			)
+
+		commands.append(f"garage layout apply --version {self.layout_version() + 1}")
+
+		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
 
 def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:
@@ -186,6 +201,6 @@ def run_over_ssh(address: str, script: str, key: str | None, user: str = "root")
 		os.unlink(path)
 
 	if result.returncode != 0:
-		raise InstallError(f"{address}: {(result.stderr or result.stdout).strip()[:500]}")
+		raise SetupError(f"{address}: {(result.stderr or result.stdout).strip()[:500]}")
 
 	return result.stdout

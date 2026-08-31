@@ -16,7 +16,7 @@ class CentralClient:
 	def __init__(self, url: str, token: str, timeout: float = 30) -> None:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
-		self.headers = {"Authorization": f"Bearer {token}"}
+		self.headers = {"X-Cargo-Token": token}
 
 	def get_required_credentials(
 		self, region: str, vm_ids: list[str], required: Sequence[str]
@@ -38,6 +38,10 @@ class CentralClient:
 			"register_cluster",
 			data={"region": region, "base_url": base_url, "s3_endpoint": s3_endpoint},
 		)
+
+	def report_failure(self, region: str, step: str, error: str) -> dict[str, Any]:
+		"""Tell Central the cluster it holds secrets for did not come up."""
+		return self.call("report_failure", data={"region": region, "step": step, "error": error[:500]})
 
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:
