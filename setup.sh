@@ -15,9 +15,18 @@ REPO="${REPO:-https://github.com/frappe/cargo}"
 # that itself when it initialises the bench.
 PILOT_ADMIN_PASSWORD="${PILOT_ADMIN_PASSWORD:-}"   # pilot's own admin panel
 SITE_PASSWORD="${SITE_PASSWORD:-}"     # the site's Frappe Administrator
+CENTRAL_BOOTSTRAPPING_TOKEN="${CENTRAL_BOOTSTRAPPING_TOKEN:-}"  # Central's token for this host
+CENTRAL_URL="${CENTRAL_URL:-}" # Central's URL for this host to call back to
+ATLAS_URL="${ATLAS_URL:-}" # Atlas's URL for this host to call back to
 
 if [ -z "$PILOT_ADMIN_PASSWORD" ] || [ -z "$SITE_PASSWORD" ]; then
 	echo "Set PILOT_ADMIN_PASSWORD and SITE_PASSWORD before running." >&2
+	exit 1
+fi
+
+if [ -z "$CENTRAL_BOOTSTRAPPING_TOKEN" ] || [ -z "$CENTRAL_URL" ] || [ -z "$ATLAS_URL" ]; then
+	echo "Set CENTRAL_BOOTSTRAPPING_TOKEN, CENTRAL_URL and ATLAS_URL before running." >&2
+	echo "The token comes from this host's Cargo Instance in Central." >&2
 	exit 1
 fi
 
@@ -28,8 +37,6 @@ curl -fsSL "https://raw.githubusercontent.com/frappe/pilot/${PILOT_VERSION}/inst
 pilot --yes new "$BENCH" --database mariadb --admin-password "$PILOT_ADMIN_PASSWORD"
 pilot --yes -b "$BENCH" new-site "$SITE" --admin-password "$SITE_PASSWORD"
 pilot --yes -b "$BENCH" get-app "$REPO" "$BRANCH" --install-dependencies
+# The install hook reads these and enrols the host with Central.
+export CENTRAL_BOOTSTRAPPING_TOKEN CENTRAL_URL ATLAS_URL
 pilot --yes -b "$BENCH" install-app "$SITE" cargo
-
-# Central needs to reach this site, and an operator needs to paste the pair into the
-# Cargo Instance form.
-pilot -b "$BENCH" --site "$SITE" execute cargo.api.central.issue_api_credentials

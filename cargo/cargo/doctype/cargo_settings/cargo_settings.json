@@ -1,12 +1,12 @@
 {
  "actions": [],
- "allow_rename": 0,
- "creation": "2026-08-28 00:00:00.000000",
+ "creation": "2026-08-28 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_central",
   "central_url",
+  "central_bootstrapping_token",
   "central_access_token",
   "column_break_atlas",
   "atlas_url",
@@ -14,10 +14,10 @@
  ],
  "fields": [
   {
+   "description": "Central issues the secrets a deployment runs on.",
    "fieldname": "section_break_central",
    "fieldtype": "Section Break",
-   "label": "Central",
-   "description": "Central issues the secrets a deployment runs on."
+   "label": "Central"
   },
   {
    "fieldname": "central_url",
@@ -30,8 +30,7 @@
    "description": "Minted by Central for calls to Central. Audience `central`, scope `cargo:central`.",
    "fieldname": "central_access_token",
    "fieldtype": "Password",
-   "label": "Central Access Token",
-   "reqd": 1
+   "label": "Central Access Token"
   },
   {
    "fieldname": "column_break_atlas",
@@ -48,7 +47,14 @@
    "description": "Minted by Central for calls to Atlas, which verifies it against Central's public keys. Audience `atlas`, scope `cargo:atlas`.",
    "fieldname": "atlas_access_token",
    "fieldtype": "Password",
-   "label": "Atlas Access Token",
+   "label": "Atlas Access Token"
+  },
+  {
+   "description": "Initial bootstrapping token required for acquiring other control credentials.\n\nExpected from atlas during cargo spawn.",
+   "fieldname": "central_bootstrapping_token",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Central Bootstrapping Token",
    "reqd": 1
   }
  ],
@@ -56,7 +62,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-28 00:00:00.000000",
+ "modified": "2026-08-31 23:24:46.632295",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
