@@ -15,8 +15,8 @@ class CargoSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		atlas_token: DF.Password
+		atlas_access_token: DF.Password
 		atlas_url: DF.Data
-		central_token: DF.Password
+		central_access_token: DF.Password
 		central_url: DF.Data
 	# end: auto-generated types

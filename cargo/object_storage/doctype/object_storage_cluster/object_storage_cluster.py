@@ -101,14 +101,14 @@ class ObjectStorageCluster(ServiceCluster):
 
 		return AtlasClient(
 			url=settings.atlas_url,
-			token=settings.get_password("atlas_token"),
+			token=settings.get_password("atlas_access_token"),
 			public_key=self.ssh_public_key,
 		)
 
 	def central_client(self) -> CentralClient:
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
-		return CentralClient(url=settings.central_url, token=settings.get_password("central_token"))
+		return CentralClient(url=settings.central_url, token=settings.get_password("central_access_token"))
 
 	@frappe.whitelist()
 	def provision(self) -> None:
