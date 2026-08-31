@@ -5,37 +5,19 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "section_break_atlas",
-  "atlas_url",
-  "atlas_token",
-  "column_break_central",
+  "section_break_central",
   "central_url",
-  "central_token"
+  "central_access_token",
+  "column_break_atlas",
+  "atlas_url",
+  "atlas_access_token"
  ],
  "fields": [
   {
-   "description": "Shared by every service. Atlas supplies machines; Central issues the secrets they run on.",
-   "fieldname": "section_break_atlas",
+   "fieldname": "section_break_central",
    "fieldtype": "Section Break",
-   "label": "Upstreams"
-  },
-  {
-   "fieldname": "atlas_url",
-   "fieldtype": "Data",
-   "label": "Atlas URL",
-   "options": "URL",
-   "reqd": 1
-  },
-  {
-   "description": "Bearer token Cargo presents to Atlas.",
-   "fieldname": "atlas_token",
-   "fieldtype": "Password",
-   "label": "Atlas Token",
-   "reqd": 1
-  },
-  {
-   "fieldname": "column_break_central",
-   "fieldtype": "Column Break"
+   "label": "Central",
+   "description": "Central issues the secrets a deployment runs on."
   },
   {
    "fieldname": "central_url",
@@ -45,10 +27,28 @@
    "reqd": 1
   },
   {
-   "description": "Bearer token Cargo presents to Central when asking for a cluster's secrets.",
-   "fieldname": "central_token",
+   "description": "Minted by Central for calls to Central. Audience `central`, scope `cargo:central`.",
+   "fieldname": "central_access_token",
    "fieldtype": "Password",
-   "label": "Central Token",
+   "label": "Central Access Token",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_atlas",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "atlas_url",
+   "fieldtype": "Data",
+   "label": "Atlas URL",
+   "options": "URL",
+   "reqd": 1
+  },
+  {
+   "description": "Minted by Central for calls to Atlas, which verifies it against Central's public keys. Audience `atlas`, scope `cargo:atlas`.",
+   "fieldname": "atlas_access_token",
+   "fieldtype": "Password",
+   "label": "Atlas Access Token",
    "reqd": 1
   }
  ],
