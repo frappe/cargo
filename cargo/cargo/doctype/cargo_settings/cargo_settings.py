@@ -18,6 +18,6 @@ class CargoSettings(Document):
 		atlas_access_token: DF.Password | None
 		atlas_url: DF.Data
 		central_access_token: DF.Password | None
-		central_bootstrapping_token: DF.Password
+		central_bootstrapping_token: DF.Password | None
 		central_url: DF.Data
 	# end: auto-generated types

@@ -37,7 +37,7 @@ def request_control_credentials() -> None:
 		frappe.throw(_("This host has no bootstrapping token to present to Central."))
 
 	credentials = CentralClient(settings.central_url, token, is_bootstrapping=True).call(
-		"request_control_credentials"
+		"request_control_credentials", data={"base_url": frappe.utils.get_url()}
 	)
 
 	settings.central_access_token = credentials.get("central_access_token")
@@ -45,4 +45,5 @@ def request_control_credentials() -> None:
 	if not (settings.central_access_token and settings.atlas_access_token):
 		frappe.throw(_("Central did not return both access tokens."))
 
+	settings.central_bootstrapping_token = None
 	settings.save(ignore_permissions=True)

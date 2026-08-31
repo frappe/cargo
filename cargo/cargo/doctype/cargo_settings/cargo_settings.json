@@ -50,12 +50,12 @@
    "label": "Atlas Access Token"
   },
   {
-   "description": "Initial bootstrapping token required for acquiring other control credentials.\n\nExpected from atlas during cargo spawn.",
+   "description": "Spent during install and cleared. Only set while enrolling.",
    "fieldname": "central_bootstrapping_token",
    "fieldtype": "Password",
    "in_list_view": 1,
    "label": "Central Bootstrapping Token",
-   "reqd": 1
+   "reqd": 0
   }
  ],
  "grid_page_length": 50,
