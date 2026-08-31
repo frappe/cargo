@@ -7,6 +7,12 @@ CENTRAL_USER = "central@cargo.local"
 SERVICE_ROLE = "Cargo Service"
 
 
+import typing
+
+if typing.TYPE_CHECKING:
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+
+
 @frappe.whitelist(methods=["POST"])
 def configure(central_url: str, central_access_token: str, atlas_url: str, atlas_access_token: str) -> dict:
 	"""Central hands this host everything it needs to reach Atlas and Central."""
@@ -30,14 +36,16 @@ def configure(central_url: str, central_access_token: str, atlas_url: str, atlas
 def status() -> dict:
 	"""What Central checks to know this host is alive and configured."""
 	_only_central()
-	settings = frappe.get_single("Cargo Settings")
+	settings: CargoSettings = frappe.get_single("Cargo Settings")
 
 	return {
 		"site": frappe.local.site,
 		"configured": bool(
-			settings.central_url and settings.get_password("central_access_token", raise_exception=False)
+			settings.central_url
+			and settings.get_password("central_access_token", raise_exception=False)
+			and settings.atlas_url
+			and settings.get_password("atlas_access_token", raise_exception=False)
 		),
-		"clusters": frappe.db.count("Object Storage Cluster"),
 	}
 
 
