@@ -86,7 +86,7 @@ app_license = "mit"
 # ------------
 
 # before_install = "cargo.install.before_install"
-# after_install = "cargo.install.after_install"
+after_install = "cargo.install.after_install"
 
 # Uninstallation
 # ------------
@@ -251,7 +251,7 @@ app_license = "mit"
 # ]
 
 # Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
+export_python_type_annotations = True
 
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs

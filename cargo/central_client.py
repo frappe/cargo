@@ -14,11 +14,13 @@ class CentralError(RuntimeError):
 class CentralClient:
 	"""Central's API. Services subclass this to add the calls they need."""
 
-	def __init__(self, url: str, token: str, timeout: float = 30) -> None:
+	def __init__(self, url: str, token: str, timeout: float = 30, is_bootstrapping: bool = False) -> None:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
 		# See AtlasClient: `Authorization` is unusable against a Frappe guest endpoint.
-		self.headers = {"X-Cargo-Token": token}
+		self.headers = (
+			{"X-Cargo-Token": token} if not is_bootstrapping else {"X-Cargo-Bootstrapping-Token": token}
+		)
 
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:
