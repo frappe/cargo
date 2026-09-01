@@ -5,7 +5,7 @@ import frappe
 from frappe.model.document import Document
 
 FRAPPE_VERSIONS = ("version-15", "version-16", "develop")
-SITE_OPTIONS = ("Included", "Not Included")
+SITE_OPTIONS = ("with-site", "no-site")
 
 
 class Image(Document):

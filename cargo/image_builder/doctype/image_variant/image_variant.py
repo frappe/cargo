@@ -19,10 +19,11 @@ class ImageVariant(Document):
 		built_at: DF.Datetime | None
 		checksum: DF.Data | None
 		error: DF.LongText | None
-		frappe_version: DF.Literal["version-15", "version-16", "develop"]
+		flavour: DF.Data | None
+		frappe_version: DF.Literal["", "version-15", "version-16", "develop"]
 		image: DF.Link
 		object_key: DF.Data | None
-		site: DF.Literal["Included", "Not Included"]
+		site: DF.Literal["", "with-site", "no-site"]
 		size_bytes: DF.Int
 		status: DF.Literal["Draft", "Building", "Available", "Failed"]
 	# end: auto-generated types
@@ -38,15 +39,10 @@ class ImageVariant(Document):
 		self.frappe_version = self.frappe_version or ""
 		self.site = self.site or ""
 
-	def autoname(self) -> None:
-		"""The name is the flavour, so the same combination cannot be created twice.
-
-		A dimension left blank does not apply to this image and drops out of the name."""
-		self.name = "-".join(part for part in (self.image, self.frappe_version, self.site_suffix) if part)
-
-	@property
-	def site_suffix(self) -> str:
-		return {"Included": "with-site", "Not Included": "no-site"}.get(self.site, "")
+	def before_naming(self) -> None:
+		"""The flavour is the name, so the same combination cannot be created twice. A
+		dimension left blank does not apply to this image and drops out."""
+		self.flavour = "-".join(part for part in (self.image, self.frappe_version, self.site) if part)
 
 	@property
 	def builder(self) -> Builder:
