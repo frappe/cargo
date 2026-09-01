@@ -4,6 +4,7 @@
 import typing
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 if typing.TYPE_CHECKING:
@@ -22,15 +23,31 @@ class Image(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		pilot_version: DF.Data
+		kind: DF.Literal["pilot"]
+		version: DF.Data
 	# end: auto-generated types
+
+	"""One release of one kind of image. Its flavours are Image Variants, one per snapshot."""
+
+	def validate(self) -> None:
+		"""Kind and version are the identity. The name carries a counter, so nothing else
+		stops the same release being registered twice."""
+		if frappe.db.exists("Image", {"kind": self.kind, "version": self.version, "name": ("!=", self.name)}):
+			frappe.throw(_("{0} {1} is already registered.").format(self.kind, self.version))
 
 	@frappe.whitelist()
 	def generate_variants(self) -> list[str]:
-		"""Every supported Frappe version, with a site."""
+		"""Every Frappe version, with a site and without. Existing variants are left alone --
+		the variant name is its flavour, so re-running this cannot duplicate one."""
 		created = []
 		for frappe_version in FRAPPE_VERSIONS:
 			for site in SITE_OPTIONS:
+				if frappe.db.exists(
+					"Image Variant",
+					{"image": self.name, "frappe_version": frappe_version, "site": site},
+				):
+					continue
+
 				variant: ImageVariant = frappe.get_doc(
 					{
 						"doctype": "Image Variant",
@@ -42,20 +59,3 @@ class Image(Document):
 				created.append(variant.insert().name)
 
 		return created
-
-
-def get_variant(pilot_version: str, frappe_version: str | None = None, site: str | None = None) -> str | None:
-	"""The built image for one flavour, or None if it has not been built yet.
-
-	A blank dimension matches only variants that left it blank -- a bare base image is not a
-	Frappe image with the version forgotten. None and "" mean the same thing here; a Select
-	stores "", so passing None unnormalised would query IS NULL and match nothing."""
-	return frappe.db.get_value(
-		"Image Variant",
-		{
-			"image": pilot_version,
-			"frappe_version": frappe_version or "",
-			"site": site or "",
-			"status": "Available",
-		},
-	)

@@ -11,12 +11,18 @@
   "column_break_identity",
   "status",
   "error",
+  "section_break_contents",
+  "bench_name",
+  "site_name",
   "section_break_artifact",
-  "object_key",
-  "checksum",
-  "column_break_artifact",
-  "size_bytes",
-  "built_at"
+  "snapshot_id",
+  "built_at",
+  "section_break_build",
+  "temporary_vm_id",
+  "ssh_public_key",
+  "column_break_build",
+  "ssh_private_key",
+  "admin_password"
  ],
  "fields": [
   {
@@ -25,96 +31,134 @@
    "label": "Variant"
   },
   {
-   "description": "The pilot release this is a flavour of.",
    "fieldname": "image",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Image",
    "options": "Image",
    "reqd": 1,
-   "set_only_once": 1
+   "in_list_view": 1,
+   "set_only_once": 1,
+   "description": "The pilot release this is a flavour of."
   },
   {
-   "description": "Leave blank for an image that carries no Frappe.",
    "fieldname": "frappe_version",
    "fieldtype": "Select",
+   "label": "Frappe Version",
+   "options": "\nversion-15\nversion-16\ndevelop",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Frappe Version",
-   "options": "version-15\nversion-16\ndevelop",
-   "set_only_once": 1
+   "set_only_once": 1,
+   "description": "Leave blank for an image that carries no Frappe."
   },
   {
-   "description": "Leave blank for an image where a site means nothing, such as a bare base.",
    "fieldname": "site",
    "fieldtype": "Select",
+   "label": "Site",
+   "options": "\nIncluded\nNot Included",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Site",
-   "options": "Included\nNot Included",
-   "set_only_once": 1
+   "set_only_once": 1,
+   "description": "Leave blank for an image where a site means nothing, such as a bare base."
   },
   {
    "fieldname": "column_break_identity",
    "fieldtype": "Column Break"
   },
   {
-   "default": "Draft",
    "fieldname": "status",
    "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nProvisioning\nBuilding\nAvailable\nFailed",
+   "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Status",
-   "options": "Draft\nBuilding\nAvailable\nFailed",
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.status=='Failed'",
-   "description": "Why the last build failed.",
    "fieldname": "error",
    "fieldtype": "Long Text",
    "label": "Error",
-   "read_only": 1
+   "read_only": 1,
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Why the last build failed."
   },
   {
-   "depends_on": "eval:doc.status=='Available'",
+   "fieldname": "section_break_contents",
+   "fieldtype": "Section Break",
+   "label": "Contents"
+  },
+  {
+   "fieldname": "bench_name",
+   "fieldtype": "Data",
+   "label": "Bench",
+   "read_only": 1,
+   "description": "The bench inside this image."
+  },
+  {
+   "fieldname": "site_name",
+   "fieldtype": "Data",
+   "label": "Site",
+   "read_only": 1,
+   "description": "The site inside this image, if it carries one."
+  },
+  {
    "fieldname": "section_break_artifact",
    "fieldtype": "Section Break",
-   "label": "Stored Image"
+   "label": "Snapshot"
   },
   {
-   "description": "Where this image sits in the metadata bucket.",
-   "fieldname": "object_key",
+   "fieldname": "snapshot_id",
    "fieldtype": "Data",
-   "label": "Object Key",
-   "read_only": 1
-  },
-  {
-   "description": "SHA-256 of the uploaded image, for the puller to verify.",
-   "fieldname": "checksum",
-   "fieldtype": "Data",
-   "label": "Checksum",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_artifact",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "size_bytes",
-   "fieldtype": "Int",
-   "label": "Size (bytes)",
-   "read_only": 1
+   "label": "Snapshot ID",
+   "read_only": 1,
+   "description": "What Atlas boots this image from."
   },
   {
    "fieldname": "built_at",
    "fieldtype": "Datetime",
    "label": "Built At",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_build",
+   "fieldtype": "Section Break",
+   "label": "Build Machine",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "temporary_vm_id",
+   "fieldtype": "Data",
+   "label": "Temporary VM",
+   "read_only": 1,
+   "description": "The machine being baked. Cleared once it is snapshotted and destroyed."
+  },
+  {
+   "fieldname": "ssh_public_key",
+   "fieldtype": "Small Text",
+   "label": "SSH Public Key",
+   "read_only": 1,
+   "description": "Generated per build; the machine is destroyed after."
+  },
+  {
+   "fieldname": "column_break_build",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ssh_private_key",
+   "fieldtype": "Password",
+   "label": "SSH Private Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admin_password",
+   "fieldtype": "Password",
+   "label": "Site Admin Password",
+   "read_only": 1,
+   "description": "The Administrator password of the site baked into this image."
   }
  ],
  "links": [],
- "modified": "2026-09-01 15:29:05.741541",
+ "modified": "2026-09-01 18:10:40.101674",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Image Variant",
@@ -136,5 +180,7 @@
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "allow_rename": 0,
+ "autoname": "IMV-.####"
 }
