@@ -25,7 +25,9 @@ packages = []
 
 [tool.ruff]
 line-length = 110
-target-version = "py314"
+# py313 formatting on a py314 project: py314 lets ruff drop the parentheses in
+# `except (A, B):`, which reads as a Python 2 bug and rewrites vendored code.
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
