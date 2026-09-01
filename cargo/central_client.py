@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing
+from collections.abc import Sequence
 from typing import Any, Self
 
 import frappe
@@ -41,6 +42,26 @@ class CentralClient:
 		"""Tell Central a cluster it holds secrets for did not come up. Generic: every
 		service fails the same way, and the shared stage runner is what reports it."""
 		return self.call("report_failure", data={"region": region, "step": step, "error": error[:500]})
+
+	def get_required_credentials(
+		self, region: str, vm_ids: list[str], required: Sequence[str]
+	) -> dict[str, str]:
+		"""Object storage: the secrets every node of one cluster boots with. ``required`` is
+		the asking service's own list. Idempotent per region."""
+		tokens = self.call("garage_tokens", data={"region": region, "vm_ids": vm_ids})
+
+		missing = [name for name in required if not tokens.get(name)]
+		if missing:
+			raise CentralError(f"Central returned no {', '.join(missing)}")
+
+		return {name: tokens[name] for name in required}
+
+	def register_cluster(self, region: str, base_url: str, s3_endpoint: str) -> dict[str, Any]:
+		"""Object storage: the cluster is running, and this is where to reach it."""
+		return self.call(
+			"register_cluster",
+			data={"region": region, "base_url": base_url, "s3_endpoint": s3_endpoint},
+		)
 
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 		try:
