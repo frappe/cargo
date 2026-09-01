@@ -1,23 +1,53 @@
 # Setting up a Cargo host
 
 Cargo runs on its own machine, one per region. This is how a bare VM becomes a Cargo host
-that Central can use.
+that Central trusts.
 
-Nothing here is automatic. An operator runs a script on the new machine, then fills in one
-form in Central. After that Cargo runs on its own.
+The host does the work. Central hands out a short-lived token, and the host spends it to
+collect the two tokens it runs on. **Central never calls Cargo** — not during setup, not
+after. That means a Cargo host does not have to be reachable from Central at all.
 
 ## Before you start
 
-Central needs an **Atlas Instance** for the region already. Registration reads Atlas's URL
-from it and passes it to Cargo, and it refuses to run if there isn't one.
+Central needs an **Atlas Instance** for the region already, because the host will be calling
+Atlas for machines and you have to give it Atlas's URL.
 
-## Step 1 — run the script on the new machine
+## Step 1 — create the Cargo Instance in Central
 
-```bash
-PILOT_ADMIN_PASSWORD=... SITE_PASSWORD=... ./setup.sh
+Create a **Cargo Instance** and set its **Region**. One Cargo per region. That is the only
+field you fill in; everything else on the form is written by the host when it enrols.
+
+The instance starts as **Draft**.
+
+## Step 2 — issue a bootstrapping token
+
+Press **Issue Bootstrapping Token** on that instance. Central shows you one line:
+
+```
+CENTRAL_BOOTSTRAPPING_TOKEN=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-Those are two different passwords, and neither is the database password:
+Copy it now. It is shown once, and it **expires in 30 minutes**, so issue it when you are
+ready to run the install, not the day before. If it expires, press the button again — a new
+token replaces the old one.
+
+The token is a JWT signed by Central. Its audience is this Cargo Instance's name, which is
+how Central knows which host is calling later without the host having to claim an identity.
+
+## Step 3 — run the script on the new machine
+
+```bash
+PILOT_ADMIN_PASSWORD=... \
+SITE_PASSWORD=... \
+CENTRAL_URL=https://central.example.com \
+ATLAS_URL=https://atlas.example.com \
+CENTRAL_BOOTSTRAPPING_TOKEN=... \
+./setup.sh
+```
+
+`setup.sh` refuses to start unless all five are set.
+
+The two passwords are different things, and neither is the database password:
 
 | | What it is |
 |---|---|
@@ -25,58 +55,58 @@ Those are two different passwords, and neither is the database password:
 | `SITE_PASSWORD` | The Frappe `Administrator` password for the Cargo site |
 | MariaDB root | You don't set it. Pilot generates one when it creates the bench. |
 
-`setup.sh` does four things:
+The script then:
 
 1. Runs pilot's installer, which brings Python, Node, MariaDB, Redis and nginx. The machine
-   can be completely bare — nothing needs to be installed first. Pilot is pinned to a
-   release (`v0.0.29-pre-alpha`) rather than `develop`, so two hosts built weeks apart get
-   the same pilot.
+   can be completely bare. Pilot is pinned to a release (`v0.0.29-pre-alpha`) rather than
+   `develop`, so two hosts built weeks apart get the same pilot.
 2. Creates a bench and a site.
-3. Downloads and installs the Cargo app on that site.
-4. Creates a user called `central@cargo.local` and prints an API key and secret.
+3. Downloads the Cargo app.
+4. Exports `CENTRAL_URL`, `ATLAS_URL` and `CENTRAL_BOOTSTRAPPING_TOKEN`, then installs Cargo
+   on the site.
 
-That last step is the one you need:
+Step 4 is where enrolment happens: Cargo's install hook reads those three variables.
 
-```
-api_key=82bafff47dfb0b3
-api_secret=759ed6a8aca5394d239ecc03b4c52b1e
-```
+`PILOT_VERSION`, `BENCH`, `SITE`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's
+own branch and still defaults to `develop`.
 
-This is how **Central logs in to Cargo**. The user carries one role, `Cargo Service`, which
-has no desk access — it exists so Central can call two endpoints and nothing more.
+## Step 4 — what the install hook does
 
-You can change the defaults with `PILOT_VERSION`, `BENCH`, `SITE`, `BRANCH` and `REPO`
-environment variables. `BRANCH` is Cargo's own branch and still defaults to `develop`.
+`cargo/install.py` runs on `after_install`:
 
-## Step 2 — tell Central about the machine
+1. Saves `CENTRAL_URL`, `ATLAS_URL` and the bootstrapping token into **Cargo Settings**.
+2. Calls Central, presenting the bootstrapping token, and sends its own base URL
+   (`frappe.utils.get_url()`) so Central knows where this host lives.
+3. Saves the two access tokens Central returns.
+4. Clears the bootstrapping token — it has been spent.
 
-In Central, create a **Cargo Instance** and fill in:
+Central, on its side, saves the same two tokens, records the base URL, sets the instance to
+**Registered** with a timestamp, and clears its copy of the bootstrapping token.
 
-- **Region** — which region this Cargo provisions for. One Cargo per region.
-- **Base URL** — where the Cargo site is served, e.g. `http://10.0.0.5:8000`.
-- **API Key** and **API Secret** — the pair the script printed.
+If any of that fails, the install fails, and you start again with a fresh token. Nothing is
+half-written on either side: a host without both access tokens can do nothing, and an
+instance that is still **Draft** never got them.
 
-Then press **Register**.
+### Installing without enrolling
 
-## Step 3 — what Register does
+If **none** of the three variables are set, the hook does nothing and the install succeeds.
+That is CI, and a local dev site.
 
-Central does all of this in one go:
+If **some** of them are set, the install fails loudly. A half-supplied set is a typo, not an
+intention.
 
-1. Mints two tokens for this host (see below).
-2. Calls `cargo.api.central.configure` on the Cargo site, logging in with the API key and
-   secret, and passes it Central's URL, Atlas's URL, and the two tokens.
-3. Cargo saves all of that into its **Cargo Settings**.
-4. Central calls back and asks the host how it's doing. Only if the host says it is
-   configured does Central mark the instance **Registered** and **Reachable**.
+## The one-time token
 
-That last check matters. A successful call only proves the request arrived — it doesn't
-prove Cargo saved anything. So Central reads the host back before believing it. If the host
-says it isn't configured, registration fails and nothing is written, so you can fix the
-problem and press Register again from a clean slate.
+The bootstrapping token can only be spent once. Central stores the token it issued, and on
+enrolment compares the presented token against the stored one; a successful enrolment clears
+it. So a replay — the same token used a second time — is rejected with a 401.
 
-## The two tokens
+That's the point: a token leaked from a shell history or a log can't be used to collect a
+second set of credentials for a host that already enrolled.
 
-Cargo talks to two things, so Central mints two tokens:
+## The two tokens the host runs on
+
+Cargo talks to two upstreams, so Central mints two tokens:
 
 | Token | Used for | Audience | Scope |
 |---|---|---|---|
@@ -84,31 +114,32 @@ Cargo talks to two things, so Central mints two tokens:
 | `atlas_access_token` | calls to Atlas | `atlas` | `cargo:atlas` |
 
 Both are signed by Central. Central checks its own signature; Atlas checks it against
-Central's public keys, which anyone can fetch.
+Central's published public keys.
 
-They are kept separate on purpose. If Cargo only had one token, a copy stolen from an Atlas
-request could be used to ask Central for cluster secrets. With two, the token that opens
-Atlas is rejected by Central and the other way around.
+They are separate on purpose. If Cargo carried one token, a copy captured from an Atlas
+request could be turned around and used to ask Central for cluster secrets. With two, the
+scope check rejects the Atlas token at Central and the other way round.
 
-Both travel in an `X-Cargo-Token` header rather than the usual `Authorization` header.
-That's not a style choice: Frappe treats `Authorization` as either OAuth or an API key, and
-rejects anything else with a 401 before the request even reaches the endpoint.
+Both ride an `X-Cargo-Token` header, not `Authorization`. That is not a style choice: Frappe
+treats `Authorization` as OAuth or an API key and rejects anything else with a 401 before
+the request reaches the endpoint. The bootstrapping token rides
+`X-Cargo-Bootstrapping-Token` for the same reason.
 
-Re-registering mints fresh tokens and overwrites the old ones, so the previous pair stops
-working. That is how you cut off a host you no longer trust.
+These tokens are long-lived — a year. Cargo is infrastructure, not a session.
 
-## Checking on a host later
+## Re-enrolling a host
 
-**Test Connection** on the Cargo Instance asks the host how it's doing. It reports whether
-the host is reachable, whether it still has its settings, and how many deployments it is
-running. Use it when something looks wrong; it changes nothing.
+Press **Re-issue Bootstrapping Token** on the instance and run the enrolment again. Fresh
+tokens overwrite the old pair, so the previous tokens stop working. That is how you cut off
+a host you no longer trust.
 
 ## What Central knows and doesn't
 
-Central stores where each Cargo is and the tokens it issued. It never calls Cargo to do
-work — Cargo does the calling. The only time Central reaches out is registration and Test
-Connection.
+Central stores each Cargo's region, base URL, and the tokens it issued. The base URL is a
+record of where the host said it was — Central does not call it. All traffic runs the other
+way: Cargo asks Central for cluster secrets, and tells Central when a cluster is up or has
+failed.
 
-So if a Cargo host is down, provisioning new deployments stops, but everything already
-running is unaffected: benches talk to their services directly, and Central talks to those
-services directly too.
+So if a Cargo host is down, provisioning new clusters stops, but everything already running
+is unaffected: benches talk to their services directly, and Central talks to those services
+directly too.

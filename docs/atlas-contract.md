@@ -22,12 +22,16 @@ JSON in, JSON out. The answer comes wrapped as `{"message": ...}` and Cargo unwr
 ### Logging in
 
 ```
-Authorization: Bearer <token>
+X-Cargo-Token: <atlas_access_token>
 ```
 
 Central signs the token with its private key. Atlas checks it against Central's public keys
 at `{central_url}/api/method/central.api.jwks.get_jwks`. Nothing is shared between Cargo and
 Atlas, and Central can revoke everything by rotating its key.
+
+The header is `X-Cargo-Token`, not `Authorization`: Frappe rejects an unrecognised
+`Authorization` header with a 401 before the endpoint is reached. The token's scope is
+`cargo:atlas`, and it is a different token from the one Cargo presents to Central.
 
 > **Not built yet.** Atlas currently uses `token <key>:<secret>` for service callers. We
 > agreed on bearer tokens, but nothing has changed on the Atlas side.
