@@ -8,7 +8,6 @@
   "image",
   "frappe_version",
   "site",
-  "flavour",
   "column_break_identity",
   "status",
   "error",
@@ -42,7 +41,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Frappe Version",
-   "options": "\nversion-15\nversion-16\ndevelop",
+   "options": "version-15\nversion-16\ndevelop",
    "set_only_once": 1
   },
   {
@@ -52,15 +51,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Site",
-   "options": "\nwith-site\nno-site",
+   "options": "Included\nNot Included",
    "set_only_once": 1
-  },
-  {
-   "fieldname": "flavour",
-   "fieldtype": "Data",
-   "label": "Flavour",
-   "read_only": 1,
-   "description": "The dimensions that make this variant, and its name."
   },
   {
    "fieldname": "column_break_identity",
@@ -122,7 +114,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-01 14:37:32.156470",
+ "modified": "2026-09-01 15:29:05.741541",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Image Variant",
@@ -144,6 +136,5 @@
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "autoname": "field:flavour"
+ "states": []
 }

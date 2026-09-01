@@ -1,11 +1,16 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+import typing
+
 import frappe
 from frappe.model.document import Document
 
+if typing.TYPE_CHECKING:
+	from cargo.image_builder.doctype.image_variant.image_variant import ImageVariant
+
 FRAPPE_VERSIONS = ("version-15", "version-16", "develop")
-SITE_OPTIONS = ("with-site", "no-site")
+SITE_OPTIONS = ("Included", "Not Included")
 
 
 class Image(Document):
@@ -20,16 +25,13 @@ class Image(Document):
 		pilot_version: DF.Data
 	# end: auto-generated types
 
-	"""One pilot release. Its flavours are Image Variants, one per built artifact."""
-
 	@frappe.whitelist()
 	def generate_variants(self) -> list[str]:
-		"""Every Frappe version, with a site and without. Existing variants are left alone --
-		the variant name is the flavour, so re-running this cannot duplicate one."""
+		"""Every supported Frappe version, with a site."""
 		created = []
 		for frappe_version in FRAPPE_VERSIONS:
 			for site in SITE_OPTIONS:
-				variant = frappe.get_doc(
+				variant: ImageVariant = frappe.get_doc(
 					{
 						"doctype": "Image Variant",
 						"image": self.name,
@@ -37,9 +39,6 @@ class Image(Document):
 						"site": site,
 					}
 				)
-				variant.autoname()
-				if frappe.db.exists("Image Variant", variant.name):
-					continue
 				created.append(variant.insert().name)
 
 		return created

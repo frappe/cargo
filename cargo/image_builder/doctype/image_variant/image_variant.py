@@ -19,11 +19,10 @@ class ImageVariant(Document):
 		built_at: DF.Datetime | None
 		checksum: DF.Data | None
 		error: DF.LongText | None
-		flavour: DF.Data | None
-		frappe_version: DF.Literal["", "version-15", "version-16", "develop"]
+		frappe_version: DF.Literal["version-15", "version-16", "develop"]
 		image: DF.Link
 		object_key: DF.Data | None
-		site: DF.Literal["", "with-site", "no-site"]
+		site: DF.Literal["Included", "Not Included"]
 		size_bytes: DF.Int
 		status: DF.Literal["Draft", "Building", "Available", "Failed"]
 	# end: auto-generated types
