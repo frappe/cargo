@@ -1,47 +1,78 @@
-import os
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
+
+import frappe
+from frappe import _
+
+from cargo.atlas_client import AtlasClient
+from cargo.ssh import run_over_ssh
+
+BASE_IMAGE = "ubuntu-24.04"
+# Images are a fixed set, not anything a caller names. A new kind is a new
+# conf/<kind>/provision.sh and an entry here.
+KINDS = ("pilot",)
+PROVISION_TIMEOUT = 3600
 
 
 class Builder:
-	"""Builds one Firecracker rootfs on this host: one flavour of one pilot release."""
+	"""Rents a machine, runs one script on it, photographs it, throws it away.
 
-	def __init__(
-		self, pilot_version: str, frappe_version: str | None = None, site: str | None = None
-	) -> None:
-		"""A blank dimension does not apply to this image: no Frappe, or no notion of a site."""
-		self.pilot_version = pilot_version
-		self.frappe_version = frappe_version or ""
-		self.site = site or ""
+	It knows nothing about what is being installed: the image says that, through the
+	environment it hands over."""
 
-	def run(self, command: str | list[str]) -> subprocess.CompletedProcess:
-		"""Raises CalledProcessError on a non-zero exit; its stderr carries the reason."""
-		return subprocess.run(
-			command if isinstance(command, list) else shlex.split(command),
-			check=True,
-			capture_output=True,
-			text=True,
-		)
+	def __init__(self, kind: str, title: str) -> None:
+		if kind not in KINDS:
+			frappe.throw(_("{0} is not an image Cargo knows how to build.").format(kind))
+
+		self.kind = kind
+		self.title = title
 
 	@property
-	def has_kvm(self) -> bool:
-		"""Check if the kvm module is loaded on the host."""
-		return os.access("/dev/kvm", os.R_OK | os.W_OK)
+	def client(self) -> AtlasClient:
+		return AtlasClient.from_settings()
 
-	def install_dependencies(self) -> None:
-		"""Packages the rootfs build needs, beyond what the Cargo host already has."""
-		...
+	def create_keypair(self) -> tuple[str, str]:
+		"""An SSH key for this build alone. The machine it opens is destroyed after."""
+		with tempfile.TemporaryDirectory() as directory:
+			path = Path(directory) / "key"
+			subprocess.run(
+				["ssh-keygen", "-t", "ed25519", "-N", "", "-C", self.title, "-f", str(path)],
+				check=True,
+				capture_output=True,
+			)
 
-	def build_rootfs(self) -> Path:
-		"""Assemble the filesystem tree and pack it into an ext4 image."""
-		...
+			return path.with_suffix(".pub").read_text().strip(), path.read_text()
 
-	def build(self) -> Path:
-		"""The built image, ready to upload."""
-		if not self.has_kvm:
-			raise RuntimeError("/dev/kvm is not available on this host.")
+	def provision_script(self, environment: dict[str, str]) -> str:
+		"""This kind's script, with the image's arguments exported ahead of it."""
+		exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in environment.items())
+		script = Path(
+			frappe.get_app_path("cargo", "image_builder", "conf", self.kind, "provision.sh")
+		).read_text()
 
-		self.install_dependencies()
+		return f"{exports}\n{script}"
 
-		return self.build_rootfs()
+	def bake_provisioned_build_machine(
+		self, address: str, private_key: str, environment: dict[str, str]
+	) -> str:
+		"""Run this kind's script on the machine."""
+		return run_over_ssh(
+			address, self.provision_script(environment), private_key, timeout=PROVISION_TIMEOUT
+		)
+
+	def provision_build_machine(self, public_key: str) -> str:
+		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
+		return self.client.create_vm(public_key=public_key, base_image=BASE_IMAGE, title=self.title)
+
+	def snapshot_build_machine(self, vm_id: str) -> str:
+		"""Photograph the baked machine. This is the image."""
+		return self.client.create_snapshot(vm_id, self.title)
+
+	def destroy_build_machine(self, vm_id: str) -> None:
+		"""Best effort: a machine left running after a failed bake still costs money."""
+		try:
+			self.client.terminate_vm(vm_id)
+		except Exception:
+			frappe.log_error(title=f"Could not destroy build machine {vm_id}")
