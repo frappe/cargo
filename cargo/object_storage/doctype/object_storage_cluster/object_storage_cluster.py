@@ -200,6 +200,7 @@ class ObjectStorageCluster(ServiceCluster):
 		"""Install Garage and lay the cluster out"""
 		setup = ClusterSetup(self)
 		setup.assign_layout(setup.bootstrap_machines())
+		setup.create_metadata_bucket()
 
 	@task
 	def verify(self) -> None:
