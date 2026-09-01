@@ -6,8 +6,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from cargo.object_storage.atlas_client import AtlasClient
-from cargo.object_storage.central_client import CentralClient
+from cargo.atlas_client import AtlasClient
+from cargo.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
