@@ -177,11 +177,11 @@ class ClusterSetup:
 
 	def create_metadata_bucket(self) -> str:
 		"""Create the metadata bucket on one node cluster-wide."""
-		return run_over_ssh(
-			self.machines[0]["ipv4_address"],
-			f"garage bucket create {self.cluster}-metadata",
-			self.ssh_key,
+		metadata_bucket = f"{self.cluster.name}-metadata"
+		run_over_ssh(
+			self.machines[0]["ipv4_address"], f"garage bucket create {metadata_bucket}", self.ssh_key
 		)
+		return metadata_bucket
 
 
 def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:

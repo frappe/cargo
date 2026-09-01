@@ -44,6 +44,7 @@ class ObjectStorageCluster(ServiceCluster):
 		garage_version: DF.Data
 		gateway_disk_gb: DF.Int
 		k2v_port: DF.Int
+		metadata_bucket: DF.Data | None
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
@@ -200,7 +201,8 @@ class ObjectStorageCluster(ServiceCluster):
 		"""Install Garage and lay the cluster out"""
 		setup = ClusterSetup(self)
 		setup.assign_layout(setup.bootstrap_machines())
-		setup.create_metadata_bucket()
+		self.metadata_bucket = setup.create_metadata_bucket()
+		self.save()
 
 	@task
 	def verify(self) -> None:
