@@ -46,6 +46,14 @@ class MachineRow(TypedDict):
 	ipv4_address: str
 
 
+class MetadataBucketInfo(TypedDict):
+	"""The metadata bucket and its credentials."""
+
+	name: str
+	access_key: str
+	secret_key: str
+
+
 class SetupError(RuntimeError):
 	"""A node failed to set up."""
 
@@ -175,13 +183,35 @@ class ClusterSetup:
 
 		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
-	def create_metadata_bucket(self) -> str:
+	def create_metadata_bucket(self) -> MetadataBucketInfo:
 		"""Create the metadata bucket on one node cluster-wide."""
 		metadata_bucket = f"{self.cluster.name}-metadata"
+		metadata_bucket_key = f"{metadata_bucket}-key"
 		run_over_ssh(
-			self.machines[0]["ipv4_address"], f"garage bucket create {metadata_bucket}", self.ssh_key
+			self.machines[0]["ipv4_address"],
+			f"garage bucket create {metadata_bucket} && ",
+			self.ssh_key,
 		)
-		return metadata_bucket
+		key_create_output = run_over_ssh(
+			self.machines[0]["ipv4_address"],
+			f"garage bucket key create {metadata_bucket} {metadata_bucket_key}",
+			self.ssh_key,
+		)
+		# Find access and secret key from the output
+		access_key_match = re.search(r"Access Key:\s*(\S+)", key_create_output)
+		secret_key_match = re.search(r"Secret Key:\s*(\S+)", key_create_output)
+		if access_key_match and secret_key_match:
+			run_over_ssh(
+				self.machines[0]["ipv4_address"],
+				f"garage bucket allow --read --write {metadata_bucket} --key {metadata_bucket_key}",
+			)
+			return MetadataBucketInfo(
+				name=metadata_bucket,
+				access_key=access_key_match.group(1),
+				secret_key=secret_key_match.group(1),
+			)
+
+		raise RuntimeError("Failed to create metadata bucket or retrieve keys.")
 
 
 def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:

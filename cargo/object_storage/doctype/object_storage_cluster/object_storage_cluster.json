@@ -9,6 +9,8 @@
   "region",
   "base_image",
   "metadata_bucket",
+  "metadata_bucket_access_key",
+  "metadata_bucket_secret_key",
   "column_break_cluster",
   "status",
   "error",
@@ -361,6 +363,16 @@
    "fieldname": "metadata_bucket",
    "fieldtype": "Data",
    "label": "Metadata Bucket"
+  },
+  {
+   "fieldname": "metadata_bucket_access_key",
+   "fieldtype": "Data",
+   "label": "Metadata Bucket Access Key"
+  },
+  {
+   "fieldname": "metadata_bucket_secret_key",
+   "fieldtype": "Password",
+   "label": "Metadata Bucket Secret Key"
   }
  ],
  "grid_page_length": 50,
@@ -372,7 +384,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-01 15:31:18.846976",
+ "modified": "2026-09-01 15:56:48.061216",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
