@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import typing
+from typing import Any, Self
 
+import frappe
 import requests
+
+if typing.TYPE_CHECKING:
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 METHOD_PREFIX = "/api/method/atlas.atlas.api.service."
 
@@ -17,16 +22,22 @@ class AtlasError(RuntimeError):
 		super().__init__(f"Atlas API error ({status}): {message}")
 
 
-class AtlasClient:
+class BaseAtlasClient:
 	"""Atlas's whitelisted service API. Services subclass this to add their own calls."""
 
-	def __init__(self, url: str, token: str, public_key: str | None = None, timeout: float = 120) -> None:
+	def __init__(self, url: str, token: str, timeout: float = 120) -> None:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
-		self.public_key = public_key
-		# Its own header: Frappe rejects any two-part `Authorization` header that does not
-		# resolve to a user, before a guest endpoint is ever reached.
 		self.headers = {"X-Cargo-Token": token}
+
+	@classmethod
+	def from_settings(cls) -> Self:
+		"""The Atlas client for the current site, as configured in Cargo Settings.
+
+		The token is a Password field: reading the attribute gives the mask, not the secret."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+
+		return cls(url=settings.atlas_url, token=settings.get_password("atlas_access_token"))
 
 	def call(self, endpoint: str, **params: Any) -> Any:
 		"""POST to a service method and return the unwrapped ``message``."""

@@ -29,7 +29,3 @@ class CentralClient(BaseCentralClient):
 			"register_cluster",
 			data={"region": region, "base_url": base_url, "s3_endpoint": s3_endpoint},
 		)
-
-	def report_failure(self, region: str, step: str, error: str) -> dict[str, Any]:
-		"""Tell Central the cluster it holds secrets for did not come up."""
-		return self.call("report_failure", data={"region": region, "step": step, "error": error[:500]})

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from cargo.atlas_client import AtlasClient as BaseAtlasClient
-from cargo.atlas_client import AtlasError
+from cargo.atlas_client import AtlasError, BaseAtlasClient
 from cargo.object_storage.client_models import PlacementGroupSchema
 
 
@@ -13,6 +12,7 @@ class AtlasClient(BaseAtlasClient):
 		title: str,
 		placement: PlacementGroupSchema,
 		*,
+		public_key: str,
 		base_image: str = "ubuntu-22.04",
 	) -> list[str]:
 		"""Ask for a placement group's machines and return their VM ids. They are still
@@ -22,7 +22,7 @@ class AtlasClient(BaseAtlasClient):
 			title=title,
 			base_image=base_image,
 			placement_group=placement.asdict(),
-			ssh_public_key=self.public_key,
+			ssh_public_key=public_key,
 		)
 		vm_ids = created.get("vm_ids") if isinstance(created, dict) else created
 		if not vm_ids:

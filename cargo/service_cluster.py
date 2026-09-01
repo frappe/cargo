@@ -3,6 +3,7 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
+from cargo.central_client import CentralClient
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -72,6 +73,6 @@ class ServiceCluster(WorkflowBuilder):
 		"""Best effort: the cluster is already Failed, and Central being unreachable must
 		not replace that with a less useful error."""
 		try:
-			self.central_client().report_failure(self.region, stage, error)
+			CentralClient.from_settings().report_failure(self.region, stage, error)
 		except Exception:
 			frappe.log_error(title=f"Could not report {self.name} failure to Central")
