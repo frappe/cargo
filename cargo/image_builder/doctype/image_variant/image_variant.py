@@ -7,12 +7,13 @@ from functools import cached_property
 from typing import TypedDict
 
 import frappe
-from frappe.model.document import Document
 from frappe.utils import now_datetime
 
 from cargo.atlas_client import AtlasClient
 from cargo.image_builder.builder import Builder
 from cargo.ssh import OutputLog
+from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
+from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
@@ -28,7 +29,7 @@ class ImageDetail(TypedDict):
 	version: str
 
 
-class ImageVariant(Document):
+class ImageVariant(WorkflowBuilder):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 
@@ -149,61 +150,58 @@ class ImageVariant(Document):
 		if status != "Running" or not machine.get("ipv4_address"):
 			return
 
+		# Both in one transaction: the workflow row and the status commit together, so the
+		# engine's `retry_workflows` can always find a build whose job never started.
 		self.mark("Building")
-		frappe.enqueue_doc(
-			self.doctype,
-			self.name,
-			"start_build",
-			address=machine["ipv4_address"],
-			vm_id=self.temporary_vm_id,
-			queue="long",
-			timeout=BUILD_TIMEOUT,
-			enqueue_after_commit=True,
-		)
+		self.run_build.run_as_workflow(address=machine["ipv4_address"], vm_id=self.temporary_vm_id)
 
-	def start_build(self, address: str, vm_id: str) -> None:
-		"""Install pilot over SSH. Snapshotting is a job of its own, so that this one ends --
-		and commits its status -- before the slow part starts."""
-		builder = self.builder
-		try:
-			with OutputLog(self, "build_log") as log:
-				builder.run_provision_script_on_build_machine(
-					address,
-					self.get_password("ssh_private_key"),
-					self.provision_environment,
-					on_output=log.write,
-				)
-		except Exception:
-			builder.destroy_build_machine(vm_id)
-			self.mark("Failed", error=frappe.get_traceback(with_context=True))
-			return
+	@flow
+	def run_build(self, address: str, vm_id: str) -> None:
+		"""Bake a machine and photograph it"""
+		self.run_provision_script(address)
+		self.take_snapshot(vm_id)
+
+	@task(queue="long", timeout=BUILD_TIMEOUT)
+	def run_provision_script(self, address: str) -> None:
+		"""Install onto the build machine"""
+		with OutputLog(self, "build_log") as log:
+			self.builder.run_provision_script_on_build_machine(
+				address,
+				self.get_password("ssh_private_key"),
+				self.provision_environment,
+				on_output=log.write,
+			)
 
 		self.mark("Snapshotting")
-		frappe.enqueue_doc(
-			self.doctype,
-			self.name,
-			"take_snapshot",
-			vm_id=vm_id,
-			queue="long",
-			timeout=SNAPSHOT_TIMEOUT,
-			enqueue_after_commit=True,
-		)
 
+	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
 	def take_snapshot(self, vm_id: str) -> None:
-		"""Photograph the machine, then destroy it either way."""
+		"""Photograph the machine, then destroy it either way"""
 		builder = self.builder
 		try:
 			snapshot = builder.snapshot_build_machine(vm_id)
-		except Exception:
-			self.mark("Failed", error=frappe.get_traceback(with_context=True))
-			return
 		finally:
 			builder.destroy_build_machine(vm_id)
 
 		self.snapshot_id = snapshot
 		self.built_at = now_datetime()
 		self.temporary_vm_id = None
+		self.save(ignore_permissions=True)
+
+	def on_workflow_success(self, workflow) -> None:
 		self.mark("Available")
+
+	def on_workflow_failure(self, workflow) -> None:
+		"""Record which task failed, and make sure its machine is not left running."""
+		failed = next((row for row in workflow.steps if row.status == "Failure"), None)
+		stage = failed.step_title if failed else "Build"
+		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
+		error = (reason or workflow.workflow_traceback or "").strip()
+
+		if self.temporary_vm_id:
+			self.builder.destroy_build_machine(self.temporary_vm_id)
+
+		self.mark("Failed", error=f"{stage}\n{error}")
 
 	def mark(self, status: str, error: str | None = None) -> None:
 		self.status = status

@@ -3,7 +3,7 @@
 **Draft. Not agreed with the Atlas team yet.**
 
 Cargo asks Atlas for machines. That's all — never buckets, tenants, or services. The code
-that makes these calls is `cargo/object_storage/atlas_client.py`, so if this changes, that
+that makes these calls is `cargo/atlas_client.py`, so if this changes, that
 breaks.
 
 ## How the calls work
@@ -38,14 +38,16 @@ The header is `X-Cargo-Token`, not `Authorization`: Frappe rejects an unrecognis
 
 ## Making machines — `create_bare_vms`
 
-Cargo asks for a whole cluster in one call.
+Cargo asks for a whole cluster in one call, or for a single machine.
 
 | Send | What it is |
 |---|---|
 | `title` | A label for the group |
-| `base_image` | e.g. `ubuntu-22.04` |
-| `placement_group` | The machines wanted, below |
+| `base_image` | e.g. `ubuntu-22.04`, `ubuntu-24.04` |
+| `placement_group` | The machines wanted, below. **Omitted entirely when Cargo does not care where the machine lands** — an image build wants one machine, anywhere |
 | `ssh_public_key` | Put on every machine as root's key. Cargo keeps the private half |
+
+With no `placement_group`, send back exactly one id.
 
 ```json
 {
@@ -87,6 +89,7 @@ Send `{"name": "<vm-id>"}`. Cargo calls this every 2 minutes until the machine i
 |---|---|
 | `name` | The id |
 | `status` | `Running` when booted. `Failed`, `Error`, `Terminated`, `Archived`, `Broken` mean it's never coming up |
+| `error` | Why, when the status is one of the dead ones. Optional, and the only way Cargo can tell an operator what went wrong — a bare `Broken` leaves nothing to act on |
 | `ipv4_address` | A public address that Cargo can SSH to |
 | `server` | Which host it ended up on |
 
@@ -98,7 +101,36 @@ waiting.
 > through a hypervisor and no private network. If Atlas can't promise this, Cargo's whole
 > approach to reaching machines has to change.
 
+## Photographing a machine — `create_snapshot`
+
+Cargo builds golden images by provisioning a throwaway machine and snapshotting its disk.
+That snapshot is the image; Atlas boots later machines from it.
+
+| Send | What it is |
+|---|---|
+| `vm` | The machine to snapshot. It is running and has been provisioned |
+| `title` | What to call the snapshot. Unique per image variant, so nothing is overwritten |
+
+Send back `{"snapshot_id": "..."}`.
+
+Cargo terminates the machine straight afterwards, so the snapshot must not depend on it
+surviving.
+
+> **Not built yet.** Neither snapshot call exists on the Atlas side. Cargo's shape is a
+> guess and can move to match whatever Atlas offers.
+
+## Checking on a snapshot — `get_snapshot`
+
+Send `{"snapshot": "<snapshot-id>"}`. Cargo uses this to know when an image is usable.
+
+| Send back | What it is |
+|---|---|
+| `snapshot_id` | The id |
+| `status` | `Available` once it can be booted from |
+| `size` | Bytes, so an operator can see what a variant costs to keep |
+
 ## Throwing a machine away — `terminate_vm`
 
 Send `{"vm": "<vm-id>"}`. Cargo calls this while cleaning up, so it must be safe to call on
-a machine that's already gone.
+a machine that's already gone. Image builds call it on every path, including failures, so a
+build never leaves a machine running.
