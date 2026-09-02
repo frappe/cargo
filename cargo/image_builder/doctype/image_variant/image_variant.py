@@ -150,6 +150,7 @@ class ImageVariant(Document):
 			address=machine["ipv4_address"],
 			queue="long",
 			timeout=BUILD_TIMEOUT,
+			enqueue_after_commit=True,
 		)
 
 	def start_build(self, address: str) -> None:
