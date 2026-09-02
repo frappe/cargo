@@ -1,6 +1,7 @@
 import shlex
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import frappe
@@ -55,11 +56,19 @@ class Builder:
 		return f"{exports}\n{script}"
 
 	def run_provision_script_on_build_machine(
-		self, address: str, private_key: str, environment: dict[str, str]
+		self,
+		address: str,
+		private_key: str,
+		environment: dict[str, str],
+		on_output: Callable[[str], None] | None = None,
 	) -> str:
 		"""Run this kind's script on the machine."""
 		return run_over_ssh(
-			address, self.provision_script(environment), private_key, timeout=PROVISION_TIMEOUT
+			address,
+			self.provision_script(environment),
+			private_key,
+			timeout=PROVISION_TIMEOUT,
+			on_output=on_output,
 		)
 
 	def provision_build_machine(self, public_key: str) -> str:
