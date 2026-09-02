@@ -14,7 +14,8 @@ if typing.TYPE_CHECKING:
 	from frappe.model.document import Document
 
 SSH_TIMEOUT = 600
-LOG_FLUSH_SECONDS = 3  # how often a running command's output reaches its document
+LOG_FLUSH_SECONDS = 3  # how often a running command's output is published
+LOG_CACHE_TTL = 15 * 60
 ERROR_TAIL = 3000  # characters of output kept when a command fails
 OPTIONS = (
 	"-o",
@@ -33,10 +34,7 @@ class SshError(RuntimeError):
 
 
 class OutputLog:
-	"""Streams a command's output into a document field while it runs.
-
-	Batched: one write per line would spend the run talking to the database. Uncommitted --
-	the realtime event carries the text, and the job's own transaction persists the rest."""
+	"""Streams a command's output into a document field while it runs."""
 
 	def __init__(
 		self,
@@ -50,7 +48,7 @@ class OutputLog:
 		self.event = event
 		self.flush_seconds = flush_seconds
 		self.lines: list[str] = []
-		self.written = 0
+		self.published = 0
 		self.flushed_at = time.monotonic()
 
 	def __enter__(self) -> "OutputLog":
@@ -58,26 +56,66 @@ class OutputLog:
 
 	def __exit__(self, *exception: object) -> None:
 		self.flush()
+		self.store()
 
 	def write(self, line: str) -> None:
 		self.lines.append(line)
 		if time.monotonic() - self.flushed_at >= self.flush_seconds:
 			self.flush()
 
+	@property
+	def cache_key(self) -> str:
+		return cache_key(self.document.doctype, self.document.name, self.fieldname)
+
 	def flush(self) -> None:
-		if len(self.lines) == self.written:
+		if len(self.lines) == self.published:
 			return
 
-		self.written = len(self.lines)
+		self.published = len(self.lines)
 		self.flushed_at = time.monotonic()
 		text = "".join(self.lines)
-		self.document.db_set(self.fieldname, text, update_modified=False)
+		frappe.cache.set_value(self.cache_key, text, expires_in_sec=LOG_CACHE_TTL)
 		frappe.publish_realtime(
 			self.event,
 			{"name": self.document.name, "fieldname": self.fieldname, "value": text},
 			doctype=self.document.doctype,
 			docname=self.document.name,
 		)
+
+	def store(self) -> None:
+		"""The run is over, so the document takes over from the cache."""
+		text = "".join(self.lines)
+		if not text:
+			return
+
+		self.document.db_set(self.fieldname, text, update_modified=False)
+		frappe.cache.delete_value(self.cache_key)
+
+
+def cache_key(doctype: str, name: str, fieldname: str) -> str:
+	return f"ssh_output:{doctype}:{name}:{fieldname}"
+
+
+def live_output(document: "Document", fieldname: str) -> str:
+	"""What a command has printed so far: the cache while it runs, the field once it ends."""
+	return (
+		frappe.cache.get_value(cache_key(document.doctype, document.name, fieldname))
+		or document.get(fieldname)
+		or ""
+	)
+
+
+@frappe.whitelist()
+def get_live_output(doctype: str, name: str, fieldname: str) -> str:
+	"""`live_output` for any document, so a doctype streaming into a field needs no endpoint
+	of its own -- only the `with OutputLog(...)` around the command."""
+	document = frappe.get_doc(doctype, name)
+	document.check_permission("read")
+
+	if not document.meta.has_field(fieldname):
+		frappe.throw(_("{0} has no field {1}.").format(doctype, fieldname))
+
+	return live_output(document, fieldname)
 
 
 def run_over_ssh(

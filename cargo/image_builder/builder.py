@@ -23,12 +23,12 @@ class Builder:
 	It knows nothing about what is being installed: the image says that, through the
 	environment it hands over."""
 
-	def __init__(self, kind: str, title: str) -> None:
+	def __init__(self, kind: str, atlas_name: str) -> None:
 		if kind not in KINDS:
 			frappe.throw(_("{0} is not an image Cargo knows how to build.").format(kind))
 
 		self.kind = kind
-		self.title = title
+		self.atlas_name = atlas_name
 
 	@property
 	def client(self) -> AtlasClient:
@@ -39,7 +39,7 @@ class Builder:
 		with tempfile.TemporaryDirectory() as directory:
 			path = Path(directory) / "key"
 			subprocess.run(
-				["ssh-keygen", "-t", "ed25519", "-N", "", "-C", self.title, "-f", str(path)],
+				["ssh-keygen", "-t", "ed25519", "-N", "", "-C", self.atlas_name, "-f", str(path)],
 				check=True,
 				capture_output=True,
 			)
@@ -73,13 +73,13 @@ class Builder:
 
 	def provision_build_machine(self, public_key: str) -> str:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
-		vm_ids = self.client.create_vms(self.title, public_key=public_key, base_image=BASE_IMAGE)
+		vm_ids = self.client.create_vms(self.atlas_name, public_key=public_key, base_image=BASE_IMAGE)
 
 		return vm_ids[0]
 
 	def snapshot_build_machine(self, vm_id: str) -> str:
 		"""Photograph the baked machine. This is the image."""
-		return self.client.create_snapshot(vm_id, self.title)
+		return self.client.create_snapshot(vm_id, self.atlas_name)
 
 	def destroy_build_machine(self, vm_id: str) -> None:
 		"""Best effort: a machine left running after a failed bake still costs money."""
