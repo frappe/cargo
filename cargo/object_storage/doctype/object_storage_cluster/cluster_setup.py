@@ -180,31 +180,29 @@ class ClusterSetup:
 		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
-		"""Create the metadata bucket on one node cluster-wide."""
-		metadata_bucket = f"{self.cluster.name}-metadata"
-		metadata_bucket_key = f"{metadata_bucket}-key"
-		run_over_ssh(
-			self.machines[0]["ipv4_address"],
-			f"garage bucket create {metadata_bucket} && ",
-			self.ssh_key,
-		)
-		key_create_output = run_over_ssh(
-			self.machines[0]["ipv4_address"],
-			f"garage bucket key create {metadata_bucket} {metadata_bucket_key}",
-			self.ssh_key,
-		)
-		# Find access and secret key from the output
-		access_key_match = re.search(r"Access Key:\s*(\S+)", key_create_output)
-		secret_key_match = re.search(r"Secret Key:\s*(\S+)", key_create_output)
-		if access_key_match and secret_key_match:
-			run_over_ssh(
-				self.machines[0]["ipv4_address"],
-				f"garage bucket allow --read --write {metadata_bucket} --key {metadata_bucket_key}",
-			)
-			return MetadataBucketInfo(
-				name=metadata_bucket,
-				access_key=access_key_match.group(1),
-				secret_key=secret_key_match.group(1),
-			)
+		"""Create the metadata bucket and a key that can read and write it.
 
-		raise RuntimeError("Failed to create metadata bucket or retrieve keys.")
+		Bucket and key are made in one call so a failure to create the key cannot leave a
+		bucket nothing can reach."""
+		bucket = f"{self.cluster.name}-metadata"
+		key_name = f"{bucket}-key"
+		address = self.machines[0]["ipv4_address"]
+
+		created = run_over_ssh(
+			address,
+			f"set -e\ngarage bucket create {bucket}\ngarage key create {key_name}",
+			self.ssh_key,
+		)
+
+		access_key = re.search(r"Key ID:\s*(\S+)", created, re.IGNORECASE)
+		secret_key = re.search(r"Secret key:\s*(\S+)", created, re.IGNORECASE)
+		if not (access_key and secret_key):
+			raise SetupError(f"No key in `garage key create` output: {created.strip()[:300]}")
+
+		run_over_ssh(
+			address,
+			f"garage bucket allow --read --write {bucket} --key {key_name}",
+			self.ssh_key,
+		)
+
+		return MetadataBucketInfo(name=bucket, access_key=access_key.group(1), secret_key=secret_key.group(1))
