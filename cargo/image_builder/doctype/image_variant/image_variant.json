@@ -1,5 +1,6 @@
 {
  "actions": [],
+ "autoname": "IMV-.####",
  "creation": "2026-09-01 11:34:25.577127",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -17,6 +18,8 @@
   "section_break_artifact",
   "snapshot_id",
   "built_at",
+  "section_break_log",
+  "build_log",
   "section_break_build",
   "temporary_vm_id",
   "ssh_public_key",
@@ -31,56 +34,57 @@
    "label": "Variant"
   },
   {
+   "description": "The pilot release this is a flavour of.",
    "fieldname": "image",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Image",
    "options": "Image",
    "reqd": 1,
-   "in_list_view": 1,
-   "set_only_once": 1,
-   "description": "The pilot release this is a flavour of."
+   "set_only_once": 1
   },
   {
+   "description": "Leave blank for an image that carries no Frappe.",
    "fieldname": "frappe_version",
    "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Frappe Version",
    "options": "\nversion-15\nversion-16\ndevelop",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "set_only_once": 1,
-   "description": "Leave blank for an image that carries no Frappe."
+   "set_only_once": 1
   },
   {
+   "description": "Leave blank for an image where a site means nothing, such as a bare base.",
    "fieldname": "site",
    "fieldtype": "Select",
-   "label": "Site",
-   "options": "\nIncluded\nNot Included",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "set_only_once": 1,
-   "description": "Leave blank for an image where a site means nothing, such as a bare base."
+   "label": "Site",
+   "options": "\nIncluded\nNot Included",
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_identity",
    "fieldtype": "Column Break"
   },
   {
+   "default": "Draft",
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status",
-   "options": "Draft\nProvisioning\nBuilding\nAvailable\nFailed",
-   "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nProvisioning\nBuilding\nAvailable\nSnapshotting\nFailed",
    "read_only": 1
   },
   {
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Why the last build failed.",
    "fieldname": "error",
    "fieldtype": "Long Text",
    "label": "Error",
-   "read_only": 1,
-   "depends_on": "eval:doc.status=='Failed'",
-   "description": "Why the last build failed."
+   "max_height": "16rem",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_contents",
@@ -88,18 +92,18 @@
    "label": "Contents"
   },
   {
+   "description": "The bench inside this image.",
    "fieldname": "bench_name",
    "fieldtype": "Data",
    "label": "Bench",
-   "read_only": 1,
-   "description": "The bench inside this image."
+   "read_only": 1
   },
   {
+   "description": "The site inside this image, if it carries one.",
    "fieldname": "site_name",
    "fieldtype": "Data",
    "label": "Site",
-   "read_only": 1,
-   "description": "The site inside this image, if it carries one."
+   "read_only": 1
   },
   {
    "fieldname": "section_break_artifact",
@@ -107,11 +111,11 @@
    "label": "Snapshot"
   },
   {
+   "description": "What Atlas boots this image from.",
    "fieldname": "snapshot_id",
    "fieldtype": "Data",
    "label": "Snapshot ID",
-   "read_only": 1,
-   "description": "What Atlas boots this image from."
+   "read_only": 1
   },
   {
    "fieldname": "built_at",
@@ -120,24 +124,37 @@
    "read_only": 1
   },
   {
-   "fieldname": "section_break_build",
+   "fieldname": "section_break_log",
    "fieldtype": "Section Break",
-   "label": "Build Machine",
-   "collapsible": 1
+   "label": "Build Log"
   },
   {
+   "description": "Everything the provisioning script printed, as it printed it.",
+   "fieldname": "build_log",
+   "fieldtype": "Code",
+   "label": "Build Log",
+   "max_height": "24rem",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_build",
+   "fieldtype": "Section Break",
+   "label": "Build Machine"
+  },
+  {
+   "description": "The machine being baked. Cleared once it is snapshotted and destroyed.",
    "fieldname": "temporary_vm_id",
    "fieldtype": "Data",
    "label": "Temporary VM",
-   "read_only": 1,
-   "description": "The machine being baked. Cleared once it is snapshotted and destroyed."
+   "read_only": 1
   },
   {
+   "description": "Generated per build; the machine is destroyed after.",
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
-   "read_only": 1,
-   "description": "Generated per build; the machine is destroyed after."
+   "read_only": 1
   },
   {
    "fieldname": "column_break_build",
@@ -150,15 +167,15 @@
    "read_only": 1
   },
   {
+   "description": "The Administrator password of the site baked into this image.",
    "fieldname": "admin_password",
    "fieldtype": "Password",
    "label": "Site Admin Password",
-   "read_only": 1,
-   "description": "The Administrator password of the site baked into this image."
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-01 18:10:40.101674",
+ "modified": "2026-09-02 14:48:07.257935",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Image Variant",
@@ -180,7 +197,5 @@
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "allow_rename": 0,
- "autoname": "IMV-.####"
+ "states": []
 }

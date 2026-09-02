@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+import secrets
+import string
 from functools import cached_property
 from typing import TypedDict
 
@@ -10,11 +12,15 @@ from frappe.utils import now_datetime
 
 from cargo.atlas_client import AtlasClient
 from cargo.image_builder.builder import Builder
+from cargo.ssh import OutputLog
 
 BUILD_TIMEOUT = 3600
+SNAPSHOT_TIMEOUT = 1800
 DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 SITE_DOMAIN = "frappe.cloud"
 NAME_LENGTH = 8
+PASSWORD_LENGTH = 24
+PASSWORD_GROUPS = (string.ascii_uppercase, string.ascii_lowercase, string.digits, "!@#%^*+-=_")
 
 
 class ImageDetail(TypedDict):
@@ -33,6 +39,7 @@ class ImageVariant(Document):
 
 		admin_password: DF.Password | None
 		bench_name: DF.Data | None
+		build_log: DF.Code | None
 		built_at: DF.Datetime | None
 		error: DF.LongText | None
 		frappe_version: DF.Literal["", "version-15", "version-16", "develop"]
@@ -42,7 +49,7 @@ class ImageVariant(Document):
 		snapshot_id: DF.Data | None
 		ssh_private_key: DF.Password | None
 		ssh_public_key: DF.SmallText | None
-		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Failed"]
+		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Snapshotting", "Failed"]
 		temporary_vm_id: DF.Data | None
 	# end: auto-generated types
 
@@ -77,13 +84,13 @@ class ImageVariant(Document):
 		return frappe.db.get_value("Image", self.image, ["kind", "version"], as_dict=True, cache=True)
 
 	@property
-	def title(self) -> str:
+	def atlas_name(self) -> str:
 		"""What the build machine and its snapshot are called at Atlas."""
-		return "-".join(part for part in (self.image, self.frappe_version) if part)
+		return "-".join(part for part in (self.image, self.frappe_version, self.name) if part)
 
 	@property
 	def builder(self) -> Builder:
-		return Builder(self.image_details.kind, self.title)
+		return Builder(self.image_details.kind, self.atlas_name)
 
 	@property
 	def provision_environment(self) -> dict[str, str]:
@@ -126,7 +133,7 @@ class ImageVariant(Document):
 		public_key, private_key = self.builder.create_keypair()
 		self.ssh_public_key = public_key
 		self.ssh_private_key = private_key
-		self.admin_password = frappe.generate_hash(length=32)
+		self.admin_password = generate_admin_password()
 		self.temporary_vm_id = self.builder.provision_build_machine(public_key=public_key)
 		self.mark("Provisioning")
 
@@ -148,24 +155,50 @@ class ImageVariant(Document):
 			self.name,
 			"start_build",
 			address=machine["ipv4_address"],
+			vm_id=self.temporary_vm_id,
 			queue="long",
 			timeout=BUILD_TIMEOUT,
 			enqueue_after_commit=True,
 		)
 
-	def start_build(self, address: str) -> None:
-		"""Install pilot over SSH, snapshot the machine, then throw it away."""
+	def start_build(self, address: str, vm_id: str) -> None:
+		"""Install pilot over SSH. Snapshotting is a job of its own, so that this one ends --
+		and commits its status -- before the slow part starts."""
 		builder = self.builder
 		try:
-			builder.run_provision_script_on_build_machine(
-				address, self.get_password("ssh_private_key"), self.provision_environment
-			)
-			snapshot = builder.snapshot_build_machine(self.temporary_vm_id)
-		except Exception as exception:
-			self.mark("Failed", error=str(exception))
-			raise
+			with OutputLog(self, "build_log") as log:
+				builder.run_provision_script_on_build_machine(
+					address,
+					self.get_password("ssh_private_key"),
+					self.provision_environment,
+					on_output=log.write,
+				)
+		except Exception:
+			builder.destroy_build_machine(vm_id)
+			self.mark("Failed", error=frappe.get_traceback(with_context=True))
+			return
+
+		self.mark("Snapshotting")
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"take_snapshot",
+			vm_id=vm_id,
+			queue="long",
+			timeout=SNAPSHOT_TIMEOUT,
+			enqueue_after_commit=True,
+		)
+
+	def take_snapshot(self, vm_id: str) -> None:
+		"""Photograph the machine, then destroy it either way."""
+		builder = self.builder
+		try:
+			snapshot = builder.snapshot_build_machine(vm_id)
+		except Exception:
+			self.mark("Failed", error=frappe.get_traceback(with_context=True))
+			return
 		finally:
-			builder.destroy_build_machine(self.temporary_vm_id)
+			builder.destroy_build_machine(vm_id)
 
 		self.snapshot_id = snapshot
 		self.built_at = now_datetime()
@@ -176,6 +209,16 @@ class ImageVariant(Document):
 		self.status = status
 		self.error = error
 		self.save(ignore_permissions=True)
+
+
+def generate_admin_password() -> str:
+	"""A password pilot will accept: upper, lower, digit and symbol."""
+	characters = [secrets.choice(group) for group in PASSWORD_GROUPS]
+	pool = "".join(PASSWORD_GROUPS)
+	characters += [secrets.choice(pool) for _ in range(PASSWORD_LENGTH - len(PASSWORD_GROUPS))]
+	secrets.SystemRandom().shuffle(characters)
+
+	return "".join(characters)
 
 
 def sync_build_machines() -> None:
