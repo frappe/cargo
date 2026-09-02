@@ -3,21 +3,16 @@
 
 from __future__ import annotations
 
-import typing
-
 import frappe
 from frappe import _
 
-from cargo.object_storage.atlas_client import AtlasClient
-from cargo.object_storage.central_client import CentralClient
+from cargo.atlas_client import AtlasClient
+from cargo.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
 from cargo.service_cluster import ServiceCluster
 from cargo.workflow_engine.doctype.press_workflow.decorators import task
-
-if typing.TYPE_CHECKING:
-	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
 class ObjectStorageCluster(ServiceCluster):
@@ -44,6 +39,9 @@ class ObjectStorageCluster(ServiceCluster):
 		garage_version: DF.Data
 		gateway_disk_gb: DF.Int
 		k2v_port: DF.Int
+		metadata_bucket: DF.Data | None
+		metadata_bucket_access_key: DF.Data | None
+		metadata_bucket_secret_key: DF.Password | None
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
@@ -96,20 +94,6 @@ class ObjectStorageCluster(ServiceCluster):
 			],
 		)
 
-	def atlas_client(self) -> AtlasClient:
-		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-
-		return AtlasClient(
-			url=settings.atlas_url,
-			token=settings.get_password("atlas_access_token"),
-			public_key=self.ssh_public_key,
-		)
-
-	def central_client(self) -> CentralClient:
-		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-
-		return CentralClient(url=settings.central_url, token=settings.get_password("central_access_token"))
-
 	@frappe.whitelist()
 	def provision(self) -> None:
 		"""Ask Atlas for the machines. Fast: ids come back without waiting for boots."""
@@ -123,10 +107,11 @@ class ObjectStorageCluster(ServiceCluster):
 		"""Record one `Machine` per VM id Atlas returns."""
 		placement = self.placement()
 		try:
-			vm_ids = self.atlas_client().create_vms(
+			vm_ids = AtlasClient.from_settings().create_vms(
 				title=f"{self.name} object storage",
 				placement=placement,
 				base_image=self.base_image,
+				public_key=self.ssh_public_key,
 			)
 		except Exception as exception:
 			self.mark("Failed", error=str(exception))
@@ -154,7 +139,7 @@ class ObjectStorageCluster(ServiceCluster):
 
 	def sync_machines(self) -> None:
 		"""Refresh pending machines, then move the cluster on if they settled."""
-		client = self.atlas_client()
+		client = AtlasClient.from_settings()
 		for name in self.machine_names(status="Pending"):
 			frappe.get_doc("Machine", name).sync(client)
 
@@ -185,7 +170,7 @@ class ObjectStorageCluster(ServiceCluster):
 			return
 
 		try:
-			tokens = self.central_client().get_required_credentials(
+			tokens = CentralClient.from_settings().get_required_credentials(
 				region=self.region, vm_ids=self.machine_names(), required=REQUIRED_CREDENTIALS
 			)
 		except Exception as exception:
@@ -200,6 +185,15 @@ class ObjectStorageCluster(ServiceCluster):
 		"""Install Garage and lay the cluster out"""
 		setup = ClusterSetup(self)
 		setup.assign_layout(setup.bootstrap_machines())
+		metadata_bucket_info = setup.create_metadata_bucket()
+		self.update(
+			{
+				"metadata_bucket": metadata_bucket_info["name"],
+				"metadata_bucket_access_key": metadata_bucket_info["access_key"],
+				"metadata_bucket_secret_key": metadata_bucket_info["secret_key"],
+			}
+		)
+		self.save()
 
 	@task
 	def verify(self) -> None:
@@ -217,7 +211,7 @@ class ObjectStorageCluster(ServiceCluster):
 	def register(self) -> None:
 		"""Register the cluster with Central"""
 		gateway = self.gateway_address()
-		self.central_client().register_cluster(
+		CentralClient.from_settings().register_cluster(
 			region=self.region,
 			base_url=f"http://{gateway}:{self.admin_port}",
 			s3_endpoint=f"http://{gateway}:{self.s3_port}",

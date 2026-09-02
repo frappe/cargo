@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import os
 import re
-import stat
-import subprocess
-import tempfile
 import typing
 from functools import cached_property
 from typing import TypedDict
@@ -14,6 +10,7 @@ from frappe import _
 
 from cargo.object_storage.client_models import STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
+from cargo.ssh import SshError, run_over_ssh
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -26,7 +23,6 @@ INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 
-SSH_TIMEOUT = 600
 
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
 MachineName = str
@@ -46,7 +42,15 @@ class MachineRow(TypedDict):
 	ipv4_address: str
 
 
-class SetupError(RuntimeError):
+class MetadataBucketInfo(TypedDict):
+	"""The metadata bucket and its credentials."""
+
+	name: str
+	access_key: str
+	secret_key: str
+
+
+class SetupError(SshError):
 	"""A node failed to set up."""
 
 
@@ -175,44 +179,30 @@ class ClusterSetup:
 
 		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
+	def create_metadata_bucket(self) -> MetadataBucketInfo:
+		"""Create the metadata bucket and a key that can read and write it.
 
-def run_over_ssh(address: str, script: str, key: str | None, user: str = "root") -> str:
-	"""Pipe a script to ``bash -s`` and return its stdout."""
-	if not key:
-		frappe.throw(_("This cluster has no SSH private key; its machines cannot be reached."))
+		Bucket and key are made in one call so a failure to create the key cannot leave a
+		bucket nothing can reach."""
+		bucket = f"{self.cluster.name}-metadata"
+		key_name = f"{bucket}-key"
+		address = self.machines[0]["ipv4_address"]
 
-	with tempfile.NamedTemporaryFile("w", delete=False) as key_file:
-		key_file.write(key if key.endswith("\n") else f"{key}\n")
-		path = key_file.name
-	os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-
-	try:
-		result = subprocess.run(
-			[
-				"ssh",
-				"-i",
-				path,
-				"-o",
-				"IdentitiesOnly=yes",
-				"-o",
-				"StrictHostKeyChecking=accept-new",
-				"-o",
-				"UserKnownHostsFile=/dev/null",
-				"-o",
-				"ConnectTimeout=15",
-				f"{user}@{address}",
-				"bash -s",
-			],
-			input=script,
-			capture_output=True,
-			text=True,
-			timeout=SSH_TIMEOUT,
-			check=False,
+		created = run_over_ssh(
+			address,
+			f"set -e\ngarage bucket create {bucket}\ngarage key create {key_name}",
+			self.ssh_key,
 		)
-	finally:
-		os.unlink(path)
 
-	if result.returncode != 0:
-		raise SetupError(f"{address}: {(result.stderr or result.stdout).strip()[:500]}")
+		access_key = re.search(r"Key ID:\s*(\S+)", created, re.IGNORECASE)
+		secret_key = re.search(r"Secret key:\s*(\S+)", created, re.IGNORECASE)
+		if not (access_key and secret_key):
+			raise SetupError(f"No key in `garage key create` output: {created.strip()[:300]}")
 
-	return result.stdout
+		run_over_ssh(
+			address,
+			f"garage bucket allow --read --write {bucket} --key {key_name}",
+			self.ssh_key,
+		)
+
+		return MetadataBucketInfo(name=bucket, access_key=access_key.group(1), secret_key=secret_key.group(1))

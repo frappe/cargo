@@ -10,7 +10,7 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 
-ENROLMENT_VARS = ("CENTRAL_URL", "ATLAS_URL", "CENTRAL_BOOTSTRAPPING_TOKEN")
+ENROLMENT_VARS = ("CENTRAL_URL", "ATLAS_URL", "REGION", "CENTRAL_BOOTSTRAPPING_TOKEN")
 
 
 def after_install() -> None:
@@ -28,10 +28,11 @@ def record_bootstrapping_token() -> None:
 	settings: CargoSettings = frappe.get_single("Cargo Settings")
 	settings.central_url = os.getenv("CENTRAL_URL")
 	settings.atlas_url = os.getenv("ATLAS_URL")
+	settings.region = os.getenv("REGION")
 	settings.central_bootstrapping_token = os.getenv("CENTRAL_BOOTSTRAPPING_TOKEN")
 
-	if not (settings.central_url and settings.atlas_url and settings.central_bootstrapping_token):
-		frappe.throw(_("Set CENTRAL_URL, ATLAS_URL and CENTRAL_BOOTSTRAPPING_TOKEN before installing Cargo."))
+	if not all(os.getenv(name) for name in ENROLMENT_VARS):
+		frappe.throw(_("Set {0} before installing Cargo.").format(", ".join(ENROLMENT_VARS)))
 
 	settings.save(ignore_permissions=True)
 

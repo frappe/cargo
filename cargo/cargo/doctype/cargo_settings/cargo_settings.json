@@ -5,6 +5,7 @@
  "engine": "InnoDB",
  "field_order": [
   "section_break_central",
+  "region",
   "central_url",
   "central_bootstrapping_token",
   "central_access_token",
@@ -18,6 +19,13 @@
    "fieldname": "section_break_central",
    "fieldtype": "Section Break",
    "label": "Central"
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "reqd": 1,
+   "description": "Which region this Cargo provisions for. Set by setup.sh."
   },
   {
    "fieldname": "central_url",

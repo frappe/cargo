@@ -1,14 +1,16 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "format:OSC-{region}-{####}",
- "creation": "2026-08-28 00:00:00.000000",
+ "creation": "2026-08-28 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_cluster",
   "region",
   "base_image",
+  "metadata_bucket",
+  "metadata_bucket_access_key",
+  "metadata_bucket_secret_key",
   "column_break_cluster",
   "status",
   "error",
@@ -57,304 +59,320 @@
    "label": "Cluster"
   },
   {
+   "description": "Atlas region to build in. Also Garage's S3 region name.",
    "fieldname": "region",
    "fieldtype": "Data",
-   "label": "Region",
-   "reqd": 1,
-   "set_only_once": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "Atlas region to build in. Also Garage's S3 region name."
+   "label": "Region",
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
+   "default": "ubuntu-22.04",
+   "description": "Image every machine boots from.",
    "fieldname": "base_image",
    "fieldtype": "Data",
    "label": "Base Image",
-   "reqd": 1,
-   "default": "ubuntu-22.04",
-   "description": "Image every machine boots from."
+   "reqd": 1
   },
   {
    "fieldname": "column_break_cluster",
    "fieldtype": "Column Break"
   },
   {
+   "default": "Draft",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure.\nActive \u2014 Garage is running and Central can use it.",
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status",
-   "read_only": 1,
-   "default": "Draft",
    "in_list_view": 1,
    "in_standard_filter": 1,
+   "label": "Status",
    "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nActive\nFailed",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure.\nActive \u2014 Garage is running and Central can use it."
+   "read_only": 1
   },
   {
+   "depends_on": "error",
+   "description": "Why the last step failed.",
    "fieldname": "error",
    "fieldtype": "Small Text",
    "label": "Error",
-   "read_only": 1,
-   "depends_on": "error",
-   "description": "Why the last step failed."
+   "read_only": 1
   },
   {
+   "description": "Machine count and how safely data is spread.",
    "fieldname": "section_break_topology",
    "fieldtype": "Section Break",
-   "label": "Topology",
-   "description": "Machine count and how safely data is spread."
+   "label": "Topology"
   },
   {
+   "default": "3",
+   "description": "Machines holding data. A gateway is always added, so 3 here builds 4 machines.",
    "fieldname": "storage_count",
    "fieldtype": "Int",
-   "label": "Storage Nodes",
-   "reqd": 1,
-   "default": "3",
    "in_list_view": 1,
-   "description": "Machines holding data. A gateway is always added, so 3 here builds 4 machines."
+   "label": "Storage Nodes",
+   "reqd": 1
   },
   {
+   "default": "3",
+   "description": "Copies of each object. Can't exceed the storage node count.",
    "fieldname": "replication_factor",
    "fieldtype": "Int",
    "label": "Replication Factor",
-   "reqd": 1,
-   "default": "3",
-   "description": "Copies of each object. Can't exceed the storage node count."
+   "reqd": 1
   },
   {
    "fieldname": "column_break_placement",
    "fieldtype": "Column Break"
   },
   {
+   "default": "partition",
+   "description": "Not enforced by Atlas yet.",
    "fieldname": "strategy",
    "fieldtype": "Select",
    "label": "Placement Strategy",
-   "default": "partition",
-   "options": "partition\nspread\npack",
-   "description": "Not enforced by Atlas yet."
+   "options": "partition\nspread\npack"
   },
   {
+   "default": "rack",
+   "description": "Failure domain to spread across, e.g. rack or host.",
    "fieldname": "topology_key",
    "fieldtype": "Data",
-   "label": "Topology Key",
-   "default": "rack",
-   "description": "Failure domain to spread across, e.g. rack or host."
+   "label": "Topology Key"
   },
   {
+   "default": "2",
+   "description": "How many domains to use.",
    "fieldname": "partition_count",
    "fieldtype": "Int",
-   "label": "Partition Count",
-   "default": "2",
-   "description": "How many domains to use."
+   "label": "Partition Count"
   },
   {
+   "description": "vCPU and RAM apply to every machine; disks differ by role.",
    "fieldname": "section_break_spec",
    "fieldtype": "Section Break",
-   "label": "Machine Spec",
-   "description": "vCPU and RAM apply to every machine; disks differ by role."
+   "label": "Machine Spec"
   },
   {
+   "default": "2",
+   "description": "Per machine.",
    "fieldname": "cpu",
    "fieldtype": "Int",
    "label": "vCPUs",
-   "reqd": 1,
-   "default": "2",
-   "description": "Per machine."
+   "reqd": 1
   },
   {
+   "default": "4",
+   "description": "Per machine. Grows with object count.",
    "fieldname": "ram_gb",
    "fieldtype": "Int",
    "label": "RAM (GB)",
-   "reqd": 1,
-   "default": "4",
-   "description": "Per machine. Grows with object count."
+   "reqd": 1
   },
   {
    "fieldname": "column_break_spec",
    "fieldtype": "Column Break"
   },
   {
+   "default": "100",
+   "description": "Per storage node.",
    "fieldname": "disk_gb",
    "fieldtype": "Int",
    "label": "Storage Disk (GB)",
-   "reqd": 1,
-   "default": "100",
-   "description": "Per storage node."
+   "reqd": 1
   },
   {
+   "default": "20",
+   "description": "Gateways proxy only, so they need very little.",
    "fieldname": "gateway_disk_gb",
    "fieldtype": "Int",
    "label": "Gateway Disk (GB)",
-   "reqd": 1,
-   "default": "20",
-   "description": "Gateways proxy only, so they need very little."
+   "reqd": 1
   },
   {
+   "description": "Key pair stamped onto this cluster's machines. Both halves needed.",
    "fieldname": "section_break_access",
    "fieldtype": "Section Break",
-   "label": "Machine Access",
-   "description": "Key pair stamped onto this cluster's machines. Both halves needed."
+   "label": "Machine Access"
   },
   {
+   "description": "Installed as root's key on every machine. Can't change once they exist.",
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
    "reqd": 1,
-   "set_only_once": 1,
-   "description": "Installed as root's key on every machine. Can't change once they exist."
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_access",
    "fieldtype": "Column Break"
   },
   {
+   "description": "The matching half, used to reach the machines.",
    "fieldname": "ssh_private_key",
    "fieldtype": "Password",
    "label": "SSH Private Key",
-   "reqd": 1,
-   "description": "The matching half, used to reach the machines."
+   "reqd": 1
   },
   {
+   "collapsible": 1,
+   "description": "Defaults suit a normal cluster.",
    "fieldname": "section_break_garage",
    "fieldtype": "Section Break",
-   "label": "Garage",
-   "collapsible": 1,
-   "description": "Defaults suit a normal cluster."
+   "label": "Garage"
   },
   {
+   "default": "v2.3.0",
+   "description": "Release tag, e.g. v2.3.0.",
    "fieldname": "garage_version",
    "fieldtype": "Data",
    "label": "Version",
-   "reqd": 1,
-   "default": "v2.3.0",
-   "description": "Release tag, e.g. v2.3.0."
+   "reqd": 1
   },
   {
+   "default": "x86_64-unknown-linux-musl",
+   "description": "Must match the base image.",
    "fieldname": "garage_arch",
    "fieldtype": "Data",
    "label": "Architecture",
-   "reqd": 1,
-   "default": "x86_64-unknown-linux-musl",
-   "description": "Must match the base image."
+   "reqd": 1
   },
   {
+   "default": "/usr/local/bin/garage",
+   "description": "Where the binary lands on each machine.",
    "fieldname": "garage_binary",
    "fieldtype": "Data",
    "label": "Binary Path",
-   "reqd": 1,
-   "default": "/usr/local/bin/garage",
-   "description": "Where the binary lands on each machine."
+   "reqd": 1
   },
   {
    "fieldname": "column_break_garage",
    "fieldtype": "Column Break"
   },
   {
+   "default": "/var/lib/garage/meta",
+   "description": "Node identity and index. Small, but losing it loses the node.",
    "fieldname": "metadata_dir",
    "fieldtype": "Data",
    "label": "Metadata Directory",
-   "reqd": 1,
-   "default": "/var/lib/garage/meta",
-   "description": "Node identity and index. Small, but losing it loses the node."
+   "reqd": 1
   },
   {
+   "default": "/var/lib/garage/data",
+   "description": "Where objects live. Put the big disk here.",
    "fieldname": "data_dir",
    "fieldtype": "Data",
    "label": "Data Directory",
-   "reqd": 1,
-   "default": "/var/lib/garage/data",
-   "description": "Where objects live. Put the big disk here."
+   "reqd": 1
   },
   {
+   "default": "frappe.cloud",
+   "description": "Buckets served at .s3... Needs wildcard DNS.",
    "fieldname": "base_domain",
    "fieldtype": "Data",
    "label": "Base Domain",
-   "reqd": 1,
-   "default": "frappe.cloud",
-   "description": "Buckets served at <bucket>.s3.<region>.<this>. Needs wildcard DNS."
+   "reqd": 1
   },
   {
+   "collapsible": 1,
+   "description": "Garage's defaults. Every machine binds all five.",
    "fieldname": "section_break_ports",
    "fieldtype": "Section Break",
-   "label": "Ports",
-   "collapsible": 1,
-   "description": "Garage's defaults. Every machine binds all five."
+   "label": "Ports"
   },
   {
+   "default": "3900",
+   "description": "Where benches and Central speak S3.",
    "fieldname": "s3_port",
    "fieldtype": "Int",
    "label": "S3 API",
-   "reqd": 1,
-   "default": "3900",
-   "description": "Where benches and Central speak S3."
+   "reqd": 1
   },
   {
+   "default": "3901",
+   "description": "Node to node. Must be open between machines.",
    "fieldname": "rpc_port",
    "fieldtype": "Int",
    "label": "RPC",
-   "reqd": 1,
-   "default": "3901",
-   "description": "Node to node. Must be open between machines."
+   "reqd": 1
   },
   {
+   "default": "3902",
+   "description": "Serves buckets as static sites.",
    "fieldname": "web_port",
    "fieldtype": "Int",
    "label": "Web",
-   "reqd": 1,
-   "default": "3902",
-   "description": "Serves buckets as static sites."
+   "reqd": 1
   },
   {
    "fieldname": "column_break_ports",
    "fieldtype": "Column Break"
   },
   {
+   "default": "3903",
+   "description": "Layout and bucket management. Keep it private.",
    "fieldname": "admin_port",
    "fieldtype": "Int",
    "label": "Admin API",
-   "reqd": 1,
-   "default": "3903",
-   "description": "Layout and bucket management. Keep it private."
+   "reqd": 1
   },
   {
+   "default": "3904",
+   "description": "Garage's key-value API. Unused.",
    "fieldname": "k2v_port",
    "fieldtype": "Int",
    "label": "K2V API",
-   "reqd": 1,
-   "default": "3904",
-   "description": "Garage's key-value API. Unused."
+   "reqd": 1
   },
   {
-   "fieldname": "section_break_secrets",
-   "fieldtype": "Section Break",
-   "label": "Cluster Secrets",
    "collapsible": 1,
    "depends_on": "eval:doc.status == 'Credentials Minted'",
-   "description": "Issued by Central. Identical on every node \u2014 that is what makes them one cluster."
+   "description": "Issued by Central. Identical on every node \u2014 that is what makes them one cluster.",
+   "fieldname": "section_break_secrets",
+   "fieldtype": "Section Break",
+   "label": "Cluster Secrets"
   },
   {
+   "description": "Authenticates nodes to each other.",
    "fieldname": "rpc_secret",
    "fieldtype": "Password",
    "label": "RPC Secret",
-   "read_only": 1,
-   "description": "Authenticates nodes to each other."
+   "read_only": 1
   },
   {
+   "description": "Full admin access. Central gets a narrower one.",
    "fieldname": "admin_token",
    "fieldtype": "Password",
    "label": "Admin Token",
-   "read_only": 1,
-   "description": "Full admin access. Central gets a narrower one."
+   "read_only": 1
   },
   {
    "fieldname": "column_break_secrets",
    "fieldtype": "Column Break"
   },
   {
+   "description": "Read-only Prometheus access.",
    "fieldname": "metrics_token",
    "fieldtype": "Password",
    "label": "Metrics Token",
-   "read_only": 1,
-   "description": "Read-only Prometheus access."
+   "read_only": 1
+  },
+  {
+   "description": "Add a metadata bucket service to store firecracker images.",
+   "fieldname": "metadata_bucket",
+   "fieldtype": "Data",
+   "label": "Metadata Bucket"
+  },
+  {
+   "fieldname": "metadata_bucket_access_key",
+   "fieldtype": "Data",
+   "label": "Metadata Bucket Access Key"
+  },
+  {
+   "fieldname": "metadata_bucket_secret_key",
+   "fieldtype": "Password",
+   "label": "Metadata Bucket Secret Key"
   }
  ],
  "grid_page_length": 50,
@@ -366,10 +384,11 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-08-28 00:00:00.000000",
+ "modified": "2026-09-01 15:56:48.061216",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {

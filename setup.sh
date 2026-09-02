@@ -18,14 +18,15 @@ SITE_PASSWORD="${SITE_PASSWORD:-}"     # the site's Frappe Administrator
 CENTRAL_BOOTSTRAPPING_TOKEN="${CENTRAL_BOOTSTRAPPING_TOKEN:-}"  # Central's token for this host
 CENTRAL_URL="${CENTRAL_URL:-}" # Central's URL for this host to call back to
 ATLAS_URL="${ATLAS_URL:-}" # Atlas's URL for this host to call back to
+REGION="${REGION:-}" # which region this Cargo provisions for
 
 if [ -z "$PILOT_ADMIN_PASSWORD" ] || [ -z "$SITE_PASSWORD" ]; then
 	echo "Set PILOT_ADMIN_PASSWORD and SITE_PASSWORD before running." >&2
 	exit 1
 fi
 
-if [ -z "$CENTRAL_BOOTSTRAPPING_TOKEN" ] || [ -z "$CENTRAL_URL" ] || [ -z "$ATLAS_URL" ]; then
-	echo "Set CENTRAL_BOOTSTRAPPING_TOKEN, CENTRAL_URL and ATLAS_URL before running." >&2
+if [ -z "$CENTRAL_BOOTSTRAPPING_TOKEN" ] || [ -z "$CENTRAL_URL" ] || [ -z "$ATLAS_URL" ] || [ -z "$REGION" ]; then
+	echo "Set CENTRAL_BOOTSTRAPPING_TOKEN, CENTRAL_URL, ATLAS_URL and REGION before running." >&2
 	echo "The token comes from this host's Cargo Instance in Central." >&2
 	exit 1
 fi
@@ -38,5 +39,5 @@ pilot --yes new "$BENCH" --database mariadb --admin-password "$PILOT_ADMIN_PASSW
 pilot --yes -b "$BENCH" new-site "$SITE" --admin-password "$SITE_PASSWORD"
 pilot --yes -b "$BENCH" get-app "$REPO" "$BRANCH" --install-dependencies
 # The install hook reads these and enrols the host with Central.
-export CENTRAL_BOOTSTRAPPING_TOKEN CENTRAL_URL ATLAS_URL
+export CENTRAL_BOOTSTRAPPING_TOKEN CENTRAL_URL ATLAS_URL REGION
 pilot --yes -b "$BENCH" install-app "$SITE" cargo

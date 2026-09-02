@@ -1,8 +1,7 @@
 # What Cargo and Central say to each other
 
 Every call runs one way: **Cargo calls Central.** Central never calls Cargo. Cargo's side is
-`cargo/central_client.py` (the transport) and `cargo/object_storage/central_client.py` (the
-calls object storage makes). Central's side is `central/api/cargo.py`.
+`cargo/central_client.py`. Central's side is `central/api/cargo.py`.
 
 ## How the calls work
 

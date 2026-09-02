@@ -267,7 +267,12 @@ scheduler_events = {
 	"cron": {
 		# Machines boot on their own clock; walk the pending ones to Running.
 		"*/2 * * * *": [
-			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.sync_pending_machines"
+			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.sync_pending_machines",
+			"cargo.image_builder.doctype.image_variant.image_variant.sync_build_machines",
+		],
+		"* * * * *": [
+			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
+			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
 		],
 	},
 }
