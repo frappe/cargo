@@ -25,10 +25,8 @@ sync
 
 
 class Builder:
-	"""Rents a machine, runs one script on it, photographs it, throws it away.
-
-	It knows nothing about what is being installed: the image says that, through the
-	environment it hands over."""
+	"""Rents a machine, runs one script on it, photographs it, throws it away. What the
+	script installs is the image's business, passed in through the environment."""
 
 	def __init__(self, kind: str, atlas_name: str) -> None:
 		if kind not in KINDS:

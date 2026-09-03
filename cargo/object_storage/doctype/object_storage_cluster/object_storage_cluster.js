@@ -5,6 +5,34 @@ frappe.ui.form.on("Object Storage Cluster", {
 	refresh(frm) {
 		if (frm.is_new()) return;
 
+		// Setup writes its log as it runs, so follow it rather than making the operator
+		// reload. frappe.realtime.off first, or a re-render subscribes twice.
+		frappe.realtime.off("ssh_output");
+		frappe.realtime.on("ssh_output", ({ name, fieldname, value }) => {
+			if (name !== frm.doc.name) return;
+			frm.doc[fieldname] = value;
+			frm.refresh_field(fieldname);
+			scroll_to_latest(frm, fieldname);
+		});
+
+		// While setup runs its log is in the cache, not the row, so a reload has to ask.
+		if (frm.doc.status === "Setting Up") {
+			frappe
+				.xcall("cargo.ssh.get_live_output", {
+					doctype: frm.doctype,
+					name: frm.doc.name,
+					fieldname: "setup_log",
+				})
+				.then((value) => {
+					if (!value) return;
+					frm.doc.setup_log = value;
+					frm.refresh_field("setup_log");
+					scroll_to_latest(frm, "setup_log");
+				});
+		} else {
+			scroll_to_latest(frm, "setup_log");
+		}
+
 		if (frm.doc.status === "Draft") {
 			frm.add_custom_button(__("Provision"), () => {
 				frappe.confirm(
@@ -14,9 +42,23 @@ frappe.ui.form.on("Object Storage Cluster", {
 					() =>
 						frm.call("provision").then(() => {
 							frappe.show_alert({
-								message: __("Machines requested. They appear here as they boot."),
-								indicator: "green",
+								message: __("Requested. Watch the status here."),
+								indicator: "blue",
 							});
+							frm.reload_doc();
+						})
+				);
+			}).addClass("btn-primary");
+		}
+
+		if (["Machines Ready", "Minting Failed"].includes(frm.doc.status)) {
+			frm.add_custom_button(__("Mint Credentials"), () => {
+				frappe.confirm(
+					__(
+						"Ask Central for this cluster's secrets? Asking again is safe: Central answers the same secrets for a region every time."
+					),
+					() =>
+						frm.call("mint_credentials").then(() => {
 							frm.reload_doc();
 						})
 				);
@@ -48,9 +90,30 @@ frappe.ui.form.on("Object Storage Cluster", {
 		const headlines = {
 			Pending: __("Waiting for machines to boot."),
 			"Machines Ready": __("Machines are up. Asking Central for the cluster's secrets."),
+			"Minting Failed": __(
+				"Central would not issue the cluster's secrets. See Error below, then mint again."
+			),
 			"Credentials Minted": __("Secrets issued. Ready to install Garage."),
+			"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
 			Active: __("Garage is running and Central can use this cluster."),
+			Failed: __("The last run failed. See Error below."),
 		};
 		if (headlines[frm.doc.status]) frm.dashboard.set_headline(headlines[frm.doc.status]);
 	},
 });
+
+// A capped log box is only useful if it shows the end of the log. The Code control loads
+// ace lazily and sets its value inside that promise, so scrolling has to queue behind it --
+// scrolling straight after refresh_field runs before the new text is in the editor.
+function scroll_to_latest(frm, fieldname) {
+	const field = frm.get_field(fieldname);
+	if (!field?.load_lib) return;
+
+	field.load_lib().then(() => {
+		const editor = field.editor;
+		if (!editor) return;
+		const last_line = editor.session.getLength();
+		editor.navigateFileEnd();
+		editor.renderer.scrollToRow(last_line);
+	});
+}

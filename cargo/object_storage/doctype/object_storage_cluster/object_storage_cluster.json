@@ -50,7 +50,9 @@
   "rpc_secret",
   "admin_token",
   "column_break_secrets",
-  "metrics_token"
+  "metrics_token",
+  "section_break_log",
+  "setup_log"
  ],
  "fields": [
   {
@@ -82,22 +84,23 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure.\nActive \u2014 Garage is running and Central can use it.",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Retried every two minutes.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nActive\nFailed",
+   "options": "Draft\nPending\nMachines Ready\nMinting Failed\nCredentials Minted\nSetting Up\nActive\nFailed",
    "read_only": 1
   },
   {
    "depends_on": "error",
    "description": "Why the last step failed.",
    "fieldname": "error",
-   "fieldtype": "Small Text",
+   "fieldtype": "Long Text",
    "label": "Error",
-   "read_only": 1
+   "read_only": 1,
+   "max_height": "16rem"
   },
   {
    "description": "Machine count and how safely data is spread.",
@@ -378,6 +381,19 @@
    "fieldtype": "Password",
    "label": "Metadata Bucket Secret Key",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_log",
+   "fieldtype": "Section Break",
+   "label": "Setup Log"
+  },
+  {
+   "fieldname": "setup_log",
+   "fieldtype": "Code",
+   "label": "Setup Log",
+   "read_only": 1,
+   "max_height": "24rem",
+   "description": "Everything the install script printed on every machine, as it printed it."
   }
  ],
  "grid_page_length": 50,

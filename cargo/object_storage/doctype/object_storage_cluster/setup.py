@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 import typing
+from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
 from typing import TypedDict
@@ -55,8 +56,9 @@ class SetupError(SshError):
 class ClusterSetup:
 	"""Turns a cluster's machines into running Garage nodes."""
 
-	def __init__(self, cluster: ObjectStorageCluster):
+	def __init__(self, cluster: ObjectStorageCluster, on_output: Callable[[str], None] | None = None):
 		self.cluster = cluster
+		self.on_output = on_output
 		self.secrets = {
 			name: cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
 		}
@@ -77,6 +79,10 @@ class ClusterSetup:
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
 
+	def run(self, address: str, script: str) -> str:
+		"""Every command the setup runs, so all of them stream into the same log."""
+		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
+
 	def layout_version(self) -> int:
 		"""The applied layout version. Zero means nothing has been applied yet.
 
@@ -84,7 +90,7 @@ class ClusterSetup:
 		staged changes, so a staged-but-unapplied layout would otherwise look finished.
 		"""
 		try:
-			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage layout show", self.ssh_key)
+			shown = self.run(self.machines[0]["ipv4_address"], "garage layout show")
 		except SetupError:
 			return 0
 
@@ -96,7 +102,7 @@ class ClusterSetup:
 		"""The machine names Garage reports as healthy, read from the node tags setup
 		assigned."""
 		try:
-			shown = run_over_ssh(self.machines[0]["ipv4_address"], "garage status", self.ssh_key)
+			shown = self.run(self.machines[0]["ipv4_address"], "garage status")
 		except SetupError:
 			return set()
 
@@ -108,7 +114,7 @@ class ClusterSetup:
 		"""Only answers once a node has started, since Garage generates its key on first
 		launch."""
 		return {
-			machine["name"]: run_over_ssh(machine["ipv4_address"], "garage node id -q", self.ssh_key).strip()
+			machine["name"]: self.run(machine["ipv4_address"], "garage node id -q").strip()
 			for machine in self.machines
 		}
 
@@ -150,7 +156,10 @@ class ClusterSetup:
 		}
 
 	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
-		return run_over_ssh(machine["ipv4_address"], self.install_script(machine, peers), self.ssh_key)
+		if self.on_output:
+			self.on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
+
+		return self.run(machine["ipv4_address"], self.install_script(machine, peers))
 
 	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
 		"""Bring the cluster up.
@@ -181,7 +190,7 @@ class ClusterSetup:
 
 		commands.append(f"garage layout apply --version {self.layout_version() + 1}")
 
-		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
+		return self.run(self.machines[0]["ipv4_address"], "\n".join(commands))
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
 		"""Create the metadata bucket and a key that can read and write it. This is idempotent with checks before creations"""
@@ -198,7 +207,7 @@ class ClusterSetup:
 				f"garage key info {key_name} --show-secret",
 			]
 		)
-		shown = run_over_ssh(self.machines[0]["ipv4_address"], script, self.ssh_key)
+		shown = self.run(self.machines[0]["ipv4_address"], script)
 
 		access_key = re.search(r"Key ID:\s*(\S+)", shown)
 		secret_key = re.search(r"Secret key:\s*(\S+)", shown)

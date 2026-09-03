@@ -33,9 +33,8 @@ class AtlasClient:
 
 	@classmethod
 	def from_settings(cls) -> Self:
-		"""The Atlas client for the current site, as configured in Cargo Settings.
-
-		The token is a Password field: reading the attribute gives the mask, not the secret."""
+		"""The Atlas client for the current site. `get_password`, not the attribute: a
+		Password field reads back as its mask."""
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
 		return cls(url=settings.atlas_url, token=settings.get_password("atlas_access_token"))

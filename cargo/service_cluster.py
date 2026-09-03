@@ -9,14 +9,10 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 
 
 class ServiceCluster(WorkflowBuilder):
-	"""Base for a service's cluster doctype.
+	"""Base for a service's cluster doctype: the three setup stages every service shares.
 
-	Setting one up is the same three stages for every service, so the order and the
-	failure handling live here and each service fills in the stages.
-
-	Machines are provisioned before this runs: booting takes minutes and is driven by the
-	scheduler, not by a worker holding a job open.
-	"""
+	Machines are provisioned before this runs -- booting takes minutes, and the scheduler
+	drives it rather than a worker holding a job open."""
 
 	SETUP_FROM = ("Credentials Minted", "Failed", "Active")
 
@@ -25,6 +21,7 @@ class ServiceCluster(WorkflowBuilder):
 		if self.status not in self.SETUP_FROM:
 			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
 
+		self.mark("Setting Up")
 		return self.run_setup.run_as_workflow()
 
 	@flow
@@ -46,9 +43,7 @@ class ServiceCluster(WorkflowBuilder):
 
 	@task
 	def register(self) -> None:
-		"""Hand the cluster to Central
-
-		Last, so Central only ever points at a cluster that has been proven to work."""
+		"""Hand the cluster to Central. Last, so Central only ever points at a working one."""
 		raise NotImplementedError
 
 	def on_workflow_success(self, workflow) -> None:
