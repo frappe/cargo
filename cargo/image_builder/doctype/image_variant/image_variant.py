@@ -192,14 +192,13 @@ class ImageVariant(WorkflowBuilder):
 		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
 		error = (reason or workflow.workflow_traceback or "").strip()
 
-		if self.temporary_vm_id:
-			self.builder.destroy_build_machine(self.temporary_vm_id)
+		if not self.temporary_vm_id or self.builder.destroy_build_machine(self.temporary_vm_id):
+			self.drop_ssh_keys()
 
-		self.drop_ssh_keys()
 		self.mark("Failed", error=f"{stage}\n{error}")
 
 	def drop_ssh_keys(self) -> None:
-		"""The machine has already dropped its half."""
+		"""Cargo's half of a keypair whose machine is gone."""
 		self.ssh_public_key = None
 		self.ssh_private_key = None
 

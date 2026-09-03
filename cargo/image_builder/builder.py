@@ -76,9 +76,12 @@ class Builder:
 		"""Photograph the baked machine. This is the image."""
 		return self.client.create_snapshot(vm_id, self.atlas_name)
 
-	def destroy_build_machine(self, vm_id: str) -> None:
+	def destroy_build_machine(self, vm_id: str) -> bool:
 		"""Best effort: a machine left running after a failed bake still costs money."""
 		try:
 			self.client.terminate_vm(vm_id)
 		except Exception:
 			frappe.log_error(title=f"Could not destroy build machine {vm_id}")
+			return False
+
+		return True
