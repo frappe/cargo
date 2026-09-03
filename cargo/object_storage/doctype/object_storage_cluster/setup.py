@@ -11,6 +11,7 @@ from typing import TypedDict
 import frappe
 from frappe import _
 
+from cargo.garage_admin_client import GarageAdminClient, GarageError
 from cargo.object_storage.client_models import STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.ssh import SshError, run_over_ssh
@@ -23,6 +24,7 @@ if typing.TYPE_CHECKING:
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 #: Lowercase alphanumerics, dots and hyphens, 3-63 characters, alphanumeric at both ends.
 BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+GIGABYTE = 1000**3
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
 MachineName = str
 #: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
@@ -77,32 +79,31 @@ class ClusterSetup:
 	def ssh_key(self) -> str:
 		return self.cluster.get_password("ssh_private_key")
 
-	def run(self, address: str, script: str) -> str:
-		"""Every command the setup runs, so all of them stream into the same log."""
-		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
+	@cached_property
+	def admin(self) -> GarageAdminClient:
+		return GarageAdminClient.for_cluster(self.cluster)
+
+	def run(self, address: str, script: str, quiet: bool = False) -> str:
+		"""Every command the setup runs, streamed into the log unless it prints a secret."""
+		return run_over_ssh(address, script, self.ssh_key, on_output=None if quiet else self.on_output)
 
 	def layout_version(self) -> int:
-		"""The applied layout version, zero if none. Read from the version line: `garage
-		layout show` also prints staged changes."""
+		"""The applied layout version, zero if none. Staged changes are a separate field."""
 		try:
-			shown = self.run(self.machines[0]["ipv4_address"], "garage layout show")
-		except SetupError:
+			return self.admin.layout().get("version", 0)
+		except GarageError:
 			return 0
 
-		found = re.search(r"Current cluster layout version:\s*(\d+)", shown)
-
-		return int(found.group(1)) if found else 0
-
 	def healthy_nodes(self) -> set[str]:
-		"""The machine names Garage reports as healthy, read from their node tags."""
+		"""The machine names Garage reports as up, read from the node tags setup assigned."""
 		try:
-			shown = self.run(self.machines[0]["ipv4_address"], "garage status")
-		except SetupError:
+			nodes = self.admin.status().get("nodes") or []
+		except GarageError:
 			return set()
 
-		section = shown.split("FAILED NODES")[0]
+		tags = {tag for node in nodes if node.get("isUp") for tag in (node.get("role") or {}).get("tags", [])}
 
-		return {machine["name"] for machine in self.machines if f"[{machine['name']}]" in section}
+		return {machine["name"] for machine in self.machines if machine["name"] in tags}
 
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
 		"""Only answers once a node has started, since Garage keys itself on first launch."""
@@ -168,43 +169,39 @@ class ClusterSetup:
 
 		return identifiers
 
-	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> str:
-		"""Give every node its role and apply as one version, run on a single machine and gossips around."""
-		commands = []
+	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> dict:
+		"""Stage every node's role, then apply the lot as one version."""
+		roles = []
 		for machine in self.machines:
-			node_id = identifiers[machine["name"]].split("@")[0]
-			shape = f"-c {self.cluster.disk_gb}GB" if machine["role"] == STORAGE else "-g"
-			commands.append(
-				f"garage layout assign {node_id} {shape} -z {machine['zone']} -t {machine['name']}"
-			)
+			role = {
+				"id": identifiers[machine["name"]].split("@")[0],
+				"zone": machine["zone"],
+				"tags": [machine["name"]],
+			}
+			if machine["role"] == STORAGE:
+				role["capacity"] = self.cluster.disk_gb * GIGABYTE
 
-		commands.append(f"garage layout apply --version {self.layout_version() + 1}")
+			roles.append(role)
 
-		return self.run(self.machines[0]["ipv4_address"], "\n".join(commands))
+		self.admin.assign_roles(roles)
+
+		return self.admin.apply_layout(self.layout_version() + 1)
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
 		"""Create the metadata bucket and a key that can read and write it, idempotently."""
-		bucket = f"{self.cluster.name}-metadata".casefold()
-		if not BUCKET_NAME.fullmatch(bucket):
-			frappe.throw(_(f"{bucket} is not a legal S3 bucket name."))
+		bucket_name = f"{self.cluster.name}-metadata".casefold()
+		if not BUCKET_NAME.fullmatch(bucket_name):
+			frappe.throw(_(f"{bucket_name} is not a legal S3 bucket name."))
 
-		key_name = f"{bucket}-key"
+		key_name = f"{bucket_name}-key"
 
-		script = "\n".join(
-			[
-				"set -e",
-				f"garage bucket info {bucket} > /dev/null 2>&1 || garage bucket create {bucket} > /dev/null",
-				f"garage key info {key_name} --show-secret > /dev/null 2>&1 "
-				f"|| garage key create {key_name} > /dev/null",
-				f"garage bucket allow --read --write {bucket} --key {key_name} > /dev/null",
-				f"garage key info {key_name} --show-secret",
-			]
+		bucket = self.admin.bucket(bucket_name) or self.admin.create_bucket(bucket_name)
+		key = self.admin.key(key_name) or self.admin.create_key(key_name)
+		if not key.get("secretAccessKey"):
+			raise SetupError(f"Garage returned no secret for {key_name}.")
+
+		self.admin.allow_bucket_key(bucket["id"], key["accessKeyId"])
+
+		return MetadataBucketInfo(
+			name=bucket_name, access_key=key["accessKeyId"], secret_key=key["secretAccessKey"]
 		)
-		shown = self.run(self.machines[0]["ipv4_address"], script)
-
-		access_key = re.search(r"Key ID:\s*(\S+)", shown)
-		secret_key = re.search(r"Secret key:\s*(\S+)", shown)
-		if not (access_key and secret_key):
-			raise SetupError(f"No key in `garage key info` output: {shown.strip()[:300]}")
-
-		return MetadataBucketInfo(name=bucket, access_key=access_key.group(1), secret_key=secret_key.group(1))

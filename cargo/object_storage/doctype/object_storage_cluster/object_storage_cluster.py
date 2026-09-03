@@ -95,7 +95,12 @@ class ObjectStorageCluster(ServiceCluster):
 			partition_count=self.partition_count,
 			specs=[
 				NodeSpec(
-					role=GATEWAY, count=1, cpu=self.cpu, ram_gb=self.ram_gb, disk_gb=self.gateway_disk_gb
+					# This gateway disk is just for the provisioning layer — not used by garage
+					role=GATEWAY,
+					count=1,
+					cpu=self.cpu,
+					ram_gb=self.ram_gb,
+					disk_gb=self.gateway_disk_gb,
 				),
 				NodeSpec(
 					role=STORAGE,
