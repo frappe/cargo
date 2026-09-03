@@ -11,7 +11,7 @@ from frappe.utils import now_datetime
 
 from cargo.atlas_client import AtlasClient
 from cargo.image_builder.builder import Builder
-from cargo.ssh import OutputLog
+from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -131,11 +131,9 @@ class ImageVariant(WorkflowBuilder):
 			frappe.throw(frappe._("This variant is already building."))
 
 		self.name_contents()
-		public_key, private_key = self.builder.create_keypair()
-		self.ssh_public_key = public_key
-		self.ssh_private_key = private_key
+		self.public_key, self.private_key = create_keypair(self.atlas_name)
 		self.admin_password = generate_admin_password()
-		self.temporary_vm_id = self.builder.provision_build_machine(public_key=public_key)
+		self.temporary_vm_id = self.builder.provision_build_machine(public_key=self.public_key)
 		self.mark("Provisioning")
 
 	def sync_build_vm(self) -> None:
@@ -172,6 +170,9 @@ class ImageVariant(WorkflowBuilder):
 				on_output=log.write,
 			)
 
+		# The machine loses the key, then Cargo loses its half. Both before the snapshot.
+		self.builder.wipe_machine_identity(address, self.get_password("ssh_private_key"))
+		self.drop_ssh_keys()
 		self.mark("Snapshotting")
 
 	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
@@ -201,7 +202,14 @@ class ImageVariant(WorkflowBuilder):
 		if self.temporary_vm_id:
 			self.builder.destroy_build_machine(self.temporary_vm_id)
 
+		# We don't need to wipe the machine identity since it's a throwaway machine.
+		self.drop_ssh_keys()
 		self.mark("Failed", error=f"{stage}\n{error}")
+
+	def drop_ssh_keys(self) -> None:
+		"""Machine either destroyed or provision script finished; Which cleaned out the keys."""
+		self.ssh_public_key = None
+		self.ssh_private_key = None
 
 	def mark(self, status: str, error: str | None = None) -> None:
 		self.status = status

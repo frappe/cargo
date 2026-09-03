@@ -15,6 +15,13 @@ BASE_IMAGE = "ubuntu-24.04"
 # conf/<kind>/provision.sh and an entry here.
 KINDS = ("pilot",)
 PROVISION_TIMEOUT = 3600
+# Atlas will be responsible for placing machine's identity on boot from snapshot.
+WIPE_IDENTITY = """
+set -e
+truncate -s 0 /etc/machine-id
+rm -f /root/.ssh/authorized_keys /etc/ssh/ssh_host_*
+sync
+"""
 
 
 class Builder:
@@ -34,17 +41,10 @@ class Builder:
 	def client(self) -> AtlasClient:
 		return AtlasClient.from_settings()
 
-	def create_keypair(self) -> tuple[str, str]:
-		"""An SSH key for this build alone. The machine it opens is destroyed after."""
-		with tempfile.TemporaryDirectory() as directory:
-			path = Path(directory) / "key"
-			subprocess.run(
-				["ssh-keygen", "-t", "ed25519", "-N", "", "-C", self.atlas_name, "-f", str(path)],
-				check=True,
-				capture_output=True,
-			)
-
-			return path.with_suffix(".pub").read_text().strip(), path.read_text()
+	def wipe_machine_identity(self, address: str, private_key: str) -> str:
+		"""Take the build key and this machine's identity off the disk. Last thing to run:
+		it removes the key it is connected with."""
+		return run_over_ssh(address, WIPE_IDENTITY, private_key, timeout=PROVISION_TIMEOUT)
 
 	def provision_script(self, environment: dict[str, str]) -> str:
 		"""This kind's script, with the image's arguments exported ahead of it."""
