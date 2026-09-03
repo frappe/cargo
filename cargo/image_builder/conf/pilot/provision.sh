@@ -58,9 +58,6 @@ if [ -n "$SITE" ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 fi
 
-# The snapshot should not carry build litter or this machine's identity.
+# Build litter only. Cargo wipes the machine's identity itself, after this runs.
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
-truncate -s 0 /etc/machine-id
-rm -f /root/.ssh/authorized_keys /etc/ssh/ssh_host_*
-sync

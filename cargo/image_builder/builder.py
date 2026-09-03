@@ -11,17 +11,20 @@ from cargo.atlas_client import AtlasClient
 from cargo.ssh import run_over_ssh
 
 BASE_IMAGE = "ubuntu-24.04"
-# Images are a fixed set, not anything a caller names. A new kind is a new
-# conf/<kind>/provision.sh and an entry here.
+# A new kind is a new conf/<kind>/provision.sh and an entry here.
 KINDS = ("pilot",)
 PROVISION_TIMEOUT = 3600
+# Atlas will be responsible for placing machine's identity on boot from snapshot.
+WIPE_IDENTITY = """
+set -e
+truncate -s 0 /etc/machine-id
+rm -f /root/.ssh/authorized_keys /etc/ssh/ssh_host_*
+sync
+"""
 
 
 class Builder:
-	"""Rents a machine, runs one script on it, photographs it, throws it away.
-
-	It knows nothing about what is being installed: the image says that, through the
-	environment it hands over."""
+	"""Rents a machine, runs one script on it, photographs it, throws it away."""
 
 	def __init__(self, kind: str, atlas_name: str) -> None:
 		if kind not in KINDS:
@@ -34,17 +37,9 @@ class Builder:
 	def client(self) -> AtlasClient:
 		return AtlasClient.from_settings()
 
-	def create_keypair(self) -> tuple[str, str]:
-		"""An SSH key for this build alone. The machine it opens is destroyed after."""
-		with tempfile.TemporaryDirectory() as directory:
-			path = Path(directory) / "key"
-			subprocess.run(
-				["ssh-keygen", "-t", "ed25519", "-N", "", "-C", self.atlas_name, "-f", str(path)],
-				check=True,
-				capture_output=True,
-			)
-
-			return path.with_suffix(".pub").read_text().strip(), path.read_text()
+	def wipe_machine_identity(self, address: str, private_key: str) -> str:
+		"""Take the build key and this machine's identity off the disk. Runs last."""
+		return run_over_ssh(address, WIPE_IDENTITY, private_key, timeout=PROVISION_TIMEOUT)
 
 	def provision_script(self, environment: dict[str, str]) -> str:
 		"""This kind's script, with the image's arguments exported ahead of it."""
@@ -81,9 +76,12 @@ class Builder:
 		"""Photograph the baked machine. This is the image."""
 		return self.client.create_snapshot(vm_id, self.atlas_name)
 
-	def destroy_build_machine(self, vm_id: str) -> None:
+	def destroy_build_machine(self, vm_id: str) -> bool:
 		"""Best effort: a machine left running after a failed bake still costs money."""
 		try:
 			self.client.terminate_vm(vm_id)
 		except Exception:
 			frappe.log_error(title=f"Could not destroy build machine {vm_id}")
+			return False
+
+		return True

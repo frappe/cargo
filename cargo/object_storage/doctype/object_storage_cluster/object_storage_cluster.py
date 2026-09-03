@@ -10,8 +10,9 @@ from cargo.atlas_client import AtlasClient
 from cargo.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
-from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
+from cargo.object_storage.doctype.object_storage_cluster.setup import ClusterSetup
 from cargo.service_cluster import ServiceCluster
+from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import task
 
 
@@ -33,7 +34,7 @@ class ObjectStorageCluster(ServiceCluster):
 		cpu: DF.Int
 		data_dir: DF.Data
 		disk_gb: DF.Int
-		error: DF.SmallText | None
+		error: DF.LongText | None
 		garage_arch: DF.Data
 		garage_binary: DF.Data
 		garage_version: DF.Data
@@ -51,14 +52,26 @@ class ObjectStorageCluster(ServiceCluster):
 		rpc_port: DF.Int
 		rpc_secret: DF.Password | None
 		s3_port: DF.Int
-		ssh_private_key: DF.Password
-		ssh_public_key: DF.SmallText
-		status: DF.Literal["Draft", "Pending", "Machines Ready", "Credentials Minted", "Active", "Failed"]
+		setup_log: DF.Code | None
+		ssh_private_key: DF.Password | None
+		ssh_public_key: DF.SmallText | None
+		status: DF.Literal[
+			"Draft",
+			"Pending",
+			"Machines Ready",
+			"Minting Failed",
+			"Credentials Minted",
+			"Setting Up",
+			"Active",
+			"Failed",
+		]
 		storage_count: DF.Int
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
 		web_port: DF.Int
 	# end: auto-generated types
+
+	MINT_FROM = ("Machines Ready", "Minting Failed")
 
 	def validate(self) -> None:
 		if self.replication_factor < 1:
@@ -82,7 +95,12 @@ class ObjectStorageCluster(ServiceCluster):
 			partition_count=self.partition_count,
 			specs=[
 				NodeSpec(
-					role=GATEWAY, count=1, cpu=self.cpu, ram_gb=self.ram_gb, disk_gb=self.gateway_disk_gb
+					# This gateway disk is just for the provisioning layer — not used by garage
+					role=GATEWAY,
+					count=1,
+					cpu=self.cpu,
+					ram_gb=self.ram_gb,
+					disk_gb=self.gateway_disk_gb,
 				),
 				NodeSpec(
 					role=STORAGE,
@@ -94,6 +112,11 @@ class ObjectStorageCluster(ServiceCluster):
 			],
 		)
 
+	def before_insert(self) -> None:
+		"""One keypair per cluster, made here so nobody has to paste one in."""
+		if not self.ssh_public_key:
+			self.ssh_public_key, self.ssh_private_key = create_keypair(self.name or self.region)
+
 	@frappe.whitelist()
 	def provision(self) -> None:
 		"""Ask Atlas for the machines. Fast: ids come back without waiting for boots."""
@@ -101,11 +124,12 @@ class ObjectStorageCluster(ServiceCluster):
 			frappe.throw(_(f"This cluster is already {self.status}."))
 
 		self.request_machines()
-		self.mark("Pending")
 
 	def request_machines(self) -> None:
 		"""Record one `Machine` per VM id Atlas returns."""
 		placement = self.placement()
+		roles = placement.roles()
+
 		try:
 			vm_ids = AtlasClient.from_settings().create_vms(
 				title=f"{self.name} object storage",
@@ -113,11 +137,19 @@ class ObjectStorageCluster(ServiceCluster):
 				base_image=self.base_image,
 				public_key=self.ssh_public_key,
 			)
-		except Exception as exception:
-			self.mark("Failed", error=str(exception))
-			raise
+		except Exception:
+			self.mark("Failed", error=frappe.get_traceback(with_context=True))
+			return
 
-		for vm_id, role in zip(vm_ids, placement.roles(), strict=True):
+		if len(vm_ids) != len(roles):
+			self.mark(
+				"Failed",
+				error=f"Asked Atlas for {len(roles)} machines and got {len(vm_ids)}. "
+				f"{self.release_machines(vm_ids)}",
+			)
+			return
+
+		for vm_id, role in zip(vm_ids, roles, strict=True):
 			frappe.get_doc(
 				{
 					"doctype": "Machine",
@@ -129,6 +161,23 @@ class ObjectStorageCluster(ServiceCluster):
 					"status": "Pending",
 				}
 			).insert(ignore_permissions=True)
+
+		self.mark("Pending")
+
+	def release_machines(self, vm_ids: list[str]) -> str:
+		"""Hand back machines no `Machine` row will own, and say what became of them."""
+		client = AtlasClient.from_settings()
+		stranded = []
+		for vm_id in vm_ids:
+			try:
+				client.terminate_vm(vm_id)
+			except Exception:
+				stranded.append(vm_id)
+
+		if stranded:
+			return f"Still running and untracked: {', '.join(stranded)}."
+
+		return f"Terminated {len(vm_ids)}." if vm_ids else "Atlas returned none."
 
 	def machine_names(self, status: str | None = None) -> list[str]:
 		filters = {"reference_doctype": self.doctype, "reference_name": self.name}
@@ -164,28 +213,34 @@ class ObjectStorageCluster(ServiceCluster):
 		self.mark("Machines Ready")
 		self.mint_credentials()
 
+	@frappe.whitelist()
 	def mint_credentials(self) -> None:
 		"""Ask Central for the secrets every node of this cluster boots with."""
-		if self.status != "Machines Ready":
+		if self.status not in self.MINT_FROM:
 			return
 
 		try:
 			tokens = CentralClient.from_settings().get_required_credentials(
 				region=self.region, vm_ids=self.machine_names(), required=REQUIRED_CREDENTIALS
 			)
-		except Exception as exception:
-			self.mark("Failed", error=str(exception))
-			raise
+		except Exception:
+			self.mark("Minting Failed", error=frappe.get_traceback(with_context=True))
+			return
 
 		self.update(tokens)
 		self.mark("Credentials Minted")
 
+	def clear_logs(self) -> None:
+		self.setup_log = None
+
 	@task
 	def terraform(self) -> None:
 		"""Install Garage and lay the cluster out"""
-		setup = ClusterSetup(self)
-		setup.assign_layout(setup.bootstrap_machines())
-		metadata_bucket_info = setup.create_metadata_bucket()
+		with OutputLog(self, "setup_log") as log:
+			setup = ClusterSetup(self, on_output=log.write)
+			setup.assign_layout(setup.bootstrap_machines())
+			metadata_bucket_info = setup.create_metadata_bucket()
+
 		self.update(
 			{
 				"metadata_bucket": metadata_bucket_info["name"],
@@ -238,5 +293,5 @@ def sync_pending_machines() -> None:
 		distinct=True,
 	)
 	for name in waiting:
-		object_stroage_cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
-		object_stroage_cluster.sync_machines()
+		object_storage_cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
+		object_storage_cluster.sync_machines()

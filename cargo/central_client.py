@@ -39,15 +39,13 @@ class CentralClient:
 		)
 
 	def report_failure(self, region: str, step: str, error: str) -> dict[str, Any]:
-		"""Tell Central a cluster it holds secrets for did not come up. Generic: every
-		service fails the same way, and the shared stage runner is what reports it."""
-		return self.call("report_failure", data={"region": region, "step": step, "error": error[:500]})
+		"""Tell Central a cluster it holds secrets for did not come up."""
+		return self.call("report_failure", data={"region": region, "step": step, "error": error[-500:]})
 
 	def get_required_credentials(
 		self, region: str, vm_ids: list[str], required: Sequence[str]
 	) -> dict[str, str]:
-		"""Object storage: the secrets every node of one cluster boots with. ``required`` is
-		the asking service's own list. Idempotent per region."""
+		"""Object storage: the secrets every node of one cluster boots with."""
 		tokens = self.call("garage_tokens", data={"region": region, "vm_ids": vm_ids})
 
 		missing = [name for name in required if not tokens.get(name)]

@@ -6,6 +6,7 @@ import threading
 import time
 import typing
 from collections.abc import Callable
+from pathlib import Path
 
 import frappe
 from frappe import _
@@ -26,6 +27,8 @@ OPTIONS = (
 	"UserKnownHostsFile=/dev/null",
 	"-o",
 	"ConnectTimeout=15",
+	"-o",
+	"LogLevel=ERROR",
 )
 
 
@@ -52,6 +55,10 @@ class OutputLog:
 		self.flushed_at = time.monotonic()
 
 	def __enter__(self) -> "OutputLog":
+		"""This run owns the field."""
+		self.document.db_set(self.fieldname, None, update_modified=False)
+		frappe.cache.delete_value(self.cache_key)
+
 		return self
 
 	def __exit__(self, *exception: object) -> None:
@@ -92,6 +99,19 @@ class OutputLog:
 		frappe.cache.delete_value(self.cache_key)
 
 
+def create_keypair(comment: str) -> tuple[str, str]:
+	"""A fresh ed25519 keypair, as (public, private)."""
+	with tempfile.TemporaryDirectory() as directory:
+		path = Path(directory) / "key"
+		subprocess.run(
+			["ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)],
+			check=True,
+			capture_output=True,
+		)
+
+		return path.with_suffix(".pub").read_text().strip(), path.read_text()
+
+
 def cache_key(doctype: str, name: str, fieldname: str) -> str:
 	return f"ssh_output:{doctype}:{name}:{fieldname}"
 
@@ -107,8 +127,7 @@ def live_output(document: "Document", fieldname: str) -> str:
 
 @frappe.whitelist()
 def get_live_output(doctype: str, name: str, fieldname: str) -> str:
-	"""`live_output` for any document, so a doctype streaming into a field needs no endpoint
-	of its own -- only the `with OutputLog(...)` around the command."""
+	"""`live_output` for any document, so no doctype needs an endpoint of its own."""
 	document = frappe.get_doc(doctype, name)
 	document.check_permission("read")
 
@@ -126,8 +145,7 @@ def run_over_ssh(
 	timeout: int = SSH_TIMEOUT,
 	on_output: Callable[[str], None] | None = None,
 ) -> str:
-	"""Pipe a script to ``bash -s`` and return everything it printed, line by line as it
-	arrives. Both streams are merged: installers interleave progress across them."""
+	"""Pipe a script to ``bash -s`` and return what it printed, line by line as it arrives."""
 	if not key:
 		frappe.throw(_("No SSH private key, so {0} cannot be reached.").format(address))
 

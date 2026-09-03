@@ -50,7 +50,9 @@
   "rpc_secret",
   "admin_token",
   "column_break_secrets",
-  "metrics_token"
+  "metrics_token",
+  "section_break_log",
+  "setup_log"
  ],
  "fields": [
   {
@@ -82,21 +84,22 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nCredentials Minted \u2014 secrets issued, ready to configure.\nActive \u2014 Garage is running and Central can use it.",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Mint again from the form.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nPending\nMachines Ready\nCredentials Minted\nActive\nFailed",
+   "options": "Draft\nPending\nMachines Ready\nMinting Failed\nCredentials Minted\nSetting Up\nActive\nFailed",
    "read_only": 1
   },
   {
    "depends_on": "error",
    "description": "Why the last step failed.",
    "fieldname": "error",
-   "fieldtype": "Small Text",
+   "fieldtype": "Long Text",
    "label": "Error",
+   "max_height": "16rem",
    "read_only": 1
   },
   {
@@ -197,11 +200,11 @@
    "label": "Machine Access"
   },
   {
-   "description": "Installed as root's key on every machine. Can't change once they exist.",
+   "description": "Generated for this cluster. It opens only these machines.",
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
-   "reqd": 1,
+   "read_only": 1,
    "set_only_once": 1
   },
   {
@@ -209,11 +212,11 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "The matching half, used to reach the machines.",
+   "description": "Generated for this cluster. It opens only these machines.",
    "fieldname": "ssh_private_key",
    "fieldtype": "Password",
    "label": "SSH Private Key",
-   "reqd": 1
+   "read_only": 1
   },
   {
    "collapsible": 1,
@@ -359,20 +362,36 @@
    "read_only": 1
   },
   {
-   "description": "Add a metadata bucket service to store firecracker images.",
+   "description": "Name of the metadata bucket for the region",
    "fieldname": "metadata_bucket",
    "fieldtype": "Data",
-   "label": "Metadata Bucket"
+   "label": "Metadata Bucket",
+   "read_only": 1
   },
   {
    "fieldname": "metadata_bucket_access_key",
    "fieldtype": "Data",
-   "label": "Metadata Bucket Access Key"
+   "label": "Metadata Bucket Access Key",
+   "read_only": 1
   },
   {
    "fieldname": "metadata_bucket_secret_key",
    "fieldtype": "Password",
-   "label": "Metadata Bucket Secret Key"
+   "label": "Metadata Bucket Secret Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_log",
+   "fieldtype": "Section Break",
+   "label": "Setup Log"
+  },
+  {
+   "description": "Everything the install script printed on every machine, as it printed it.",
+   "fieldname": "setup_log",
+   "fieldtype": "Code",
+   "label": "Setup Log",
+   "max_height": "24rem",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -384,7 +403,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-01 15:56:48.061216",
+ "modified": "2026-09-03 15:24:52.502892",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
