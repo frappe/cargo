@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import shlex
 import typing
 from functools import cached_property
+from pathlib import Path
 from typing import TypedDict
 
 import frappe
@@ -16,10 +18,6 @@ if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
-
-CONFIG_TEMPLATE = "object_storage/conf/garage_node_config.jinja2"
-UNIT_TEMPLATE = "object_storage/conf/garage_service.jinja2"
-INSTALL_TEMPLATE = "object_storage/conf/install.jinja2"
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 
@@ -115,35 +113,41 @@ class ClusterSetup:
 		}
 
 	def install_script(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
-		return frappe.render_template(
-			INSTALL_TEMPLATE,
-			{
-				"cluster": self.cluster,
-				"binary_url": BINARY_URL.format(
-					version=self.cluster.garage_version, arch=self.cluster.garage_arch
-				),
-				"node_config": self.node_config(machine, peers),
-				"systemd_unit": self.systemd_unit(),
-			},
-			is_path=True,
+		"""This kind's script, with the cluster's settings exported ahead of it."""
+		exports = "\n".join(
+			f"export {key}={shlex.quote(str(value))}"
+			for key, value in self.install_environment(machine, peers).items()
 		)
+		script = Path(
+			frappe.get_app_path("cargo", "object_storage", "conf", "garage", "install.sh")
+		).read_text()
 
-	def node_config(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
-		return frappe.render_template(
-			CONFIG_TEMPLATE,
-			{
-				"cluster": self.cluster,
-				"rpc_public_addr": machine["ipv4_address"],
-				"bootstrap_peers": peers,
-				**self.secrets,
-			},
-			is_path=True,
-		)
+		return f"{exports}\n{script}"
 
-	def systemd_unit(self) -> str:
-		return frappe.render_template(
-			UNIT_TEMPLATE, {"garage_binary": self.cluster.garage_binary}, is_path=True
-		)
+	def install_environment(self, machine: MachineRow, peers: list[NodeIdentifier]) -> dict[str, str]:
+		"""What a node needs to write its own garage.toml and unit."""
+		cluster = self.cluster
+
+		return {
+			"GARAGE_BINARY": cluster.garage_binary,
+			"GARAGE_VERSION": cluster.garage_version,
+			"BINARY_URL": BINARY_URL.format(version=cluster.garage_version, arch=cluster.garage_arch),
+			"METADATA_DIR": cluster.metadata_dir,
+			"DATA_DIR": cluster.data_dir,
+			"RPC_PUBLIC_ADDR": machine["ipv4_address"],
+			"REGION": cluster.region,
+			"BASE_DOMAIN": cluster.base_domain,
+			"REPLICATION_FACTOR": cluster.replication_factor,
+			"RPC_PORT": cluster.rpc_port,
+			"S3_PORT": cluster.s3_port,
+			"WEB_PORT": cluster.web_port,
+			"K2V_PORT": cluster.k2v_port,
+			"ADMIN_PORT": cluster.admin_port,
+			"BOOTSTRAP_PEERS": " ".join(peers),
+			"RPC_SECRET": self.secrets["rpc_secret"],
+			"ADMIN_TOKEN": self.secrets["admin_token"],
+			"METRICS_TOKEN": self.secrets["metrics_token"],
+		}
 
 	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		return run_over_ssh(machine["ipv4_address"], self.install_script(machine, peers), self.ssh_key)
