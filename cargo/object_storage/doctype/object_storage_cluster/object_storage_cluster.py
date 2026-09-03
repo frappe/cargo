@@ -47,7 +47,6 @@ class ObjectStorageCluster(ServiceCluster):
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
 		ram_gb: DF.Int
-		region: DF.Data
 		replication_factor: DF.Int
 		rpc_port: DF.Int
 		rpc_secret: DF.Password | None
@@ -173,7 +172,8 @@ class ObjectStorageCluster(ServiceCluster):
 				client.terminate_vm(vm_id)
 			except Exception:
 				stranded.append(vm_id)
-
+		# Todo: Must have a better way to report stranded machines.
+		# Some records somewhere since we don't want dangling VMs.
 		if stranded:
 			return f"Still running and untracked: {', '.join(stranded)}."
 

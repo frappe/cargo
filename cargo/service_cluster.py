@@ -14,6 +14,11 @@ class ServiceCluster(WorkflowBuilder):
 	SETUP_FROM = ("Credentials Minted", "Failed", "Active")
 	REQUIRED_STATUSES = ("Setting Up", "Active", "Failed")
 
+	@property
+	def region(self) -> str:
+		"""One Cargo to a region, so Cargo Settings owns it and no cluster carries its own."""
+		return frappe.db.get_single_value("Cargo Settings", "region", cache=True)
+
 	@frappe.whitelist()
 	def setup_cluster(self) -> str:
 		self.check_contract()

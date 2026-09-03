@@ -1,12 +1,11 @@
 {
  "actions": [],
- "autoname": "format:OSC-{region}-{####}",
+ "autoname": "OSC-.####.",
  "creation": "2026-08-28 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_cluster",
-  "region",
   "base_image",
   "metadata_bucket",
   "metadata_bucket_access_key",
@@ -59,16 +58,6 @@
    "fieldname": "section_break_cluster",
    "fieldtype": "Section Break",
    "label": "Cluster"
-  },
-  {
-   "description": "Atlas region to build in. Also Garage's S3 region name.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Region",
-   "reqd": 1,
-   "set_only_once": 1
   },
   {
    "default": "ubuntu-22.04",
