@@ -131,9 +131,9 @@ class ImageVariant(WorkflowBuilder):
 			frappe.throw(frappe._("This variant is already building."))
 
 		self.name_contents()
-		self.public_key, self.private_key = create_keypair(self.atlas_name)
+		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
 		self.admin_password = generate_admin_password()
-		self.temporary_vm_id = self.builder.provision_build_machine(public_key=self.public_key)
+		self.temporary_vm_id = self.builder.provision_build_machine(public_key=self.ssh_public_key)
 		self.mark("Provisioning")
 
 	def sync_build_vm(self) -> None:
