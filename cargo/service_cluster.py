@@ -12,9 +12,6 @@ class ServiceCluster(WorkflowBuilder):
 	"""Base for a service's cluster doctype: the three setup stages every service shares."""
 
 	SETUP_FROM = ("Credentials Minted", "Failed", "Active")
-	#: Where a run's output is streamed. None for a service that keeps no log.
-	SETUP_LOG = "setup_log"
-	REQUIRED_FIELDS = ("status", "error", "region")
 	REQUIRED_STATUSES = ("Setting Up", "Active", "Failed")
 
 	@frappe.whitelist()
@@ -23,31 +20,24 @@ class ServiceCluster(WorkflowBuilder):
 		if self.status not in self.SETUP_FROM:
 			frappe.throw(_(f"This cluster is {self.status}, not ready to set up."))
 
-		# Here rather than only where the log is written: the run clears it when it starts,
-		# which leaves the last run's output on the form for as long as the job sits queued.
-		if self.SETUP_LOG:
-			self.set(self.SETUP_LOG, None)
-
+		self.clear_logs()
 		self.mark("Setting Up")
 
 		return self.run_setup.run_as_workflow()
 
-	def check_contract(self) -> None:
-		"""What this base touches on a subclass's doctype. Checked before the first stage
-		runs, so a new service hears about a missing field here and not three stages in."""
-		fields = (*self.REQUIRED_FIELDS, *filter(None, (self.SETUP_LOG,)))
-		missing = [field for field in fields if not self.meta.has_field(field)]
+	def clear_logs(self) -> None:
+		"""A retry starts on empty logs."""
 
+	def check_contract(self) -> None:
+		"""Every status this base moves a cluster into or out of."""
 		status = self.meta.get_field("status")
 		options = (status.options or "").split("\n") if status else []
-		missing += [
-			f"the status option {name}"
-			for name in dict.fromkeys((*self.SETUP_FROM, *self.REQUIRED_STATUSES))
-			if name not in options
+		missing = [
+			name for name in dict.fromkeys((*self.SETUP_FROM, *self.REQUIRED_STATUSES)) if name not in options
 		]
 
 		if missing:
-			frappe.throw(_("{0} is missing {1}.").format(self.doctype, ", ".join(missing)))
+			frappe.throw(_("{0} has no status option {1}.").format(self.doctype, ", ".join(missing)))
 
 	@flow
 	def run_setup(self) -> None:
@@ -90,8 +80,7 @@ class ServiceCluster(WorkflowBuilder):
 		self.save(ignore_permissions=True)
 
 	def report_failure(self, stage: str, error: str) -> None:
-		"""Best effort: the cluster is already Failed, and Central being unreachable must
-		not replace that with a less useful error."""
+		"""Best effort: an unreachable Central must not replace the real failure."""
 		try:
 			CentralClient.from_settings().report_failure(self.region, stage, error)
 		except Exception:

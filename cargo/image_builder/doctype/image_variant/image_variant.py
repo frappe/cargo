@@ -54,14 +54,10 @@ class ImageVariant(WorkflowBuilder):
 		temporary_vm_id: DF.Data | None
 	# end: auto-generated types
 
-	"""One flavour of a release's image, and the snapshot it produced.
-
-	Each variant builds, fails and retries on its own, so a broken develop build leaves the
-	version-16 image alone."""
+	"""One flavour of a release's image, and the snapshot it produced."""
 
 	def validate(self) -> None:
-		"""A dimension is blank, never None: the two would otherwise be different rows to a
-		query, and the same flavour could be created twice."""
+		"""A dimension is blank, never None: to a query the two are different rows."""
 		self.frappe_version = self.frappe_version or ""
 		self.site = self.site or ""
 
@@ -95,8 +91,7 @@ class ImageVariant(WorkflowBuilder):
 
 	@property
 	def provision_environment(self) -> dict[str, str]:
-		"""What this image is, as its kind's script reads it. One branch per kind: the
-		variables are the script's, and every kind's script asks for different ones."""
+		"""What this image is, as its kind's script reads it."""
 		kind = self.image_details.kind
 		if kind == "pilot":
 			return self.pilot_environment
@@ -115,8 +110,7 @@ class ImageVariant(WorkflowBuilder):
 		}
 
 	def name_contents(self) -> None:
-		"""Name the bench and site this image will carry. Kept once generated, so a rebuild
-		does not silently change what is inside the image."""
+		"""Name the bench and site this image will carry, kept across rebuilds."""
 		self.bench_name = self.bench_name or f"bench-{frappe.generate_hash(length=NAME_LENGTH)}"
 
 		if self.site == "Included" and not self.site_name:
@@ -125,8 +119,7 @@ class ImageVariant(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def build(self) -> None:
-		"""Ask Atlas for a machine to bake. Booting takes minutes, so the scheduler picks it
-		up from here rather than this request holding a worker open."""
+		"""Ask Atlas for a machine to bake. The scheduler takes it from here."""
 		if self.status in ("Provisioning", "Building"):
 			frappe.throw(frappe._("This variant is already building."))
 
@@ -149,8 +142,7 @@ class ImageVariant(WorkflowBuilder):
 		if status != "Running" or not machine.get("ipv4_address"):
 			return
 
-		# Both in one transaction: the workflow row and the status commit together, so the
-		# engine's `retry_workflows` can always find a build whose job never started.
+		# One transaction, so `retry_workflows` can find a build whose job never started.
 		self.mark("Building")
 		self.run_build.run_as_workflow(address=machine["ipv4_address"], vm_id=self.temporary_vm_id)
 
@@ -203,12 +195,11 @@ class ImageVariant(WorkflowBuilder):
 		if self.temporary_vm_id:
 			self.builder.destroy_build_machine(self.temporary_vm_id)
 
-		# We don't need to wipe the machine identity since it's a throwaway machine.
 		self.drop_ssh_keys()
 		self.mark("Failed", error=f"{stage}\n{error}")
 
 	def drop_ssh_keys(self) -> None:
-		"""Machine either destroyed or provision script finished; Which cleaned out the keys."""
+		"""The machine has already dropped its half."""
 		self.ssh_public_key = None
 		self.ssh_private_key = None
 

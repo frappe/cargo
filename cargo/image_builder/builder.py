@@ -11,8 +11,7 @@ from cargo.atlas_client import AtlasClient
 from cargo.ssh import run_over_ssh
 
 BASE_IMAGE = "ubuntu-24.04"
-# Images are a fixed set, not anything a caller names. A new kind is a new
-# conf/<kind>/provision.sh and an entry here.
+# A new kind is a new conf/<kind>/provision.sh and an entry here.
 KINDS = ("pilot",)
 PROVISION_TIMEOUT = 3600
 # Atlas will be responsible for placing machine's identity on boot from snapshot.
@@ -25,8 +24,7 @@ sync
 
 
 class Builder:
-	"""Rents a machine, runs one script on it, photographs it, throws it away. What the
-	script installs is the image's business, passed in through the environment."""
+	"""Rents a machine, runs one script on it, photographs it, throws it away."""
 
 	def __init__(self, kind: str, atlas_name: str) -> None:
 		if kind not in KINDS:
@@ -40,8 +38,7 @@ class Builder:
 		return AtlasClient.from_settings()
 
 	def wipe_machine_identity(self, address: str, private_key: str) -> str:
-		"""Take the build key and this machine's identity off the disk. Last thing to run:
-		it removes the key it is connected with."""
+		"""Take the build key and this machine's identity off the disk. Runs last."""
 		return run_over_ssh(address, WIPE_IDENTITY, private_key, timeout=PROVISION_TIMEOUT)
 
 	def provision_script(self, environment: dict[str, str]) -> str:

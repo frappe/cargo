@@ -21,13 +21,11 @@ if typing.TYPE_CHECKING:
 	)
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
-
-
+#: Lowercase alphanumerics, dots and hyphens, 3-63 characters, alphanumeric at both ends.
+BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 #: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
 MachineName = str
-
-#: What Garage calls a node identifier: ``<node id>@<address>:<rpc port>``, exactly as
-#: ``garage node id`` prints it. Goes straight into `bootstrap_peers`.
+#: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
 NodeIdentifier = str
 
 
@@ -84,11 +82,8 @@ class ClusterSetup:
 		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
 
 	def layout_version(self) -> int:
-		"""The applied layout version. Zero means nothing has been applied yet.
-
-		Read from the version line, not from the roles: `garage layout show` also prints
-		staged changes, so a staged-but-unapplied layout would otherwise look finished.
-		"""
+		"""The applied layout version, zero if none. Read from the version line: `garage
+		layout show` also prints staged changes."""
 		try:
 			shown = self.run(self.machines[0]["ipv4_address"], "garage layout show")
 		except SetupError:
@@ -99,8 +94,7 @@ class ClusterSetup:
 		return int(found.group(1)) if found else 0
 
 	def healthy_nodes(self) -> set[str]:
-		"""The machine names Garage reports as healthy, read from the node tags setup
-		assigned."""
+		"""The machine names Garage reports as healthy, read from their node tags."""
 		try:
 			shown = self.run(self.machines[0]["ipv4_address"], "garage status")
 		except SetupError:
@@ -111,10 +105,9 @@ class ClusterSetup:
 		return {machine["name"] for machine in self.machines if f"[{machine['name']}]" in section}
 
 	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
-		"""Only answers once a node has started, since Garage generates its key on first
-		launch."""
+		"""Only answers once a node has started, since Garage keys itself on first launch."""
 		return {
-			machine["name"]: self.run(machine["ipv4_address"], "garage node id -q").strip()
+			machine["name"]: self.run(machine["ipv4_address"], "garage node id -q").strip().splitlines()[-1]
 			for machine in self.machines
 		}
 
@@ -162,10 +155,7 @@ class ClusterSetup:
 		return self.run(machine["ipv4_address"], self.install_script(machine, peers))
 
 	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
-		"""Bring the cluster up.
-
-		Twice: peers are unknown until the nodes have run once.
-		"""
+		"""Bring the cluster up, twice: peers are unknown until the nodes have run once."""
 		if not self.machines:
 			frappe.throw(_("This cluster has no machines."))
 
@@ -193,8 +183,11 @@ class ClusterSetup:
 		return self.run(self.machines[0]["ipv4_address"], "\n".join(commands))
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
-		"""Create the metadata bucket and a key that can read and write it. This is idempotent with checks before creations"""
-		bucket = f"{self.cluster.name}-metadata"
+		"""Create the metadata bucket and a key that can read and write it, idempotently."""
+		bucket = f"{self.cluster.name}-metadata".casefold()
+		if not BUCKET_NAME.fullmatch(bucket):
+			frappe.throw(_(f"{bucket} is not a legal S3 bucket name."))
+
 		key_name = f"{bucket}-key"
 
 		script = "\n".join(

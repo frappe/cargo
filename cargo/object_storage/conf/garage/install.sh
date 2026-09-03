@@ -30,6 +30,13 @@ if ! "$GARAGE_BINARY" --version 2>/dev/null | grep -q "$GARAGE_VERSION"; then
 	rm -f /tmp/garage
 fi
 
+# A binary built for another architecture installs fine, then fails to exec.
+if ! installed="$("$GARAGE_BINARY" --version 2>&1)"; then
+	echo "$GARAGE_BINARY does not run on $(uname -m): $installed" >&2
+	echo "it came from $BINARY_URL -- check the cluster's Garage Arch" >&2
+	exit 1
+fi
+
 peers=""
 for peer in $BOOTSTRAP_PEERS; do
 	peers="${peers}"$'\t'"\"${peer}\","$'\n'

@@ -211,6 +211,9 @@ class ObjectStorageCluster(ServiceCluster):
 		self.update(tokens)
 		self.mark("Credentials Minted")
 
+	def clear_logs(self) -> None:
+		self.setup_log = None
+
 	@task
 	def terraform(self) -> None:
 		"""Install Garage and lay the cluster out"""
