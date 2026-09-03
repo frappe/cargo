@@ -180,29 +180,25 @@ class ClusterSetup:
 		return run_over_ssh(self.machines[0]["ipv4_address"], "\n".join(commands), self.ssh_key)
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
-		"""Create the metadata bucket and a key that can read and write it.
-
-		Bucket and key are made in one call so a failure to create the key cannot leave a
-		bucket nothing can reach."""
+		"""Create the metadata bucket and a key that can read and write it. This is idempotent with checks before creations"""
 		bucket = f"{self.cluster.name}-metadata"
 		key_name = f"{bucket}-key"
-		address = self.machines[0]["ipv4_address"]
 
-		created = run_over_ssh(
-			address,
-			f"set -e\ngarage bucket create {bucket}\ngarage key create {key_name}",
-			self.ssh_key,
+		script = "\n".join(
+			[
+				"set -e",
+				f"garage bucket info {bucket} > /dev/null 2>&1 || garage bucket create {bucket} > /dev/null",
+				f"garage key info {key_name} --show-secret > /dev/null 2>&1 "
+				f"|| garage key create {key_name} > /dev/null",
+				f"garage bucket allow --read --write {bucket} --key {key_name} > /dev/null",
+				f"garage key info {key_name} --show-secret",
+			]
 		)
+		shown = run_over_ssh(self.machines[0]["ipv4_address"], script, self.ssh_key)
 
-		access_key = re.search(r"Key ID:\s*(\S+)", created, re.IGNORECASE)
-		secret_key = re.search(r"Secret key:\s*(\S+)", created, re.IGNORECASE)
+		access_key = re.search(r"Key ID:\s*(\S+)", shown)
+		secret_key = re.search(r"Secret key:\s*(\S+)", shown)
 		if not (access_key and secret_key):
-			raise SetupError(f"No key in `garage key create` output: {created.strip()[:300]}")
-
-		run_over_ssh(
-			address,
-			f"garage bucket allow --read --write {bucket} --key {key_name}",
-			self.ssh_key,
-		)
+			raise SetupError(f"No key in `garage key info` output: {shown.strip()[:300]}")
 
 		return MetadataBucketInfo(name=bucket, access_key=access_key.group(1), secret_key=secret_key.group(1))
