@@ -84,7 +84,7 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Retried every two minutes.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Mint again from the form.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -99,8 +99,8 @@
    "fieldname": "error",
    "fieldtype": "Long Text",
    "label": "Error",
-   "read_only": 1,
-   "max_height": "16rem"
+   "max_height": "16rem",
+   "read_only": 1
   },
   {
    "description": "Machine count and how safely data is spread.",
@@ -204,9 +204,8 @@
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
-   "reqd": 0,
-   "set_only_once": 1,
-   "read_only": 1
+   "read_only": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_access",
@@ -217,7 +216,6 @@
    "fieldname": "ssh_private_key",
    "fieldtype": "Password",
    "label": "SSH Private Key",
-   "reqd": 0,
    "read_only": 1
   },
   {
@@ -388,12 +386,12 @@
    "label": "Setup Log"
   },
   {
+   "description": "Everything the install script printed on every machine, as it printed it.",
    "fieldname": "setup_log",
    "fieldtype": "Code",
    "label": "Setup Log",
-   "read_only": 1,
    "max_height": "24rem",
-   "description": "Everything the install script printed on every machine, as it printed it."
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -405,7 +403,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-03 10:54:53.720069",
+ "modified": "2026-09-03 15:24:52.502892",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

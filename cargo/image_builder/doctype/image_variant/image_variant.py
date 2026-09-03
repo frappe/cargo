@@ -130,6 +130,7 @@ class ImageVariant(WorkflowBuilder):
 		if self.status in ("Provisioning", "Building"):
 			frappe.throw(frappe._("This variant is already building."))
 
+		self.build_log = None
 		self.name_contents()
 		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
 		self.admin_password = generate_admin_password()

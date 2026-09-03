@@ -53,6 +53,11 @@ class OutputLog:
 		self.flushed_at = time.monotonic()
 
 	def __enter__(self) -> "OutputLog":
+		"""This run owns the field, so a retry starts on an empty one rather than reading as
+		the last run's output until the first flush."""
+		self.document.db_set(self.fieldname, None, update_modified=False)
+		frappe.cache.delete_value(self.cache_key)
+
 		return self
 
 	def __exit__(self, *exception: object) -> None:

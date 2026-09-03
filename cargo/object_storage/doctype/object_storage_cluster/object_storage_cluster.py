@@ -53,8 +53,8 @@ class ObjectStorageCluster(ServiceCluster):
 		rpc_secret: DF.Password | None
 		s3_port: DF.Int
 		setup_log: DF.Code | None
-		ssh_private_key: DF.Password
-		ssh_public_key: DF.SmallText
+		ssh_private_key: DF.Password | None
+		ssh_public_key: DF.SmallText | None
 		status: DF.Literal[
 			"Draft",
 			"Pending",
@@ -137,6 +137,7 @@ class ObjectStorageCluster(ServiceCluster):
 			return
 
 		if len(vm_ids) != len(roles):
+			# We should request deletion of the VMs created before marking the cluster failed.
 			self.mark(
 				"Failed",
 				error=f"Asked Atlas for {len(roles)} machines and got {len(vm_ids)}. "
@@ -213,6 +214,7 @@ class ObjectStorageCluster(ServiceCluster):
 	@task
 	def terraform(self) -> None:
 		"""Install Garage and lay the cluster out"""
+		# This will expose our bucket secrets in the log.
 		with OutputLog(self, "setup_log") as log:
 			setup = ClusterSetup(self, on_output=log.write)
 			setup.assign_layout(setup.bootstrap_machines())
