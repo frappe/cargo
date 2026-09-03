@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
+from frappe.utils import now_datetime
 
 from cargo.atlas_client import AtlasClient
 from cargo.central_client import CentralClient
@@ -13,7 +14,7 @@ from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.setup import ClusterSetup
 from cargo.service_cluster import ServiceCluster
 from cargo.ssh import OutputLog, create_keypair
-from cargo.workflow_engine.doctype.press_workflow.decorators import task
+from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 
 
 class ObjectStorageCluster(ServiceCluster):
@@ -61,6 +62,8 @@ class ObjectStorageCluster(ServiceCluster):
 			"Minting Failed",
 			"Credentials Minted",
 			"Setting Up",
+			"Increasing Storage Nodes",
+			"Joining Storage Nodes",
 			"Active",
 			"Failed",
 		]
@@ -87,30 +90,6 @@ class ObjectStorageCluster(ServiceCluster):
 	def instance_count(self) -> int:
 		return self.storage_count + 1
 
-	def placement(self) -> PlacementGroupSchema:
-		return PlacementGroupSchema(
-			strategy=self.strategy,
-			topology_key=self.topology_key,
-			partition_count=self.partition_count,
-			specs=[
-				NodeSpec(
-					# This gateway disk is just for the provisioning layer — not used by garage
-					role=GATEWAY,
-					count=1,
-					cpu=self.cpu,
-					ram_gb=self.ram_gb,
-					disk_gb=self.gateway_disk_gb,
-				),
-				NodeSpec(
-					role=STORAGE,
-					count=self.storage_count,
-					cpu=self.cpu,
-					ram_gb=self.ram_gb,
-					disk_gb=self.disk_gb,
-				),
-			],
-		)
-
 	def before_insert(self) -> None:
 		"""One keypair per cluster, made here so nobody has to paste one in."""
 		if not self.ssh_public_key:
@@ -122,11 +101,64 @@ class ObjectStorageCluster(ServiceCluster):
 		if self.status != "Draft":
 			frappe.throw(_(f"This cluster is already {self.status}."))
 
-		self.request_machines()
+		if self.request_machines(
+			PlacementGroupSchema(
+				strategy=self.strategy,
+				topology_key=self.topology_key,
+				partition_count=self.partition_count,
+				specs=[
+					NodeSpec(
+						# This gateway disk is just for the provisioning layer — not used by garage
+						role=GATEWAY,
+						count=1,
+						cpu=self.cpu,
+						ram_gb=self.ram_gb,
+						disk_gb=self.gateway_disk_gb,
+					),
+					NodeSpec(
+						role=STORAGE,
+						count=self.storage_count,
+						cpu=self.cpu,
+						ram_gb=self.ram_gb,
+						disk_gb=self.disk_gb,
+					),
+				],
+			)
+		):
+			self.mark("Pending")
 
-	def request_machines(self) -> None:
-		"""Record one `Machine` per VM id Atlas returns."""
-		placement = self.placement()
+	@frappe.whitelist()
+	def increase_storage_node(self, storage_node_increment: int) -> None:
+		"""Ask Atlas for more storage machines. The scheduler joins them once they boot."""
+		if self.status != "Active":
+			frappe.throw(_("You can only increase storage nodes on an active cluster."))
+
+		# Desk sends whatever the prompt collected, and a form is not a guard.
+		storage_node_increment = int(storage_node_increment)
+		if storage_node_increment < 1:
+			frappe.throw(_("Ask for at least one storage node."))
+
+		if self.request_machines(
+			PlacementGroupSchema(
+				strategy=self.strategy,
+				topology_key=self.topology_key,
+				partition_count=self.partition_count,
+				specs=[
+					NodeSpec(
+						role=STORAGE,
+						count=storage_node_increment,
+						cpu=self.cpu,
+						ram_gb=self.ram_gb,
+						disk_gb=self.disk_gb,
+					),
+				],
+			)
+		):
+			self.storage_count += storage_node_increment
+			self.mark("Increasing Storage Nodes")
+
+	def request_machines(self, placement: PlacementGroupSchema) -> bool:
+		"""Record one `Machine` per VM id Atlas returns. False once the cluster is marked Failed."""
 		roles = placement.roles()
 
 		try:
@@ -138,7 +170,7 @@ class ObjectStorageCluster(ServiceCluster):
 			)
 		except Exception:
 			self.mark("Failed", error=frappe.get_traceback(with_context=True))
-			return
+			return False
 
 		if len(vm_ids) != len(roles):
 			self.mark(
@@ -146,7 +178,7 @@ class ObjectStorageCluster(ServiceCluster):
 				error=f"Asked Atlas for {len(roles)} machines and got {len(vm_ids)}. "
 				f"{self.release_machines(vm_ids)}",
 			)
-			return
+			return False
 
 		for vm_id, role in zip(vm_ids, roles, strict=True):
 			frappe.get_doc(
@@ -161,7 +193,7 @@ class ObjectStorageCluster(ServiceCluster):
 				}
 			).insert(ignore_permissions=True)
 
-		self.mark("Pending")
+		return True
 
 	def release_machines(self, vm_ids: list[str]) -> str:
 		"""Hand back machines no `Machine` row will own, and say what became of them."""
@@ -196,7 +228,7 @@ class ObjectStorageCluster(ServiceCluster):
 		self.refresh_machine_states()
 
 	def refresh_machine_states(self) -> None:
-		"""Move the cluster on once its machines have settled."""
+		"""Move the cluster on once the machines it is waiting for have settled."""
 		states = frappe.get_all(
 			"Machine",
 			filters={"reference_doctype": self.doctype, "reference_name": self.name},
@@ -208,6 +240,11 @@ class ObjectStorageCluster(ServiceCluster):
 		failed = [state for state in states if state in ("Broken", "Terminated")]
 		if failed:
 			self.mark("Failed", error=f"{len(failed)} of {len(states)} machines failed")
+			return
+
+		if self.status == "Increasing Storage Nodes":
+			self.mark("Joining Storage Nodes")
+			self.increase_storage_capacity.run_as_workflow()
 			return
 
 		self.mark("Machines Ready")
@@ -282,6 +319,19 @@ class ObjectStorageCluster(ServiceCluster):
 			frappe.throw(_("This cluster has no gateway to reach it at."))
 
 		return address
+
+	@flow
+	def increase_storage_capacity(self) -> None:
+		"""Once the storage nodes are ready, add them to the cluster using Garage's API"""
+		self.join_storage_nodes()
+
+	@task
+	def join_storage_nodes(self) -> None:
+		"""Add the new machines to the running cluster"""
+		# Appended: the setup that built this cluster is worth keeping next to what grew it.
+		with OutputLog(self, "setup_log", append=True) as log:
+			log.write(f"\n=== joining storage nodes, {now_datetime()} ===\n")
+			ClusterSetup(self, on_output=log.write).add_storage_nodes()
 
 
 def sync_pending_machines() -> None:

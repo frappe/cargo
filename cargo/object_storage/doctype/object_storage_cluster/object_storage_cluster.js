@@ -65,6 +65,30 @@ frappe.ui.form.on("Object Storage Cluster", {
 			}).addClass("btn-primary");
 		}
 
+		if (frm.doc.status === "Active") {
+			frm.add_custom_button(__("Add Storage Nodes"), () => {
+				frappe.prompt(
+					{
+						fieldname: "storage_node_increment",
+						label: __("How many more storage nodes?"),
+						fieldtype: "Int",
+						default: 1,
+						reqd: 1,
+					},
+					({ storage_node_increment }) =>
+						frm.call("increase_storage_node", { storage_node_increment }).then(() => {
+							frappe.show_alert({
+								message: __("Requested. They join once they boot."),
+								indicator: "blue",
+							});
+							frm.reload_doc();
+						}),
+					__("Add Storage Nodes"),
+					__("Ask Atlas")
+				);
+			});
+		}
+
 		if (["Credentials Minted", "Failed", "Active"].includes(frm.doc.status)) {
 			const first = frm.doc.status === "Credentials Minted";
 			frm.add_custom_button(first ? __("Set Up Cluster") : __("Run Setup Again"), () => {
@@ -95,6 +119,8 @@ frappe.ui.form.on("Object Storage Cluster", {
 			),
 			"Credentials Minted": __("Secrets issued. Ready to install Garage."),
 			"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
+			"Increasing Storage Nodes": __("Waiting for the new storage machines to boot."),
+			"Joining Storage Nodes": __("The new machines are up. Adding them to the cluster."),
 			Active: __("Garage is running and Central can use this cluster."),
 			Failed: __("The last run failed. See Error below."),
 		};

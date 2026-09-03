@@ -171,6 +171,25 @@ class ClusterSetup:
 
 		return identifiers
 
+	def add_storage_nodes(self) -> dict:
+		"""Fold machines that have not joined into the cluster, leaving the running ones alone."""
+		joined = self.healthy_nodes()
+		fresh = [machine for machine in self.machines if machine["name"] not in joined]
+		if not fresh:
+			frappe.throw(_("Every machine of this cluster has already joined."))
+
+		for machine in fresh:
+			self.bootstrap_machine(machine)
+
+		identifiers = self.node_identifiers()
+		self.admin.connect_nodes([identifiers[machine["name"]] for machine in fresh])
+		applied = self.assign_layout(identifiers)
+
+		for machine in self.machines:
+			self.record_peers(machine, list(identifiers.values()))
+
+		return applied
+
 	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> dict:
 		"""Stage every node's role, then apply the lot as one version."""
 		roles = []

@@ -73,13 +73,13 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Mint again from the form.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.",
+   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Mint again from the form.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nIncreasing Storage Nodes \u2014 waiting for the new machines to boot.\nJoining Storage Nodes \u2014 the new machines are up and being added to the cluster.\nActive \u2014 Garage is running and Central can use it.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nPending\nMachines Ready\nMinting Failed\nCredentials Minted\nSetting Up\nActive\nFailed",
+   "options": "Draft\nPending\nMachines Ready\nMinting Failed\nCredentials Minted\nSetting Up\nIncreasing Storage Nodes\nJoining Storage Nodes\nActive\nFailed",
    "read_only": 1
   },
   {
@@ -392,11 +392,11 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-03 15:24:52.502892",
+ "modified": "2026-09-03 18:59:56.649832",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
