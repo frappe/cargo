@@ -6,6 +6,7 @@ import threading
 import time
 import typing
 from collections.abc import Callable
+from pathlib import Path
 
 import frappe
 from frappe import _
@@ -90,6 +91,20 @@ class OutputLog:
 
 		self.document.db_set(self.fieldname, text, update_modified=False)
 		frappe.cache.delete_value(self.cache_key)
+
+
+def create_keypair(comment: str) -> tuple[str, str]:
+	"""A fresh ed25519 keypair, as (public, private). Every service needs one to reach the
+	machines it asks for, and no key outlives the machines it opens."""
+	with tempfile.TemporaryDirectory() as directory:
+		path = Path(directory) / "key"
+		subprocess.run(
+			["ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)],
+			check=True,
+			capture_output=True,
+		)
+
+		return path.with_suffix(".pub").read_text().strip(), path.read_text()
 
 
 def cache_key(doctype: str, name: str, fieldname: str) -> str:

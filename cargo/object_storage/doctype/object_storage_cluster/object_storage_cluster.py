@@ -12,6 +12,7 @@ from cargo.object_storage.client_models import GATEWAY, STORAGE, NodeSpec, Place
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.cluster_setup import ClusterSetup
 from cargo.service_cluster import ServiceCluster
+from cargo.ssh import create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import task
 
 
@@ -93,6 +94,11 @@ class ObjectStorageCluster(ServiceCluster):
 				),
 			],
 		)
+
+	def before_insert(self) -> None:
+		"""One keypair per cluster, made here so nobody has to paste one in."""
+		if not self.ssh_public_key:
+			self.ssh_public_key, self.ssh_private_key = create_keypair(self.name or self.region)
 
 	@frappe.whitelist()
 	def provision(self) -> None:

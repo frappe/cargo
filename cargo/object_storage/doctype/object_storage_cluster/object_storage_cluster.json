@@ -197,23 +197,25 @@
    "label": "Machine Access"
   },
   {
-   "description": "Installed as root's key on every machine. Can't change once they exist.",
+   "description": "Generated for this cluster. It opens only these machines.",
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 0,
+   "set_only_once": 1,
+   "read_only": 1
   },
   {
    "fieldname": "column_break_access",
    "fieldtype": "Column Break"
   },
   {
-   "description": "The matching half, used to reach the machines.",
+   "description": "Generated for this cluster. It opens only these machines.",
    "fieldname": "ssh_private_key",
    "fieldtype": "Password",
    "label": "SSH Private Key",
-   "reqd": 1
+   "reqd": 0,
+   "read_only": 1
   },
   {
    "collapsible": 1,
@@ -359,20 +361,23 @@
    "read_only": 1
   },
   {
-   "description": "Add a metadata bucket service to store firecracker images.",
+   "description": "Name of the metadata bucket for the region",
    "fieldname": "metadata_bucket",
    "fieldtype": "Data",
-   "label": "Metadata Bucket"
+   "label": "Metadata Bucket",
+   "read_only": 1
   },
   {
    "fieldname": "metadata_bucket_access_key",
    "fieldtype": "Data",
-   "label": "Metadata Bucket Access Key"
+   "label": "Metadata Bucket Access Key",
+   "read_only": 1
   },
   {
    "fieldname": "metadata_bucket_secret_key",
    "fieldtype": "Password",
-   "label": "Metadata Bucket Secret Key"
+   "label": "Metadata Bucket Secret Key",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -384,7 +389,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-01 15:56:48.061216",
+ "modified": "2026-09-03 10:54:53.720069",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
