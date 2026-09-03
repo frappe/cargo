@@ -19,8 +19,7 @@ set -euo pipefail
 : "${WEB_PORT:?WEB_PORT is required}"
 : "${K2V_PORT:?K2V_PORT is required}"
 : "${ADMIN_PORT:?ADMIN_PORT is required}"
-# Space separated, and empty on the first node of a new cluster.
-BOOTSTRAP_PEERS="${BOOTSTRAP_PEERS:-}"
+GARAGE_CONFIG="${GARAGE_CONFIG:-/etc/garage.toml}"
 
 install -d -m 700 "$METADATA_DIR" "$DATA_DIR"
 
@@ -37,12 +36,7 @@ if ! installed="$("$GARAGE_BINARY" --version 2>&1)"; then
 	exit 1
 fi
 
-peers=""
-for peer in $BOOTSTRAP_PEERS; do
-	peers="${peers}"$'\t'"\"${peer}\","$'\n'
-done
-
-cat > /etc/garage.toml <<GARAGE_TOML
+cat > "$GARAGE_CONFIG" <<GARAGE_TOML
 metadata_dir = "$METADATA_DIR"
 data_dir     = "$DATA_DIR"
 db_engine    = "lmdb"
@@ -54,8 +48,10 @@ rpc_bind_addr   = "[::]:$RPC_PORT"
 rpc_public_addr = "$RPC_PUBLIC_ADDR:$RPC_PORT"
 rpc_secret      = "$RPC_SECRET"
 
+# Left empty: nodes are peered over the admin API, and set_peers.sh fills this in for the
+# next boot. The brackets are the anchor it looks for.
 bootstrap_peers = [
-${peers}]
+]
 
 [s3_api]
 s3_region     = "$REGION"
@@ -75,7 +71,7 @@ api_bind_addr = "[::]:$ADMIN_PORT"
 admin_token   = "$ADMIN_TOKEN"
 metrics_token = "$METRICS_TOKEN"
 GARAGE_TOML
-chmod 600 /etc/garage.toml
+chmod 600 "$GARAGE_CONFIG"
 
 cat > /etc/systemd/system/garage.service <<GARAGE_UNIT
 [Unit]

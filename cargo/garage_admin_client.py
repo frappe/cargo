@@ -79,6 +79,19 @@ class GarageAdminClient:
 	def apply_layout(self, version: int) -> dict[str, Any]:
 		return self.call("ApplyClusterLayout", "POST", json={"version": version})
 
+	def connect_nodes(self, identifiers: list[str]) -> list[dict[str, Any]]:
+		"""Peer the nodes now, without restarting them. Gossip spreads from whoever answers."""
+		connected = self.call("ConnectClusterNodes", "POST", json=identifiers)
+		refused = [
+			f"{identifier}: {result.get('error')}"
+			for identifier, result in zip(identifiers, connected, strict=True)
+			if not result.get("success")
+		]
+		if refused:
+			raise GarageError(0, f"ConnectClusterNodes: {', '.join(refused)}")
+
+		return connected
+
 	def bucket(self, alias: str) -> dict[str, Any] | None:
 		return self.call("GetBucketInfo", params={"globalAlias": alias})
 

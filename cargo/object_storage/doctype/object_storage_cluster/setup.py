@@ -83,9 +83,9 @@ class ClusterSetup:
 	def admin(self) -> GarageAdminClient:
 		return GarageAdminClient.for_cluster(self.cluster)
 
-	def run(self, address: str, script: str, quiet: bool = False) -> str:
+	def run(self, address: str, script: str) -> str:
 		"""Every command the setup runs, streamed into the log unless it prints a secret."""
-		return run_over_ssh(address, script, self.ssh_key, on_output=None if quiet else self.on_output)
+		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -112,19 +112,14 @@ class ClusterSetup:
 			for machine in self.machines
 		}
 
-	def install_script(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
-		"""This kind's script, with the cluster's settings exported ahead of it."""
-		exports = "\n".join(
-			f"export {key}={shlex.quote(str(value))}"
-			for key, value in self.install_environment(machine, peers).items()
-		)
-		script = Path(
-			frappe.get_app_path("cargo", "object_storage", "conf", "garage", "install.sh")
-		).read_text()
+	def script(self, name: str, environment: dict[str, str]) -> str:
+		"""One of this service's scripts, with its arguments exported ahead of it."""
+		exports = "\n".join(f"export {key}={shlex.quote(str(value))}" for key, value in environment.items())
+		body = Path(frappe.get_app_path("cargo", "object_storage", "conf", "garage", name)).read_text()
 
-		return f"{exports}\n{script}"
+		return f"{exports}\n{body}"
 
-	def install_environment(self, machine: MachineRow, peers: list[NodeIdentifier]) -> dict[str, str]:
+	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
 		cluster = self.cluster
 
@@ -143,29 +138,36 @@ class ClusterSetup:
 			"WEB_PORT": cluster.web_port,
 			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
-			"BOOTSTRAP_PEERS": " ".join(peers),
 			"RPC_SECRET": self.secrets["rpc_secret"],
 			"ADMIN_TOKEN": self.secrets["admin_token"],
 			"METRICS_TOKEN": self.secrets["metrics_token"],
 		}
 
-	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
+	def bootstrap_machine(self, machine: MachineRow) -> str:
 		if self.on_output:
 			self.on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
 
-		return self.run(machine["ipv4_address"], self.install_script(machine, peers))
+		return self.run(machine["ipv4_address"], self.script("install.sh", self.install_environment(machine)))
+
+	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
+		"""Where a node looks for the others after a reboot. Nothing restarts to read it."""
+		return self.run(
+			machine["ipv4_address"], self.script("set_peers.sh", {"BOOTSTRAP_PEERS": " ".join(peers)})
+		)
 
 	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
-		"""Bring the cluster up, twice: peers are unknown until the nodes have run once."""
+		"""Install, peer over the admin API, then leave the peers behind for the next boot."""
 		if not self.machines:
 			frappe.throw(_("This cluster has no machines."))
 
 		for machine in self.machines:
-			self.bootstrap_machine(machine, peers=[])
+			self.bootstrap_machine(machine)
 
 		identifiers = self.node_identifiers()
+		peers = list(identifiers.values())
+		self.admin.connect_nodes(peers)
 		for machine in self.machines:
-			self.bootstrap_machine(machine, list(identifiers.values()))
+			self.record_peers(machine, peers)
 
 		return identifiers
 
