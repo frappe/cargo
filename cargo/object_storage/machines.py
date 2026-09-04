@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 
 from cargo.atlas_client import AtlasClient
-from cargo.object_storage.client_models import NodeSpec, Role
+from cargo.object_storage.client_models import NodeSpec, PlacementGroupSchema, Role
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine, MachineStatus
@@ -25,11 +25,20 @@ class MachineFleet:
 
 	@property
 	def names(self) -> list[str]:
-		return self.cluster.associated_machines
+		return [row.machine for row in self.cluster.machines]
 
 	@property
-	def vm_ids(self) -> list[str]:
-		return frappe.get_all("Machine", filters={"name": ("in", self.names)}, pluck="vm_id")
+	def gateway_address(self) -> str:
+		"""Where this cluster answers: every S3 and admin call goes through the gateway."""
+		gateway = self.cluster.gateway_node
+		if not gateway:
+			frappe.throw(_("This cluster has no gateway to reach it at."))
+
+		address = frappe.get_doc("Machine", gateway).ipv4_address
+		if not address:
+			frappe.throw(_("This cluster's gateway has not booted yet."))
+
+		return address
 
 	def in_status(self, status: MachineStatus) -> list[str]:
 		if not self.names:
@@ -55,14 +64,37 @@ class MachineFleet:
 
 		return machine
 
+	def placement(self, machine: Machine, cpu: int, ram_gb: int, disk_gb: int) -> PlacementGroupSchema:
+		"""One machine, and where its cluster would like it to land."""
+		return PlacementGroupSchema(
+			specs=[NodeSpec(role=machine.role, count=1, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)],
+			strategy=self.cluster.strategy,
+			topology_key=self.cluster.topology_key,
+			partition_count=self.cluster.partition_count,
+		)
+
+	def terminate(self, machine: Machine) -> None:
+		"""Tell Atlas to terminate one machine, and mark it as terminated."""
+		try:
+			AtlasClient.from_settings().terminate_vm(machine.vm_id)
+		except Exception:
+			machine.status = "Broken"
+			machine.save(ignore_permissions=True)
+			frappe.log_error(
+				title=f"{self.cluster.name} could not terminate {machine.role} machine {machine.name}",
+				message=frappe.get_traceback(with_context=True),
+			)
+			return
+
+		machine.status = "Terminated"
+		machine.save(ignore_permissions=True)
+
 	def build(self, machine: Machine, cpu: int, ram_gb: int, disk_gb: int) -> str:
 		"""The VM id Atlas built for one machine."""
-		specs = [NodeSpec(role=machine.role, count=1, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)]
-
 		try:
 			vm_ids = AtlasClient.from_settings().create_vms(
 				title=f"{self.cluster.name} object storage",
-				placement=self.cluster.placement_schema(specs),
+				placement=self.placement(machine, cpu, ram_gb, disk_gb),
 				base_image=self.cluster.base_image,
 				public_key=self.cluster.ssh_public_key,
 			)
@@ -88,9 +120,6 @@ class MachineFleet:
 			status = machine.sync(client)
 			if status != "Draft":
 				states.append(status)
-
-		if not self.names:
-			return []
 
 		return states
 

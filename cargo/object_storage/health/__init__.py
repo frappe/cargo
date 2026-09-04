@@ -32,19 +32,29 @@ class ClusterHealth:
 		"""Saving a document may only ask the database. A scheduled run may ask the cluster."""
 		return CHEAP_CHECKS if cheap_only else CHEAP_CHECKS + NETWORK_CHECKS
 
+	def findings(self, cheap_only: bool = True) -> list[Finding]:
+		"""Everything the checks have against this cluster, whether or not it is serving yet."""
+		facts = ClusterFacts.of(self.cluster)
+
+		return [finding for check in self.checks(cheap_only) if (finding := check.run(facts))]
+
+	def blockers(self, cheap_only: bool = True) -> list[Finding]:
+		"""What stands between this cluster and serving S3."""
+		return [finding for finding in self.findings(cheap_only) if finding.severity == CRITICAL]
+
 	def evaluate(self, cheap_only: bool = True) -> Finding:
 		"""The worst thing true about this cluster right now, and why."""
 		if self.cluster.status == "Failed":
 			return Finding(CRITICAL, "the build failed, so nothing is serving")
 
+		# A cluster still being built is not judged: it has not promised anything yet.
 		if not self.cluster.lifecycle.is_live:
 			return Finding(UNKNOWN, "")
 
-		facts = ClusterFacts.of(self.cluster)
-		findings = [finding for check in self.checks(cheap_only) if (finding := check.run(facts))]
-
 		return max(
-			findings, key=lambda finding: SEVERITY.index(finding.severity), default=Finding(HEALTHY, "")
+			self.findings(cheap_only),
+			key=lambda finding: SEVERITY.index(finding.severity),
+			default=Finding(HEALTHY, ""),
 		)
 
 

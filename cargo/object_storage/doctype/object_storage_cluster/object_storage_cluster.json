@@ -12,20 +12,18 @@
   "metadata_bucket_secret_key",
   "column_break_cluster",
   "status",
+  "health",
+  "health_reason",
+  "activated_on",
   "error",
   "section_break_topology",
-  "storage_count",
   "replication_factor",
   "column_break_placement",
   "strategy",
   "topology_key",
   "partition_count",
-  "section_break_spec",
-  "cpu",
-  "ram_gb",
-  "column_break_spec",
-  "disk_gb",
-  "gateway_disk_gb",
+  "machine_info_section",
+  "machines",
   "section_break_access",
   "ssh_public_key",
   "column_break_access",
@@ -73,13 +71,39 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing asked for yet.\nPending \u2014 Atlas has the machines, still booting.\nMachines Ready \u2014 all machines up and reachable.\nMinting Failed \u2014 Central would not issue the cluster's secrets. Mint again from the form.\nCredentials Minted \u2014 secrets issued, ready to configure.\nSetting Up \u2014 installing Garage on the machines.\nIncreasing Storage Nodes \u2014 waiting for the new machines to boot.\nJoining Storage Nodes \u2014 the new machines are up and being added to the cluster.\nActive \u2014 Garage is running and Central can use it.",
+   "description": "Draft \u2014 nothing set up yet.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.\nFailed \u2014 the last run failed. See Error below.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nPending\nMachines Ready\nMinting Failed\nCredentials Minted\nSetting Up\nIncreasing Storage Nodes\nJoining Storage Nodes\nActive\nFailed",
+   "options": "Draft\nSetting Up\nActive\nFailed",
+   "read_only": 1
+  },
+  {
+   "default": "Unknown",
+   "description": "What users get right now, worked out from the machines. Status is what Cargo is doing; health is how the cluster is doing.",
+   "fieldname": "health",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Health",
+   "options": "Unknown\nHealthy\nDegraded\nCritical",
+   "read_only": 1
+  },
+  {
+   "depends_on": "health_reason",
+   "description": "What the worst check found.",
+   "fieldname": "health_reason",
+   "fieldtype": "Data",
+   "label": "Health Reason",
+   "read_only": 1
+  },
+  {
+   "description": "When this cluster first served. Past this it stays Active: a later failure is a health problem, not a failed build.",
+   "fieldname": "activated_on",
+   "fieldtype": "Datetime",
+   "label": "Activated On",
    "read_only": 1
   },
   {
@@ -92,23 +116,14 @@
    "read_only": 1
   },
   {
-   "description": "Machine count and how safely data is spread.",
+   "description": "How safely data is spread. The machines themselves live under Machines, each with its own disk.",
    "fieldname": "section_break_topology",
    "fieldtype": "Section Break",
    "label": "Topology"
   },
   {
    "default": "3",
-   "description": "Machines holding data. A gateway is always added, so 3 here builds 4 machines.",
-   "fieldname": "storage_count",
-   "fieldtype": "Int",
-   "in_list_view": 1,
-   "label": "Storage Nodes",
-   "reqd": 1
-  },
-  {
-   "default": "3",
-   "description": "Copies of each object. Can't exceed the storage node count.",
+   "description": "Copies of each object. Can't exceed the number of storage machines.",
    "fieldname": "replication_factor",
    "fieldtype": "Int",
    "label": "Replication Factor",
@@ -139,48 +154,6 @@
    "fieldname": "partition_count",
    "fieldtype": "Int",
    "label": "Partition Count"
-  },
-  {
-   "description": "vCPU and RAM apply to every machine; disks differ by role.",
-   "fieldname": "section_break_spec",
-   "fieldtype": "Section Break",
-   "label": "Machine Spec"
-  },
-  {
-   "default": "2",
-   "description": "Per machine.",
-   "fieldname": "cpu",
-   "fieldtype": "Int",
-   "label": "vCPUs",
-   "reqd": 1
-  },
-  {
-   "default": "4",
-   "description": "Per machine. Grows with object count.",
-   "fieldname": "ram_gb",
-   "fieldtype": "Int",
-   "label": "RAM (GB)",
-   "reqd": 1
-  },
-  {
-   "fieldname": "column_break_spec",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "100",
-   "description": "Per storage node.",
-   "fieldname": "disk_gb",
-   "fieldtype": "Int",
-   "label": "Storage Disk (GB)",
-   "reqd": 1
-  },
-  {
-   "default": "20",
-   "description": "Gateways proxy only, so they need very little.",
-   "fieldname": "gateway_disk_gb",
-   "fieldtype": "Int",
-   "label": "Gateway Disk (GB)",
-   "reqd": 1
   },
   {
    "description": "Key pair stamped onto this cluster's machines. Both halves needed.",
@@ -381,6 +354,17 @@
    "label": "Setup Log",
    "max_height": "24rem",
    "read_only": 1
+  },
+  {
+   "fieldname": "machine_info_section",
+   "fieldtype": "Section Break",
+   "label": "Machine Info"
+  },
+  {
+   "fieldname": "machines",
+   "fieldtype": "Table",
+   "label": "Machines",
+   "options": "Object Storage Node"
   }
  ],
  "grid_page_length": 50,
@@ -392,7 +376,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-03 18:59:56.649832",
+ "modified": "2026-09-04 14:50:42.616348",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

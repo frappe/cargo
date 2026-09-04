@@ -33,22 +33,63 @@ frappe.ui.form.on("Object Storage Cluster", {
 			scroll_to_latest(frm, "setup_log");
 		}
 
-		if (frm.doc.status === "Draft") {
-			frm.add_custom_button(__("Provision"), () => {
-				frappe.confirm(
-					__("Ask Atlas for one gateway and {0} storage nodes?", [
-						frm.doc.storage_count,
-					]),
-					() =>
-						frm.call("provision").then(() => {
-							frappe.show_alert({
-								message: __("Requested. Watch the status here."),
-								indicator: "blue",
-							});
-							frm.reload_doc();
-						})
+		// A cluster takes machines in every state but one: while it installs on what it has.
+		if (frm.doc.status !== "Setting Up") {
+			const spec = (label) => [
+				{
+					fieldname: "cpu",
+					label: __("vCPUs"),
+					fieldtype: "Int",
+					default: 2,
+					reqd: 1,
+				},
+				{
+					fieldname: "ram_gb",
+					label: __("RAM (GB)"),
+					fieldtype: "Int",
+					default: 4,
+					reqd: 1,
+				},
+				{
+					fieldname: "disk_gb",
+					label: __("Disk (GB)"),
+					description: label,
+					fieldtype: "Int",
+					default: 100,
+					reqd: 1,
+				},
+			];
+
+			const add = (method, values, message) =>
+				frm.call(method, values).then(({ message: name }) => {
+					frappe.show_alert({ message: __(message, [name]), indicator: "blue" });
+					frm.reload_doc();
+				});
+
+			// One gateway to a cluster, so the button goes once it has one.
+			if (!(frm.doc.machines || []).some((row) => row.role === "gateway")) {
+				frm.add_custom_button(__("Add Gateway Node"), () => {
+					frappe.prompt(
+						spec(__("A gateway only passes traffic through, so it barely needs one.")),
+						(values) => add("add_gateway_node", values, "Asked Atlas for {0}."),
+						__("Add Gateway Node"),
+						__("Ask Atlas")
+					);
+				}).addClass("btn-primary");
+			}
+
+			frm.add_custom_button(__("Add Storage Node"), () => {
+				frappe.prompt(
+					spec(
+						__(
+							"This node's own disk. Garage is not RAID 0, so it need not match the others."
+						)
+					),
+					(values) => add("add_storage_node", values, "Asked Atlas for {0}."),
+					__("Add Storage Node"),
+					__("Ask Atlas")
 				);
-			}).addClass("btn-primary");
+			});
 		}
 
 		if (["Machines Ready", "Minting Failed"].includes(frm.doc.status)) {
@@ -65,30 +106,6 @@ frappe.ui.form.on("Object Storage Cluster", {
 			}).addClass("btn-primary");
 		}
 
-		if (frm.doc.status === "Active") {
-			frm.add_custom_button(__("Add Storage Nodes"), () => {
-				frappe.prompt(
-					{
-						fieldname: "storage_node_increment",
-						label: __("How many more storage nodes?"),
-						fieldtype: "Int",
-						default: 1,
-						reqd: 1,
-					},
-					({ storage_node_increment }) =>
-						frm.call("increase_storage_node", { storage_node_increment }).then(() => {
-							frappe.show_alert({
-								message: __("Requested. They join once they boot."),
-								indicator: "blue",
-							});
-							frm.reload_doc();
-						}),
-					__("Add Storage Nodes"),
-					__("Ask Atlas")
-				);
-			});
-		}
-
 		if (["Credentials Minted", "Failed", "Active"].includes(frm.doc.status)) {
 			const first = frm.doc.status === "Credentials Minted";
 			frm.add_custom_button(first ? __("Set Up Cluster") : __("Run Setup Again"), () => {
@@ -96,9 +113,7 @@ frappe.ui.form.on("Object Storage Cluster", {
 					"Setup runs from scratch every time: every node's config is rewritten and Garage is restarted, and the cluster gets a new layout version. Expect brief downtime while nodes come back."
 				);
 				frappe.confirm(
-					first
-						? __("Install Garage on {0} machines?", [frm.doc.storage_count + 1])
-						: warning,
+					first ? __("Install Garage on this cluster's machines?") : warning,
 					() =>
 						frm.call("setup_cluster").then(() => {
 							frappe.show_alert({
@@ -112,6 +127,7 @@ frappe.ui.form.on("Object Storage Cluster", {
 		}
 
 		const headlines = {
+			Draft: __("Add a gateway and its storage nodes. Each one is asked for as you add it."),
 			Pending: __("Waiting for machines to boot."),
 			"Machines Ready": __("Machines are up. Asking Central for the cluster's secrets."),
 			"Minting Failed": __(
@@ -119,12 +135,23 @@ frappe.ui.form.on("Object Storage Cluster", {
 			),
 			"Credentials Minted": __("Secrets issued. Ready to install Garage."),
 			"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
-			"Increasing Storage Nodes": __("Waiting for the new storage machines to boot."),
-			"Joining Storage Nodes": __("The new machines are up. Adding them to the cluster."),
 			Active: __("Garage is running and Central can use this cluster."),
 			Failed: __("The last run failed. See Error below."),
 		};
 		if (headlines[frm.doc.status]) frm.dashboard.set_headline(headlines[frm.doc.status]);
+
+		// Status is what Cargo is doing; health is what users get. A live cluster whose
+		// machine died keeps serving, so it stays Active and says Degraded here.
+		const colors = { Healthy: "green", Degraded: "orange", Critical: "red" };
+		if (colors[frm.doc.health]) {
+			frm.page.set_indicator(__(frm.doc.health), colors[frm.doc.health]);
+		}
+		if (frm.doc.health_reason) {
+			frm.dashboard.set_headline(
+				`${__(frm.doc.health)}: ${frm.doc.health_reason}`,
+				colors[frm.doc.health]
+			);
+		}
 	},
 });
 
