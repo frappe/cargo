@@ -12,7 +12,7 @@ import frappe
 from frappe import _
 
 from cargo.garage_admin_client import GarageAdminClient, GarageError
-from cargo.object_storage.client_models import STORAGE
+from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.ssh import SshError, run_over_ssh
 
@@ -25,7 +25,7 @@ BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 #: Lowercase alphanumerics, dots and hyphens, 3-63 characters, alphanumeric at both ends.
 BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 GIGABYTE = 1000**3
-#: `Machine.name`, e.g. ``OSC-eu-1-0001-storage-0001``.
+#: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
 #: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
 NodeIdentifier = str
@@ -39,6 +39,7 @@ class MachineRow(TypedDict):
 	role: str
 	zone: str
 	ipv4_address: str
+	disk_size_gb: int
 
 
 class MetadataBucketInfo(TypedDict):
@@ -54,7 +55,7 @@ class SetupError(SshError):
 
 
 class ClusterSetup:
-	"""Turns a cluster's machines into running Garage nodes."""
+	"""Turns a cluster's machines into running Garage nodes, one machine at a time."""
 
 	def __init__(self, cluster: ObjectStorageCluster, on_output: Callable[[str], None] | None = None):
 		self.cluster = cluster
@@ -68,12 +69,19 @@ class ClusterSetup:
 
 	@cached_property
 	def machines(self) -> list[MachineRow]:
-		return frappe.get_all(
+		"""Every machine that has booted, gateway first: the rest reach the cluster through it."""
+		machines = frappe.get_all(
 			"Machine",
-			filters={"reference_doctype": self.cluster.doctype, "reference_name": self.cluster.name},
-			fields=["name", "vm_id", "role", "zone", "ipv4_address"],
+			filters={
+				"reference_doctype": self.cluster.doctype,
+				"reference_name": self.cluster.name,
+				"status": "Running",
+			},
+			fields=["name", "vm_id", "role", "zone", "ipv4_address", "disk_size_gb"],
 			order_by="creation",
 		)
+
+		return sorted(machines, key=lambda machine: machine["role"] != GATEWAY)
 
 	@cached_property
 	def ssh_key(self) -> str:
@@ -83,9 +91,9 @@ class ClusterSetup:
 	def admin(self) -> GarageAdminClient:
 		return GarageAdminClient.for_cluster(self.cluster)
 
-	def run(self, address: str, script: str, quiet: bool = False) -> str:
-		"""Every command the setup runs, streamed into the log unless it prints a secret."""
-		return run_over_ssh(address, script, self.ssh_key, on_output=None if quiet else self.on_output)
+	def run(self, address: str, script: str) -> str:
+		"""Every command the setup runs, streamed into the log."""
+		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -94,7 +102,7 @@ class ClusterSetup:
 		except GarageError:
 			return 0
 
-	def healthy_nodes(self) -> set[str]:
+	def healthy_nodes(self) -> set[MachineRow]:
 		"""The machine names Garage reports as up, read from the node tags setup assigned."""
 		try:
 			nodes = self.admin.status().get("nodes") or []
@@ -103,28 +111,43 @@ class ClusterSetup:
 
 		tags = {tag for node in nodes if node.get("isUp") for tag in (node.get("role") or {}).get("tags", [])}
 
-		return {machine["name"] for machine in self.machines if machine["name"] in tags}
+		return {machine for machine in self.machines if machine["name"] in tags}
 
-	def node_identifiers(self) -> dict[MachineName, NodeIdentifier]:
-		"""Only answers once a node has started, since Garage keys itself on first launch."""
-		return {
-			machine["name"]: self.run(machine["ipv4_address"], "garage node id -q").strip().splitlines()[-1]
-			for machine in self.machines
-		}
+	def peers(self) -> list[NodeIdentifier]:
+		"""The nodes Garage can reach, as it addresses them itself."""
+		try:
+			nodes = self.admin.status().get("nodes") or []
+		except GarageError:
+			return []
 
-	def install_script(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
-		"""This kind's script, with the cluster's settings exported ahead of it."""
-		exports = "\n".join(
-			f"export {key}={shlex.quote(str(value))}"
-			for key, value in self.install_environment(machine, peers).items()
-		)
-		script = Path(
-			frappe.get_app_path("cargo", "object_storage", "conf", "garage", "install.sh")
-		).read_text()
+		return [f"{node['id']}@{node['addr']}" for node in nodes if node.get("isUp") and node.get("addr")]
 
-		return f"{exports}\n{script}"
+	def unjoined_machines(self) -> list[MachineRow]:
+		"""Machines that have booted but are no part of the cluster yet."""
+		joined = self.healthy_nodes()
 
-	def install_environment(self, machine: MachineRow, peers: list[NodeIdentifier]) -> dict[str, str]:
+		return [machine for machine in self.machines if machine["name"] not in joined]
+
+	def machine(self, name: MachineName) -> MachineRow:
+		"""One booted machine of this cluster, by name."""
+		machine = next((row for row in self.machines if row["name"] == name), None)
+		if not machine:
+			frappe.throw(_(f"{name} is not a machine of this cluster, or has not booted."))
+
+		return machine
+
+	def node_identifier(self, machine: MachineRow) -> NodeIdentifier:
+		"""Only answers once the node has started, since Garage keys itself on first launch."""
+		return self.run(machine["ipv4_address"], "garage node id -q").strip().splitlines()[-1]
+
+	def script(self, name: str, environment: dict[str, str]) -> str:
+		"""One of this service's scripts, with its arguments exported ahead of it."""
+		exports = "\n".join(f"export {key}={shlex.quote(str(value))}" for key, value in environment.items())
+		body = Path(frappe.get_app_path("cargo", "object_storage", "conf", "garage", name)).read_text()
+
+		return f"{exports}\n{body}"
+
+	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
 		cluster = self.cluster
 
@@ -143,49 +166,58 @@ class ClusterSetup:
 			"WEB_PORT": cluster.web_port,
 			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
-			"BOOTSTRAP_PEERS": " ".join(peers),
 			"RPC_SECRET": self.secrets["rpc_secret"],
 			"ADMIN_TOKEN": self.secrets["admin_token"],
 			"METRICS_TOKEN": self.secrets["metrics_token"],
 		}
 
-	def bootstrap_machine(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
+	def install(self, machine: MachineRow) -> str:
+		return self.run(machine["ipv4_address"], self.script("install.sh", self.install_environment(machine)))
+
+	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
+		"""Where a node looks for the others after a reboot. Nothing restarts to read it."""
+		return self.run(
+			machine["ipv4_address"], self.script("set_peers.sh", {"BOOTSTRAP_PEERS": " ".join(peers)})
+		)
+
+	def setup_machine(self, machine: MachineRow) -> None:
+		"""Install Garage on one machine and fold it into whatever cluster already exists."""
 		if self.on_output:
 			self.on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
 
-		return self.run(machine["ipv4_address"], self.install_script(machine, peers))
+		self.install(machine)
+		identifier = self.node_identifier(machine)
+		if self.healthy_nodes():
+			# The gateway answers for the cluster, so this is the cluster reaching for the
+			# new node rather than the other way round.
+			self.admin.connect_nodes([identifier])
 
-	def bootstrap_machines(self) -> dict[MachineName, NodeIdentifier]:
-		"""Bring the cluster up, twice: peers are unknown until the nodes have run once."""
-		if not self.machines:
-			frappe.throw(_("This cluster has no machines."))
+		self.stage_role(machine, identifier)
+		# Only this machine is told: the nodes already running know each other, and one live
+		# peer is all a node needs to find the rest after a reboot.
+		self.record_peers(machine, self.peers() or [identifier])
 
-		for machine in self.machines:
-			self.bootstrap_machine(machine, peers=[])
+	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
+		"""Write this machine into the next layout. Nothing takes effect until it is applied."""
+		role = {
+			"id": identifier.split("@")[0],
+			"zone": machine["zone"],
+			"tags": [machine["name"]],
+		}
+		if machine["role"] == STORAGE:
+			# Per machine: Garage weights a node by its own disk, so the disks may differ.
+			role["capacity"] = machine["disk_size_gb"] * GIGABYTE
 
-		identifiers = self.node_identifiers()
-		for machine in self.machines:
-			self.bootstrap_machine(machine, list(identifiers.values()))
+		return self.admin.assign_roles([role])
 
-		return identifiers
+	def apply_layout(self) -> dict:
+		"""One version for everything staged. Garage refuses a layout that cannot hold a full
+		copy, so a gateway and its storage nodes have to land together."""
+		layout = self.admin.layout()
+		if not layout.get("stagedRoleChanges"):
+			return layout
 
-	def assign_layout(self, identifiers: dict[MachineName, NodeIdentifier]) -> dict:
-		"""Stage every node's role, then apply the lot as one version."""
-		roles = []
-		for machine in self.machines:
-			role = {
-				"id": identifiers[machine["name"]].split("@")[0],
-				"zone": machine["zone"],
-				"tags": [machine["name"]],
-			}
-			if machine["role"] == STORAGE:
-				role["capacity"] = self.cluster.disk_gb * GIGABYTE
-
-			roles.append(role)
-
-		self.admin.assign_roles(roles)
-
-		return self.admin.apply_layout(self.layout_version() + 1)
+		return self.admin.apply_layout(layout.get("version", 0) + 1)
 
 	def create_metadata_bucket(self) -> MetadataBucketInfo:
 		"""Create the metadata bucket and a key that can read and write it, idempotently."""

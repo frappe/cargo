@@ -18,6 +18,11 @@
   "section_break_artifact",
   "snapshot_id",
   "built_at",
+  "section_break_upload",
+  "object_storage_cluster",
+  "column_break_upload",
+  "object_key",
+  "uploaded_at",
   "section_break_log",
   "build_log",
   "section_break_build",
@@ -171,6 +176,39 @@
    "fieldname": "admin_password",
    "fieldtype": "Password",
    "label": "Site Admin Password",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "object_storage_cluster",
+   "description": "A copy of the snapshot, in this cluster's metadata bucket.",
+   "fieldname": "section_break_upload",
+   "fieldtype": "Section Break",
+   "label": "Object Storage"
+  },
+  {
+   "description": "The snapshot is uploaded to this cluster's metadata bucket.",
+   "fieldname": "object_storage_cluster",
+   "fieldtype": "Link",
+   "label": "Cluster",
+   "options": "Object Storage Cluster",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_upload",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Where the snapshot sits inside that bucket.",
+   "fieldname": "object_key",
+   "fieldtype": "Data",
+   "label": "Object Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uploaded_at",
+   "fieldtype": "Datetime",
+   "label": "Uploaded At",
    "read_only": 1
   }
  ],
