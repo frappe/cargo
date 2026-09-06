@@ -1,4 +1,5 @@
-exclude: 'node_modules|.git'
+# tools/fake_atlas is a local stand-in for Atlas, never deployed and never imported.
+exclude: 'node_modules|\.git|^tools/fake_atlas/'
 default_stages: [pre-commit]
 fail_fast: false
 

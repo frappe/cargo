@@ -266,9 +266,10 @@ export_python_type_annotations = True
 scheduler_events = {
 	"cron": {
 		# Machines die without telling anyone, so a cluster's health is re-read on a clock.
-		"*/10 * * * *": [
-			"cargo.object_storage.health.refresh_health",
-		],
+		# Off until health is wired into the cluster: it still reads fields that moved.
+		# "*/10 * * * *": [
+		# 	"cargo.object_storage.health.refresh_health",
+		# ],
 		"* * * * *": [
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
