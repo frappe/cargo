@@ -106,10 +106,20 @@ class ClusterSetup:
 		"""The machine names Garage reports as up, read from the node tags setup assigned."""
 		try:
 			nodes = self.admin.status().get("nodes") or []
+			# A node is joined once it is up and tagged, whether or not the layout carrying
+			# that tag has been applied: applying is a separate step.
+			staged = self.admin.layout().get("stagedRoleChanges") or []
 		except GarageError:
 			return set()
 
-		tags = {tag for node in nodes if node.get("isUp") for tag in (node.get("role") or {}).get("tags", [])}
+		staged_tags = {change["id"]: change.get("tags") or [] for change in staged}
+		tags = set()
+		for node in nodes:
+			if not node.get("isUp"):
+				continue
+
+			tags.update((node.get("role") or {}).get("tags", []))
+			tags.update(staged_tags.get(node["id"], []))
 
 		return {machine["name"] for machine in self.machines if machine["name"] in tags}
 
@@ -187,14 +197,9 @@ class ClusterSetup:
 
 		self.install(machine)
 		identifier = self.node_identifier(machine)
-		if self.healthy_nodes():
-			# The gateway answers for the cluster, so this is the cluster reaching for the
-			# new node rather than the other way round.
-			self.admin.connect_nodes([identifier])
-
+		self.admin.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
-		# Only this machine is told: the nodes already running know each other, and one live
-		# peer is all a node needs to find the rest after a reboot.
+		# Every node the cluster now holds, so a reboot finds the others and not just itself.
 		self.record_peers(machine, self.peers() or [identifier])
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:

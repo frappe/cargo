@@ -182,7 +182,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return
 
 		self.release_failed_machines(failed_storage_node_setup)
-		self.mark_cluster_status("Active", None)
+		self.verify_connected_nodes()
 
 	@task
 	def discover_machines_to_setup(self) -> list[str]:
@@ -205,6 +205,25 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return False
 
 		return True
+
+	@task
+	def verify_connected_nodes(self) -> None:
+		"""What actually joined, as Garage sees it. Health labels the rest; this only decides
+		whether the cluster came up at all."""
+		healthy_nodes = self.garage.healthy_nodes()
+		joined_storage = [node for node in self.storage_nodes if node.name in healthy_nodes]
+
+		if len(joined_storage) < self.replication_factor:
+			self.mark_cluster_status(
+				"Failed",
+				_("Only {0} storage nodes joined the cluster, {1} needed for a full copy.").format(
+					len(joined_storage), self.replication_factor
+				),
+			)
+			return
+
+		# Short of a node but able to serve: Active, and health reports it as degraded.
+		self.mark_cluster_status("Active", None)
 
 	@task
 	def release_failed_machines(self, failed_machines: list[str]) -> None:
