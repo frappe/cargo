@@ -15,12 +15,8 @@ METHOD_PREFIX = "/api/method/atlas.atlas.api.service."
 
 
 class AtlasError(RuntimeError):
-	"""An Atlas call failed."""
-
-	def __init__(self, status: int, message: str) -> None:
-		self.status = status
-		self.message = message
-		super().__init__(f"Atlas API error ({status}): {message}")
+	"""An Atlas call failed. One argument, so it survives a pickle round trip: that is how
+	the workflow engine carries an exception back to the flow that raised it."""
 
 
 class AtlasClient:
@@ -49,7 +45,7 @@ class AtlasClient:
 				timeout=self.timeout,
 			)
 		except requests.RequestException as exception:
-			raise AtlasError(0, f"{endpoint}: {exception}") from exception
+			raise AtlasError(f"{endpoint}: {exception}") from exception
 
 		try:
 			payload = response.json()
@@ -57,10 +53,14 @@ class AtlasClient:
 			payload = None
 
 		if not response.ok:
-			raise AtlasError(response.status_code, error_message(payload, response.text))
+			raise AtlasError(
+				f"{endpoint} answered {response.status_code}: {error_message(payload, response.text)}"
+			)
 
 		if isinstance(payload, dict) and (payload.get("exc") or payload.get("exception")):
-			raise AtlasError(response.status_code, error_message(payload, response.text))
+			raise AtlasError(
+				f"{endpoint} answered {response.status_code}: {error_message(payload, response.text)}"
+			)
 
 		return payload["message"] if isinstance(payload, dict) and "message" in payload else payload
 
@@ -83,7 +83,7 @@ class AtlasClient:
 		)
 		vm_ids = created.get("vm_ids") if isinstance(created, dict) else created
 		if not vm_ids:
-			raise AtlasError(0, f"create_bare_vms returned no VM ids: {created!r}")
+			raise AtlasError(f"create_bare_vms returned no VM ids: {created!r}")
 
 		return list(vm_ids)
 
@@ -92,7 +92,7 @@ class AtlasClient:
 		created = self.call("create_snapshot", vm=vm_id, title=title)
 		snapshot = created.get("snapshot_id") if isinstance(created, dict) else created
 		if not snapshot:
-			raise AtlasError(0, f"create_snapshot returned no id: {created!r}")
+			raise AtlasError(f"create_snapshot returned no id: {created!r}")
 
 		return str(snapshot)
 

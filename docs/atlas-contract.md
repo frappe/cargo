@@ -56,13 +56,15 @@ With no `placement_group`, send back exactly one id.
   "partition_count": 2,
   "specs": [
     { "role": "gateway", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 20 },
-    { "role": "storage", "count": 3, "cpu": 2, "ram_gb": 4, "disk_gb": 500 }
+    { "role": "storage", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 500 },
+    { "role": "storage", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 1000 }
   ]
 }
 ```
 
-One entry per role, because a gateway just passes traffic through and barely needs a disk,
-while a storage node holds all the data.
+One entry per machine. A gateway just passes traffic through and barely needs a disk, and
+storage nodes may differ from each other: Garage is not RAID 0, so a bigger disk simply holds
+more.
 
 Send back `{"vm_ids": [...]}` as soon as you accept the request. Don't wait for the machines
 to boot — Cargo polls for that.

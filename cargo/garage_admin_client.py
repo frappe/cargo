@@ -22,12 +22,8 @@ S3_CONFIG = Config(signature_version="s3v4", s3={"addressing_style": "path"}, re
 
 
 class GarageError(RuntimeError):
-	"""A Garage Admin API call failed."""
-
-	def __init__(self, status: int, message: str) -> None:
-		self.status = status
-		self.message = message
-		super().__init__(f"Garage API error ({status}): {message}")
+	"""A Garage Admin API call failed. One argument, so it survives a pickle round trip:
+	that is how the workflow engine carries an exception back to the flow that raised it."""
 
 
 class GarageAdminClient:
@@ -42,7 +38,7 @@ class GarageAdminClient:
 	def for_cluster(cls, cluster: ObjectStorageCluster) -> Self:
 		"""Every node serves the same API, so the gateway answers for the cluster."""
 		return cls(
-			f"http://{cluster.gateway_address()}:{cluster.admin_port}",
+			f"http://{cluster.fleet.gateway_address}:{cluster.admin_port}",
 			cluster.get_password("admin_token"),
 		)
 
@@ -56,13 +52,13 @@ class GarageAdminClient:
 				**kwargs,
 			)
 		except requests.RequestException as exception:
-			raise GarageError(0, f"{endpoint}: {exception}") from exception
+			raise GarageError(f"{endpoint}: {exception}") from exception
 
 		if response.status_code == 404:
 			return None
 
 		if not response.ok:
-			raise GarageError(response.status_code, f"{endpoint}: {response.text[:500]}")
+			raise GarageError(f"{endpoint} answered {response.status_code}: {response.text[:500]}")
 
 		return response.json() if response.content else None
 
@@ -88,7 +84,7 @@ class GarageAdminClient:
 			if not result.get("success")
 		]
 		if refused:
-			raise GarageError(0, f"ConnectClusterNodes: {', '.join(refused)}")
+			raise GarageError(f"ConnectClusterNodes: {', '.join(refused)}")
 
 		return connected
 
@@ -139,7 +135,7 @@ class MetadataBucket:
 			frappe.throw(_(f"{cluster.name} has no metadata bucket to upload to."))
 
 		return cls(
-			endpoint=f"http://{cluster.gateway_address()}:{cluster.s3_port}",
+			endpoint=f"http://{cluster.fleet.gateway_address}:{cluster.s3_port}",
 			bucket=cluster.metadata_bucket,
 			access_key=cluster.metadata_bucket_access_key,
 			secret_key=secret,
@@ -151,7 +147,7 @@ class MetadataBucket:
 		try:
 			self.s3.upload_file(path, self.bucket, key)
 		except (ClientError, BotoCoreError) as exception:
-			raise GarageError(0, f"PUT {self.bucket}/{key}: {exception}") from exception
+			raise GarageError(f"PUT {self.bucket}/{key}: {exception}") from exception
 
 		return key
 
@@ -165,7 +161,7 @@ class MetadataBucket:
 				ContentType="application/json",
 			)
 		except (ClientError, BotoCoreError) as exception:
-			raise GarageError(0, f"PUT {self.bucket}/{key}: {exception}") from exception
+			raise GarageError(f"PUT {self.bucket}/{key}: {exception}") from exception
 
 		return key
 
@@ -174,4 +170,4 @@ class MetadataBucket:
 		try:
 			self.s3.delete_object(Bucket=self.bucket, Key=key)
 		except (ClientError, BotoCoreError) as exception:
-			raise GarageError(0, f"DELETE {self.bucket}/{key}: {exception}") from exception
+			raise GarageError(f"DELETE {self.bucket}/{key}: {exception}") from exception
