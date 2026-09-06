@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+# import frappe
 from frappe.tests import IntegrationTestCase
 
 # On IntegrationTestCase, the doctype test records and all
@@ -10,9 +11,9 @@ EXTRA_TEST_RECORD_DEPENDENCIES = []  # eg. ["User"]
 IGNORE_TEST_RECORD_DEPENDENCIES = []  # eg. ["User"]
 
 
-class IntegrationTestObjectStorageCluster(IntegrationTestCase):
+class IntegrationTestMachine(IntegrationTestCase):
 	"""
-	Integration tests for ObjectStorageCluster.
+	Integration tests for Machine.
 	Use this class for testing interactions between multiple components.
 	"""
 

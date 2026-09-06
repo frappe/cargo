@@ -37,9 +37,5 @@ class PlacementGroupSchema:
 	def instance_count(self) -> int:
 		return sum(spec.count for spec in self.specs)
 
-	def roles(self) -> list[Role]:
-		"""One role per machine, in spec order."""
-		return [spec.role for spec in self.specs for _ in range(spec.count)]
-
 	def asdict(self) -> dict[str, Any]:
 		return asdict(self)

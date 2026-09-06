@@ -45,17 +45,23 @@ class OutputLog:
 		fieldname: str,
 		event: str = "ssh_output",
 		flush_seconds: int = LOG_FLUSH_SECONDS,
+		append: bool = False,
 	) -> None:
 		self.document = document
 		self.fieldname = fieldname
 		self.event = event
 		self.flush_seconds = flush_seconds
+		self.append = append
 		self.lines: list[str] = []
 		self.published = 0
 		self.flushed_at = time.monotonic()
 
 	def __enter__(self) -> "OutputLog":
-		"""This run owns the field."""
+		"""This run owns the field, unless it is adding to what an earlier one left."""
+		if self.append:
+			self.lines = [live_output(self.document, self.fieldname)]
+			return self
+
 		self.document.db_set(self.fieldname, None, update_modified=False)
 		frappe.cache.delete_value(self.cache_key)
 

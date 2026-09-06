@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "{reference_name}.-.{role}.-.####",
- "creation": "2026-08-28 00:00:00.000000",
+ "creation": "2026-08-28 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -16,17 +15,19 @@
   "ipv4_address",
   "server",
   "last_synced_at",
+  "storage_section",
+  "disk_size_gb",
   "section_break_error",
   "error"
  ],
  "fields": [
   {
+   "description": "Empty until its cluster asks Atlas for the machine.",
    "fieldname": "vm_id",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "VM ID",
    "read_only": 1,
-   "reqd": 1,
    "unique": 1
   },
   {
@@ -70,14 +71,14 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "Pending",
-   "description": "Mirrors Atlas. Running means booted with an address, so it can be configured.",
+   "default": "Draft",
+   "description": "Draft means planned but not asked for. The rest mirror Atlas: Running means booted with an address, so it can be configured.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nRunning\nBroken\nTerminated",
+   "options": "Draft\nPending\nRunning\nBroken\nTerminated",
    "read_only": 1
   },
   {
@@ -109,15 +110,29 @@
    "fieldtype": "Small Text",
    "label": "Error",
    "read_only": 1
+  },
+  {
+   "fieldname": "storage_section",
+   "fieldtype": "Section Break",
+   "label": "Storage"
+  },
+  {
+   "description": "Disk this machine was built with. Its service decides the size, so machines of one cluster may differ.",
+   "fieldname": "disk_size_gb",
+   "fieldtype": "Int",
+   "label": "Disk Size (GB)",
+   "read_only": 1,
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-28 00:00:00.000000",
+ "modified": "2026-09-04 14:15:20.778239",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Machine",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

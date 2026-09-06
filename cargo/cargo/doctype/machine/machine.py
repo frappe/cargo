@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-MachineStatus = Literal["Pending", "Running", "Broken", "Terminated"]
+if TYPE_CHECKING:
+	from cargo.atlas_client import AtlasClient
+
+MachineStatus = Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
 
 DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 
@@ -24,6 +27,7 @@ class Machine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		disk_size_gb: DF.Int
 		error: DF.SmallText | None
 		ipv4_address: DF.Data | None
 		last_synced_at: DF.Datetime | None
@@ -31,12 +35,18 @@ class Machine(Document):
 		reference_name: DF.DynamicLink
 		role: DF.Data
 		server: DF.Data | None
-		status: DF.Literal["Pending", "Running", "Broken", "Terminated"]
-		vm_id: DF.Data
+		status: DF.Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
+		vm_id: DF.Data | None
 		zone: DF.Data | None
 	# end: auto-generated types
 
-	def sync(self, client: Any) -> MachineStatus:
+	def assign(self, vm_id: str) -> MachineStatus:
+		"""Atlas built this machine: it has an id now, and is booting."""
+		self.vm_id = vm_id
+
+		return self.record("Pending")
+
+	def sync(self, client: AtlasClient) -> MachineStatus:
 		"""Record this machine's state from Atlas. ``client`` is anything with
 		``get_vm(vm_id) -> dict``."""
 		self.last_synced_at = now_datetime()
