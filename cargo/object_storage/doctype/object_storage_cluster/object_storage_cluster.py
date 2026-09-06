@@ -165,7 +165,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 			# We don't care about anything here just make as failure and move on
 			if not was_successful and machine_doc.role == GATEWAY:
-				self.release_failed_machines([machine_doc.name])
+				self.release_failed_machines([node.name for node in self.all_nodes])
 				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
 				return
 
@@ -187,9 +187,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def discover_machines_to_setup(self) -> list[str]:
+		"""Gateway first: every other node reaches the cluster through its admin API, so one
+		set up before it has nothing to join."""
 		healthy_nodes = self.garage.healthy_nodes()
-		machines_to_setup = [machine.name for machine in self.all_nodes if machine.name not in healthy_nodes]
-		return machines_to_setup
+		machines_to_setup = [machine for machine in self.all_nodes if machine.name not in healthy_nodes]
+
+		return [
+			machine.name for machine in sorted(machines_to_setup, key=lambda machine: machine.role != GATEWAY)
+		]
 
 	@task
 	def start_setup_on_machine(self, machine: Machine) -> bool:
@@ -319,15 +324,13 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""If less than required amount of machines are ready to setup, throw."""
+	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
+		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
+
 	num_running_storage_nodes = len([node for node in cluster.storage_nodes if node.status == "Running"])
 	if not num_running_storage_nodes >= cluster.replication_factor:
 		frappe.throw(
 			_("Not enough running storage nodes to setup the cluster. Required: {0}, running: {1}").format(
 				cluster.replication_factor, num_running_storage_nodes
 			)
-		)
-
-	if not cluster.gateway_node:
-		frappe.throw(
-			_("This cluster does not have a gateway node. Please add one before setting up the cluster.")
 		)
