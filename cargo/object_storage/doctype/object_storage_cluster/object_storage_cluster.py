@@ -183,6 +183,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return
 
 		self.release_failed_machines(failed_storage_node_setup)
+		self.record_cluster_peers()
 		self.verify_connected_nodes()
 
 	@task
@@ -211,6 +212,17 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return False
 
 		return True
+
+	@task
+	def record_cluster_peers(self) -> None:
+		"""Give every node the same peers, now that they all exist"""
+		setup = ClusterSetup(self)
+		peers = setup.peers()
+		if not peers:
+			return
+
+		for machine in setup.machines:
+			setup.record_peers(machine, peers)
 
 	@task
 	def verify_connected_nodes(self) -> None:

@@ -199,8 +199,6 @@ class ClusterSetup:
 		identifier = self.node_identifier(machine)
 		self.admin.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
-		# Every node the cluster now holds, so a reboot finds the others and not just itself.
-		self.record_peers(machine, self.peers() or [identifier])
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
 		"""Write this machine into the next layout. Nothing takes effect until it is applied."""
