@@ -34,11 +34,10 @@ class MachineFleet:
 		if not gateway:
 			frappe.throw(_("This cluster has no gateway to reach it at."))
 
-		address = frappe.get_doc("Machine", gateway).ipv4_address
-		if not address:
+		if not gateway.ipv4_address:
 			frappe.throw(_("This cluster's gateway has not booted yet."))
 
-		return address
+		return gateway.ipv4_address
 
 	def in_status(self, status: MachineStatus) -> list[str]:
 		if not self.names:

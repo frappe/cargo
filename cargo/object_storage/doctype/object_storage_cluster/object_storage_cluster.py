@@ -14,7 +14,7 @@ from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.doctype.object_storage_cluster.setup import ClusterSetup
 from cargo.object_storage.machines import DEAD_STATES, MachineFleet
-from cargo.ssh import OutputLog
+from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -68,6 +68,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		web_port: DF.Int
 	# end: auto-generated types
 
+	def before_insert(self) -> None:
+		"""One keypair per cluster, made here so nobody has to paste one in."""
+		if not self.ssh_public_key:
+			self.ssh_public_key, self.ssh_private_key = create_keypair(self.name or self.region)
+
 	@property
 	def region(self) -> str:
 		"""One Cargo to a region, so Cargo Settings owns it and no cluster carries its own."""
@@ -77,18 +82,18 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def gateway_node(self) -> Machine | None:
 		"""The one machine that has the gateway role."""
 		return next(
-			(frappe.get_doc("Machine", machine) for machine in self.machines if machine.role == GATEWAY), None
+			(frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == GATEWAY), None
 		)
 
 	@cached_property
 	def storage_nodes(self) -> list[Machine]:
 		"""Every machine that has the storage role."""
-		return [frappe.get_doc("Machine", machine) for machine in self.machines if machine.role == STORAGE]
+		return [frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == STORAGE]
 
 	@cached_property
 	def all_nodes(self) -> list[Machine]:
 		"""All machines in this cluster."""
-		return [frappe.get_doc("Machine", machine) for machine in self.machines]
+		return [frappe.get_doc("Machine", row.machine) for row in self.machines]
 
 	@cached_property
 	def fleet(self) -> MachineFleet:
@@ -159,6 +164,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 			# We don't care about anything here just make as failure and move on
 			if not was_successful and machine_doc.role == GATEWAY:
+				self.release_failed_machines([machine_doc.name])
 				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
 				return
 

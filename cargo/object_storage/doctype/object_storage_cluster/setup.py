@@ -102,7 +102,7 @@ class ClusterSetup:
 		except GarageError:
 			return 0
 
-	def healthy_nodes(self) -> set[MachineRow]:
+	def healthy_nodes(self) -> set[MachineName]:
 		"""The machine names Garage reports as up, read from the node tags setup assigned."""
 		try:
 			nodes = self.admin.status().get("nodes") or []
@@ -111,7 +111,7 @@ class ClusterSetup:
 
 		tags = {tag for node in nodes if node.get("isUp") for tag in (node.get("role") or {}).get("tags", [])}
 
-		return {machine for machine in self.machines if machine["name"] in tags}
+		return {machine["name"] for machine in self.machines if machine["name"] in tags}
 
 	def peers(self) -> list[NodeIdentifier]:
 		"""The nodes Garage can reach, as it addresses them itself."""
