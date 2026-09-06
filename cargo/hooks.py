@@ -265,14 +265,15 @@ export_python_type_annotations = True
 
 scheduler_events = {
 	"cron": {
-		# Machines boot on their own clock; walk the pending ones to Running.
-		"*/2 * * * *": [
-			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.sync_pending_machines",
-			"cargo.image_builder.doctype.image_variant.image_variant.sync_build_machines",
+		# Machines die without telling anyone, so a cluster's health is re-read on a clock.
+		"*/10 * * * *": [
+			"cargo.object_storage.health.refresh_health",
 		],
 		"* * * * *": [
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
+			"cargo.object_storage.machines.sync_pending_machines",
+			"cargo.image_builder.doctype.image_variant.image_variant.sync_build_machines",
 		],
 	},
 }
