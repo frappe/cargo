@@ -8,8 +8,7 @@
  "engine": "InnoDB",
  "field_order": [
   "machine",
-  "role",
-  "status"
+  "role"
  ],
  "fields": [
   {
@@ -27,21 +26,13 @@
    "label": "Role",
    "options": "storage\ngateway",
    "reqd": 1
-  },
-  {
-   "fetch_from": "machine.status",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Status",
-   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-05 01:07:07.807536",
+ "modified": "2026-09-06 23:09:11.970246",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Object Storage Node",

@@ -21,7 +21,6 @@ class ObjectStorageNode(Document):
 		parentfield: DF.Data
 		parenttype: DF.Data
 		role: DF.Literal["storage", "gateway"]
-		status: DF.Literal[None]
 	# end: auto-generated types
 
 	pass

@@ -319,11 +319,11 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""If less than required amount of machines are ready to setup, throw."""
-	num_healthy_storage_nodes = len([node for node in cluster.storage_nodes if node.status == "Running"])
-	if not num_healthy_storage_nodes >= cluster.replication_factor:
+	num_running_storage_nodes = len([node for node in cluster.storage_nodes if node.status == "Running"])
+	if not num_running_storage_nodes >= cluster.replication_factor:
 		frappe.throw(
-			_("Not enough healthy storage nodes to setup the cluster. Required: {0}, healthy: {1}").format(
-				cluster.replication_factor, num_healthy_storage_nodes
+			_("Not enough running storage nodes to setup the cluster. Required: {0}, running: {1}").format(
+				cluster.replication_factor, num_running_storage_nodes
 			)
 		)
 
