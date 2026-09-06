@@ -71,7 +71,7 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 nothing set up yet.\nSetting Up \u2014 installing Garage on the machines.\nActive \u2014 Garage is running and Central can use it.\nFailed \u2014 the last run failed. See Error below.",
+   "description": "Draft \u2014 no machines set up yet.\nSetting Up \u2014 installing Garage on the machines that have not joined.\nActive \u2014 the nodes joined and Garage is running.\nFailed \u2014 the last setup run could not bring up enough nodes. See Error.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -82,7 +82,7 @@
   },
   {
    "default": "Unknown",
-   "description": "What users get right now, worked out from the machines. Status is what Cargo is doing; health is how the cluster is doing.",
+   "description": "What users get right now, worked out from the machines. Status is what Cargo is doing to the cluster; health is how the cluster is doing. Unknown until it first serves.",
    "fieldname": "health",
    "fieldtype": "Select",
    "in_list_view": 1,

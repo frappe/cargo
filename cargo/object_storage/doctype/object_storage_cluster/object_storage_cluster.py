@@ -8,6 +8,7 @@ from functools import cached_property
 
 import frappe
 from frappe import _
+from frappe.utils import now_datetime
 
 from cargo.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE
@@ -242,6 +243,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not machine_states:
 			return
 
+		# A cluster being built has promised nothing yet!
+		if not self.is_live:
+			return
+
 		# Gateway machine dead?
 		if self.gateway_node and self.gateway_node.status in DEAD_STATES:
 			self.mark_cluster_status("Failed", _("Gateway machine is dead."))
@@ -282,8 +287,16 @@ class ObjectStorageCluster(WorkflowBuilder):
 			)
 			self.save()
 
+	@property
+	def is_live(self) -> bool:
+		"""A cluster that has served once. Past that, losing a machine is a real failure."""
+		return bool(self.activated_on)
+
 	def mark_cluster_status(self, status: str, reason: str | None = None) -> None:
 		"""Mark the cluster's status and reason."""
+		if status == "Active" and not self.activated_on:
+			self.activated_on = now_datetime()
+
 		self.status = status
 		self.error = reason
 		self.save()

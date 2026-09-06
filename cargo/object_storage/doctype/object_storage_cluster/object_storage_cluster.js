@@ -1,159 +1,180 @@
 // Copyright (c) 2026, Aradhya-Tripathi and contributors
 // For license information, please see license.txt
 
+const HEALTH_COLORS = { Healthy: "green", Degraded: "orange", Critical: "red", Unknown: "gray" };
+
+const HEADLINES = {
+	Draft: __("Add a gateway and its storage nodes. Each one is asked for as you add it."),
+	"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
+	Active: __("Garage is running. Apply the layout after adding nodes."),
+	Failed: __("The last run failed. See Error below, then set up again."),
+};
+
 frappe.ui.form.on("Object Storage Cluster", {
 	refresh(frm) {
 		if (frm.is_new()) return;
 
-		// Setup writes its log as it runs, so follow it rather than making the operator
-		// reload. frappe.realtime.off first, or a re-render subscribes twice.
-		frappe.realtime.off("ssh_output");
-		frappe.realtime.on("ssh_output", ({ name, fieldname, value }) => {
-			if (name !== frm.doc.name) return;
-			frm.doc[fieldname] = value;
-			frm.refresh_field(fieldname);
-			scroll_to_latest(frm, fieldname);
-		});
+		follow_setup_log(frm);
+		add_machine_buttons(frm);
+		add_cluster_buttons(frm);
 
-		// While setup runs its log is in the cache, not the row, so a reload has to ask.
-		if (frm.doc.status === "Setting Up") {
-			frappe
-				.xcall("cargo.ssh.get_live_output", {
-					doctype: frm.doctype,
-					name: frm.doc.name,
-					fieldname: "setup_log",
-				})
-				.then((value) => {
-					if (!value) return;
-					frm.doc.setup_log = value;
-					frm.refresh_field("setup_log");
-					scroll_to_latest(frm, "setup_log");
-				});
-		} else {
-			scroll_to_latest(frm, "setup_log");
-		}
-
-		// A cluster takes machines in every state but one: while it installs on what it has.
-		if (frm.doc.status !== "Setting Up") {
-			const spec = (label) => [
-				{
-					fieldname: "cpu",
-					label: __("vCPUs"),
-					fieldtype: "Int",
-					default: 2,
-					reqd: 1,
-				},
-				{
-					fieldname: "ram_gb",
-					label: __("RAM (GB)"),
-					fieldtype: "Int",
-					default: 4,
-					reqd: 1,
-				},
-				{
-					fieldname: "disk_gb",
-					label: __("Disk (GB)"),
-					description: label,
-					fieldtype: "Int",
-					default: 100,
-					reqd: 1,
-				},
-			];
-
-			const add = (method, values, message) =>
-				frm.call(method, values).then(({ message: name }) => {
-					frappe.show_alert({ message: __(message, [name]), indicator: "blue" });
-					frm.reload_doc();
-				});
-
-			// One gateway to a cluster, so the button goes once it has one.
-			if (!(frm.doc.machines || []).some((row) => row.role === "gateway")) {
-				frm.add_custom_button(__("Add Gateway Node"), () => {
-					frappe.prompt(
-						spec(__("A gateway only passes traffic through, so it barely needs one.")),
-						(values) => add("add_gateway_node", values, "Asked Atlas for {0}."),
-						__("Add Gateway Node"),
-						__("Ask Atlas")
-					);
-				}).addClass("btn-primary");
-			}
-
-			frm.add_custom_button(__("Add Storage Node"), () => {
-				frappe.prompt(
-					spec(
-						__(
-							"This node's own disk. Garage is not RAID 0, so it need not match the others."
-						)
-					),
-					(values) => add("add_storage_node", values, "Asked Atlas for {0}."),
-					__("Add Storage Node"),
-					__("Ask Atlas")
-				);
-			});
-		}
-
-		if (["Machines Ready", "Minting Failed"].includes(frm.doc.status)) {
-			frm.add_custom_button(__("Mint Credentials"), () => {
-				frappe.confirm(
-					__(
-						"Ask Central for this cluster's secrets? Asking again is safe: Central answers the same secrets for a region every time."
-					),
-					() =>
-						frm.call("mint_credentials").then(() => {
-							frm.reload_doc();
-						})
-				);
-			}).addClass("btn-primary");
-		}
-
-		if (["Credentials Minted", "Failed", "Active"].includes(frm.doc.status)) {
-			const first = frm.doc.status === "Credentials Minted";
-			frm.add_custom_button(first ? __("Set Up Cluster") : __("Run Setup Again"), () => {
-				const warning = __(
-					"Setup runs from scratch every time: every node's config is rewritten and Garage is restarted, and the cluster gets a new layout version. Expect brief downtime while nodes come back."
-				);
-				frappe.confirm(
-					first ? __("Install Garage on this cluster's machines?") : warning,
-					() =>
-						frm.call("setup_cluster").then(() => {
-							frappe.show_alert({
-								message: __("Setting up. This takes a few minutes."),
-								indicator: "green",
-							});
-							frm.reload_doc();
-						})
-				);
-			}).addClass(first ? "btn-primary" : "");
-		}
-
-		const headlines = {
-			Draft: __("Add a gateway and its storage nodes. Each one is asked for as you add it."),
-			Pending: __("Waiting for machines to boot."),
-			"Machines Ready": __("Machines are up. Asking Central for the cluster's secrets."),
-			"Minting Failed": __(
-				"Central would not issue the cluster's secrets. See Error below, then mint again."
-			),
-			"Credentials Minted": __("Secrets issued. Ready to install Garage."),
-			"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
-			Active: __("Garage is running and Central can use this cluster."),
-			Failed: __("The last run failed. See Error below."),
-		};
-		if (headlines[frm.doc.status]) frm.dashboard.set_headline(headlines[frm.doc.status]);
-
-		// Status is what Cargo is doing; health is what users get. A live cluster whose
-		// machine died keeps serving, so it stays Active and says Degraded here.
-		const colors = { Healthy: "green", Degraded: "orange", Critical: "red" };
-		if (colors[frm.doc.health]) {
-			frm.page.set_indicator(__(frm.doc.health), colors[frm.doc.health]);
-		}
-		if (frm.doc.health_reason) {
-			frm.dashboard.set_headline(
-				`${__(frm.doc.health)}: ${frm.doc.health_reason}`,
-				colors[frm.doc.health]
-			);
-		}
+		set_headline(frm);
 	},
 });
+
+// One line, not two indicators: the page indicator is Frappe's, driven by status -- what
+// Cargo is doing. Health is what users get from the cluster, so it reads as a sentence
+// underneath rather than as a second, competing status pill.
+function set_headline(frm) {
+	const guidance = HEADLINES[frm.doc.status];
+	const health = frm.doc.health;
+	if (!HEALTH_COLORS[health] || health === "Unknown") {
+		if (guidance) frm.dashboard.set_headline(guidance);
+		return;
+	}
+
+	const reason = frm.doc.health_reason ? ` — ${frm.doc.health_reason}` : "";
+	frm.dashboard.set_headline(
+		`<b>${__("Health")}: ${__(health)}</b>${frappe.utils.escape_html(reason)}<br>${
+			guidance || ""
+		}`,
+		HEALTH_COLORS[health]
+	);
+}
+
+// Machines are asked for one at a time, so both buttons stay available for as long as the
+// cluster is not installing on the machines it already has.
+function add_machine_buttons(frm) {
+	if (frm.doc.status === "Setting Up") return;
+
+	const machines = frm.doc.machines || [];
+	if (!machines.some((row) => row.role === "gateway")) {
+		frm.add_custom_button(
+			__("Gateway Node"),
+			() =>
+				ask_for_machine(
+					frm,
+					"add_gateway_node",
+					__("Add Gateway Node"),
+					__("Every S3 request reaches the cluster through this one machine."),
+					20
+				),
+			__("Add")
+		);
+	}
+
+	frm.add_custom_button(
+		__("Storage Node"),
+		() =>
+			ask_for_machine(
+				frm,
+				"add_storage_node",
+				__("Add Storage Node"),
+				__("This node's own disk. Garage is not RAID 0, so it need not match the others."),
+				100
+			),
+		__("Add")
+	);
+}
+
+function add_cluster_buttons(frm) {
+	if (frm.doc.status === "Setting Up") return;
+
+	// Idempotent: it installs on whatever has not joined, so it doubles as the retry.
+	const first = frm.doc.status === "Draft";
+	frm.add_custom_button(first ? __("Set Up Cluster") : __("Set Up Again"), () => {
+		frappe.confirm(
+			first
+				? __("Install Garage on this cluster's machines?")
+				: __(
+						"Set up every machine that has not joined yet? Machines already in the cluster are left alone."
+				  ),
+			() =>
+				frm.call("setup").then(() => {
+					frappe.show_alert({
+						message: __("Setting up. This takes a few minutes."),
+						indicator: "green",
+					});
+					frm.reload_doc();
+				})
+		);
+	}).addClass(first ? "btn-primary" : "");
+
+	if (frm.doc.status === "Draft") return;
+
+	// Separate from setup: a layout version moves data, so it is the operator's call.
+	frm.add_custom_button(__("Apply Layout"), () => {
+		frappe.confirm(
+			__(
+				"Give every node its place in the cluster? This publishes a new layout version and Garage will rebalance data across the nodes."
+			),
+			() =>
+				frm.call("apply_layout").then(() => {
+					frappe.show_alert({ message: __("Layout applied."), indicator: "green" });
+					frm.reload_doc();
+				})
+		);
+	});
+}
+
+// vCPU and RAM are per machine; the disk is what Garage weights a storage node by.
+function ask_for_machine(frm, method, title, disk_description, disk_default) {
+	frappe.prompt(
+		[
+			{ fieldname: "cpu", label: __("vCPUs"), fieldtype: "Int", default: 2, reqd: 1 },
+			{ fieldname: "ram_gb", label: __("RAM (GB)"), fieldtype: "Int", default: 4, reqd: 1 },
+			{
+				fieldname: "disk_gb",
+				label: __("Disk (GB)"),
+				description: disk_description,
+				fieldtype: "Int",
+				default: disk_default,
+				reqd: 1,
+			},
+		],
+		(values) =>
+			frm.call(method, values).then(() => {
+				frappe.show_alert({
+					message: __("Asked Atlas for the machine. It joins once it boots."),
+					indicator: "blue",
+				});
+				frm.reload_doc();
+			}),
+		title,
+		__("Ask Atlas")
+	);
+}
+
+// Setup writes its log as it runs, so follow it rather than making the operator reload.
+function follow_setup_log(frm) {
+	// frappe.realtime.off first, or a re-render subscribes twice.
+	frappe.realtime.off("ssh_output");
+	frappe.realtime.on("ssh_output", ({ name, fieldname, value }) => {
+		if (name !== frm.doc.name) return;
+		frm.doc[fieldname] = value;
+		frm.refresh_field(fieldname);
+		scroll_to_latest(frm, fieldname);
+	});
+
+	// While setup runs its log is in the cache, not the row, so a reload has to ask.
+	if (frm.doc.status !== "Setting Up") {
+		scroll_to_latest(frm, "setup_log");
+		return;
+	}
+
+	frappe
+		.xcall("cargo.ssh.get_live_output", {
+			doctype: frm.doctype,
+			name: frm.doc.name,
+			fieldname: "setup_log",
+		})
+		.then((value) => {
+			if (!value) return;
+			frm.doc.setup_log = value;
+			frm.refresh_field("setup_log");
+			scroll_to_latest(frm, "setup_log");
+		});
+}
 
 // A capped log box is only useful if it shows the end of the log. The Code control loads
 // ace lazily and sets its value inside that promise, so scrolling has to queue behind it --
