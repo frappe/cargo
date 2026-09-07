@@ -72,7 +72,7 @@ class MachineFleet:
 			partition_count=self.cluster.partition_count,
 		)
 
-	def terminate(self, machine: Machine) -> None:
+	def terminate(self, machine: Machine) -> bool:
 		"""Tell Atlas to terminate one machine, and mark it as terminated."""
 		try:
 			AtlasClient.from_settings().terminate_vm(machine.vm_id)
@@ -83,10 +83,11 @@ class MachineFleet:
 				title=f"{self.cluster.name} could not terminate {machine.role} machine {machine.name}",
 				message=frappe.get_traceback(with_context=True),
 			)
-			return
+			return False
 
 		machine.status = "Terminated"
 		machine.save(ignore_permissions=True)
+		return True
 
 	def build(self, machine: Machine, cpu: int, ram_gb: int, disk_gb: int) -> str:
 		"""The VM id Atlas built for one machine."""

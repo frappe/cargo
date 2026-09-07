@@ -255,11 +255,17 @@ class ObjectStorageCluster(WorkflowBuilder):
 		can_release_machines(self, machines)
 
 		named = set(machines)
+		failed_terminations = []
 		for name in named:
-			self.fleet.terminate(frappe.get_doc("Machine", name))
+			if not self.fleet.terminate(frappe.get_doc("Machine", name)):
+				failed_terminations.append(name)
 
-		# Drop them from the cluster; the Machine rows stay, so the audit trail survives.
-		self.machines = [row for row in self.machines if row.machine not in named]
+		self.machines = [
+			machine
+			for machine in self.machines
+			if machine.machine not in named or machine.machine in failed_terminations
+		]
+
 		self.save()
 
 	def sync_machines(self) -> None:
