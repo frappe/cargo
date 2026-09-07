@@ -207,8 +207,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Install Garage on one machine and fold it into the cluster."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				garage = Garage(self, on_output=log.write)
-				garage.setup_machine(garage.machine(machine.name))
+				garage = Garage(self)
+				garage.setup_machine(garage.machine(machine.name), on_output=log.write)
 			except Exception:
 				frappe.log_error(
 					title=f"{machine.name} failed to set up",

@@ -58,9 +58,8 @@ class SetupError(SshError):
 class Garage:
 	"""One cluster's Garage: setting its machines up, and asking it what it sees."""
 
-	def __init__(self, cluster: ObjectStorageCluster, on_output: Callable[[str], None] | None = None):
+	def __init__(self, cluster: ObjectStorageCluster):
 		self.cluster = cluster
-		self.on_output = on_output
 		self.secrets = {
 			name: cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
 		}
@@ -92,9 +91,9 @@ class Garage:
 	def admin(self) -> GarageAdminClient:
 		return GarageAdminClient.for_cluster(self.cluster)
 
-	def run(self, address: str, script: str) -> str:
-		"""Every command the setup runs, streamed into the log."""
-		return run_over_ssh(address, script, self.ssh_key, on_output=self.on_output)
+	def run(self, address: str, script: str, on_output: Callable[[str], None] | None = None) -> str:
+		"""Every command a node is given, streamed to `on_output` as it arrives."""
+		return run_over_ssh(address, script, self.ssh_key, on_output=on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -137,9 +136,11 @@ class Garage:
 
 		return machine
 
-	def node_identifier(self, machine: MachineRow) -> NodeIdentifier:
+	def node_identifier(
+		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
+	) -> NodeIdentifier:
 		"""Only answers once the node has started, since Garage keys itself on first launch."""
-		return self.run(machine["ipv4_address"], "garage node id -q").strip().splitlines()[-1]
+		return self.run(machine["ipv4_address"], "garage node id -q", on_output).strip().splitlines()[-1]
 
 	def script(self, name: str, environment: dict[str, str]) -> str:
 		"""One of this service's scripts, with its arguments exported ahead of it."""
@@ -178,13 +179,17 @@ class Garage:
 			machine["ipv4_address"], self.script("set_peers.sh", {"BOOTSTRAP_PEERS": " ".join(peers)})
 		)
 
-	def setup_machine(self, machine: MachineRow) -> None:
+	def setup_machine(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install Garage on one machine and fold it into whatever cluster already exists."""
-		if self.on_output:
-			self.on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
+		if on_output:
+			on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
 
-		self.run(machine["ipv4_address"], self.script("install.sh", self.install_environment(machine)))
-		identifier = self.node_identifier(machine)
+		self.run(
+			machine["ipv4_address"],
+			self.script("install.sh", self.install_environment(machine)),
+			on_output,
+		)
+		identifier = self.node_identifier(machine, on_output)
 		self.admin.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
 
