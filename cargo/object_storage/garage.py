@@ -4,6 +4,7 @@ import re
 import shlex
 import typing
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import TypedDict
@@ -14,6 +15,7 @@ from frappe import _
 from cargo.garage_admin_client import GarageAdminClient, GarageError
 from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
+from cargo.object_storage.metadata_bucket import MetadataBucketInfo
 from cargo.ssh import SshError, run_over_ssh
 
 if typing.TYPE_CHECKING:
@@ -35,27 +37,26 @@ class MachineRow(TypedDict):
 	"""The `Machine` fields setup reads."""
 
 	name: MachineName
-	vm_id: str
 	role: str
 	zone: str
 	ipv4_address: str
 	disk_size_gb: int
 
 
-class MetadataBucketInfo(TypedDict):
-	"""The metadata bucket and its credentials."""
+@dataclass(frozen=True)
+class ConnectedNodes:
+	"""One read of what Garage can see."""
 
-	name: str
-	access_key: str
-	secret_key: str
+	peers: list[NodeIdentifier]
+	machines: set[MachineName]
 
 
 class SetupError(SshError):
 	"""A node failed to set up."""
 
 
-class ClusterSetup:
-	"""Turns a cluster's machines into running Garage nodes, one machine at a time."""
+class Garage:
+	"""One cluster's Garage: setting its machines up, and asking it what it sees."""
 
 	def __init__(self, cluster: ObjectStorageCluster, on_output: Callable[[str], None] | None = None):
 		self.cluster = cluster
@@ -77,7 +78,7 @@ class ClusterSetup:
 				"reference_name": self.cluster.name,
 				"status": "Running",
 			},
-			fields=["name", "vm_id", "role", "zone", "ipv4_address", "disk_size_gb"],
+			fields=["name", "role", "zone", "ipv4_address", "disk_size_gb"],
 			order_by="creation",
 		)
 
@@ -102,41 +103,31 @@ class ClusterSetup:
 		except GarageError:
 			return 0
 
-	def healthy_nodes(self) -> set[MachineName]:
-		"""The machine names Garage reports as up, read from the node tags setup assigned."""
+	def get_connected_nodes(self) -> ConnectedNodes:
+		"""The nodes Garage can reach, as it addresses them, and whose machines they are."""
 		try:
 			nodes = self.admin.status().get("nodes") or []
 			# A node is joined once it is up and tagged, whether or not the layout carrying
 			# that tag has been applied: applying is a separate step.
 			staged = self.admin.layout().get("stagedRoleChanges") or []
 		except GarageError:
-			return set()
+			return ConnectedNodes(peers=[], machines=set())
 
 		staged_tags = {change["id"]: change.get("tags") or [] for change in staged}
+		up = [node for node in nodes if node.get("isUp")]
 		tags = set()
-		for node in nodes:
-			if not node.get("isUp"):
-				continue
-
+		for node in up:
 			tags.update((node.get("role") or {}).get("tags", []))
 			tags.update(staged_tags.get(node["id"], []))
 
-		return {machine["name"] for machine in self.machines if machine["name"] in tags}
+		return ConnectedNodes(
+			peers=[f"{node['id']}@{node['addr']}" for node in up if node.get("addr")],
+			machines={machine["name"] for machine in self.machines if machine["name"] in tags},
+		)
 
-	def peers(self) -> list[NodeIdentifier]:
-		"""The nodes Garage can reach, as it addresses them itself."""
-		try:
-			nodes = self.admin.status().get("nodes") or []
-		except GarageError:
-			return []
-
-		return [f"{node['id']}@{node['addr']}" for node in nodes if node.get("isUp") and node.get("addr")]
-
-	def unjoined_machines(self) -> list[MachineRow]:
-		"""Machines that have booted but are no part of the cluster yet."""
-		joined = self.healthy_nodes()
-
-		return [machine for machine in self.machines if machine["name"] not in joined]
+	def healthy_nodes(self) -> set[MachineName]:
+		"""The machine names Garage reports as up, read from the node tags setup assigned."""
+		return self.get_connected_nodes().machines
 
 	def machine(self, name: MachineName) -> MachineRow:
 		"""One booted machine of this cluster, by name."""
@@ -181,9 +172,6 @@ class ClusterSetup:
 			"METRICS_TOKEN": self.secrets["metrics_token"],
 		}
 
-	def install(self, machine: MachineRow) -> str:
-		return self.run(machine["ipv4_address"], self.script("install.sh", self.install_environment(machine)))
-
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		"""Where a node looks for the others after a reboot. Nothing restarts to read it."""
 		return self.run(
@@ -195,7 +183,7 @@ class ClusterSetup:
 		if self.on_output:
 			self.on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
 
-		self.install(machine)
+		self.run(machine["ipv4_address"], self.script("install.sh", self.install_environment(machine)))
 		identifier = self.node_identifier(machine)
 		self.admin.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
