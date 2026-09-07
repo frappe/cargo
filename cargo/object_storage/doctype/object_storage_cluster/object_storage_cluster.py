@@ -158,6 +158,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.garage.apply_layout()
 
 		if self.status == "Active":
+			self.create_metadata_bucket_if_needed()
 			self.inform_central_of_cluster_health("Active")
 
 	@flow
@@ -346,6 +347,23 @@ class ObjectStorageCluster(WorkflowBuilder):
 				}
 			)
 			self.save()
+
+	def create_metadata_bucket_if_needed(self) -> None:
+		"""Cargo's own bucket on this cluster, and the key that reaches it.
+		THIS IS ONLY FOR INTERNAL/CARGO USAGE NOT FOR CUSTOMERS!
+		"""
+		if self.metadata_bucket and self.metadata_bucket_access_key:
+			return
+
+		bucket = self.garage.create_metadata_bucket()
+		self.update(
+			{
+				"metadata_bucket": bucket["name"],
+				"metadata_bucket_access_key": bucket["access_key"],
+				"metadata_bucket_secret_key": bucket["secret_key"],
+			}
+		)
+		self.save()
 
 	@property
 	def is_live(self) -> bool:

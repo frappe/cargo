@@ -2,6 +2,7 @@
 # See license.txt
 
 from contextlib import contextmanager
+from typing import ClassVar
 from unittest.mock import PropertyMock, patch
 
 import frappe
@@ -113,6 +114,8 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 		}
 		with (
 			patch.object(ClusterSetup, "layout_version", return_value=layout_version),
+			# Applying the layout also makes the metadata bucket; that is its own test.
+			patch.object(ObjectStorageCluster, "create_metadata_bucket_if_needed"),
 			patch.object(
 				ObjectStorageCluster, "central_endpoints", new_callable=PropertyMock, return_value=endpoints
 			),
@@ -235,3 +238,76 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 			self.cluster.release_machines([self.storage[0]])
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Terminated")
+
+
+class IntegrationTestMetadataBucket(IntegrationTestCase):
+	"""Cargo's own bucket on the cluster, made when the cluster can hold one."""
+
+	BUCKET: ClassVar[dict] = {"name": "osc-metadata", "access_key": "GK-access", "secret_key": "shh"}
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.cluster = frappe.get_doc(
+			{
+				"doctype": "Object Storage Cluster",
+				"rpc_secret": "rpc",
+				"admin_token": "admin",
+				"metrics_token": "metrics",
+			}
+		).insert()
+
+	@contextmanager
+	def _garage(self):
+		with patch.object(ClusterSetup, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create:
+			yield create
+
+	@contextmanager
+	def _applying(self):
+		with (
+			patch.object(ClusterSetup, "apply_layout"),
+			patch.object(ObjectStorageCluster, "inform_central_of_cluster_health"),
+		):
+			yield
+
+	def test_applying_the_layout_creates_the_bucket_and_keeps_its_secret(self):
+		"""Applying is when the cluster can hold an object, so it is when the bucket is made."""
+		self.cluster.db_set("status", "Active")
+		self.cluster.reload()
+
+		with self._garage(), self._applying():
+			self.cluster.apply_layout()
+
+		cluster = frappe.get_doc("Object Storage Cluster", self.cluster.name)
+		self.assertEqual(cluster.metadata_bucket, self.BUCKET["name"])
+		self.assertEqual(cluster.metadata_bucket_access_key, self.BUCKET["access_key"])
+		self.assertEqual(cluster.get_password("metadata_bucket_secret_key"), self.BUCKET["secret_key"])
+
+	def test_a_cluster_that_already_has_one_does_not_mint_a_second_key(self):
+		"""Garage returns a key's secret once, so a second key would be unreachable."""
+		self.cluster.db_set(
+			{"metadata_bucket": self.BUCKET["name"], "metadata_bucket_access_key": self.BUCKET["access_key"]}
+		)
+		self.cluster.reload()
+
+		with self._garage() as create:
+			self.cluster.create_metadata_bucket_if_needed()
+
+		create.assert_not_called()
+
+	def test_a_cluster_that_is_not_active_gets_no_bucket(self):
+		"""A layout can be applied to a cluster that failed; it still serves nothing."""
+		self.cluster.db_set("status", "Failed")
+		self.cluster.reload()
+
+		with self._garage() as create, self._applying():
+			self.cluster.apply_layout()
+
+		create.assert_not_called()
+		self.assertIsNone(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "metadata_bucket"))
+
+	def test_activating_alone_makes_no_bucket(self):
+		"""Nodes joining is not enough: without a layout they carry no storage role."""
+		with self._garage() as create, patch.object(ObjectStorageCluster, "inform_central_of_cluster_health"):
+			self.cluster.mark_cluster_status("Active", None)
+
+		create.assert_not_called()
