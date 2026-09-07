@@ -279,6 +279,35 @@ class ObjectStorageCluster(WorkflowBuilder):
 			)
 			return
 
+	def inform_central_of_cluster_health(self, health: typing.Literal["Active", "Failed"]) -> None:
+		"""Tell Central whether this region's cluster may be used. Todo: add health reporting system.
+
+		Only a running cluster has endpoints to report, and only it can be asked for the
+		gateway address they are built from."""
+		endpoints = self.central_endpoints if health == "Active" else {}
+		try:
+			CentralClient.from_settings().register_cluster(
+				region=self.region, active=health == "Active", **endpoints
+			)
+		except Exception:
+			frappe.log_error(
+				title=f"{self.name} could not inform Central it is {health}",
+				message=frappe.get_traceback(with_context=True),
+			)
+			frappe.throw(_("Failed to inform Central of this cluster's status. Please try again later."))
+
+	@property
+	def central_endpoints(self) -> dict[str, str]:
+		"""Where Central reaches this cluster. Every call goes through the gateway, and
+		nothing terminates TLS in front of Garage."""
+		address = self.fleet.gateway_address
+
+		return {
+			"base_url": f"http://{address}:{self.admin_port}",
+			"s3_endpoint": f"http://{address}:{self.s3_port}",
+			"web_endpoint": f"http://{address}:{self.web_port}",
+		}
+
 	def mint_credentials_if_needed(self) -> None:
 		"""Mint this cluster's secrets if it has none. Setup calls it first: nothing can reach
 		a node without them, and Central answers the same secrets for a region every time."""
@@ -313,6 +342,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Mark the cluster's status and reason."""
 		if status == "Active" and not self.activated_on:
 			self.activated_on = now_datetime()
+
+		if status == "Active" or status == "Failed":
+			# Inform on the two most critical states of the cluster.
+			self.inform_central_of_cluster_health(status)
 
 		self.status = status
 		self.error = reason
