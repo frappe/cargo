@@ -41,11 +41,17 @@ PILOT_ADMIN_PASSWORD=... \
 SITE_PASSWORD=... \
 CENTRAL_URL=https://central.example.com \
 ATLAS_URL=https://atlas.example.com \
+REGION=blr \
 CENTRAL_BOOTSTRAPPING_TOKEN=... \
 ./setup.sh
 ```
 
-`setup.sh` refuses to start unless all five are set.
+`setup.sh` refuses to start unless all six are set.
+
+`REGION` must name the same **Region** you picked in step 1. Nothing checks that during
+install, and a mismatch enrols cleanly — the host then fails every later call with *"This
+Cargo token is not for region X"*, because Central goes by the region on the Cargo Instance,
+not by what the host was told. See [One host, one region](#one-host-one-region).
 
 The two passwords are different things, and neither is the database password:
 
@@ -62,10 +68,10 @@ The script then:
    `develop`, so two hosts built weeks apart get the same pilot.
 2. Creates a bench and a site.
 3. Downloads the Cargo app.
-4. Exports `CENTRAL_URL`, `ATLAS_URL` and `CENTRAL_BOOTSTRAPPING_TOKEN`, then installs Cargo
-   on the site.
+4. Exports `CENTRAL_URL`, `ATLAS_URL`, `REGION` and `CENTRAL_BOOTSTRAPPING_TOKEN`, then
+   installs Cargo on the site.
 
-Step 4 is where enrolment happens: Cargo's install hook reads those three variables.
+Step 4 is where enrolment happens: Cargo's install hook reads those four variables.
 
 `PILOT_VERSION`, `BENCH`, `SITE`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's
 own branch and still defaults to `develop`.
@@ -74,7 +80,8 @@ own branch and still defaults to `develop`.
 
 `cargo/install.py` runs on `after_install`:
 
-1. Saves `CENTRAL_URL`, `ATLAS_URL` and the bootstrapping token into **Cargo Settings**.
+1. Saves `CENTRAL_URL`, `ATLAS_URL`, `REGION` and the bootstrapping token into **Cargo
+   Settings**.
 2. Calls Central, presenting the bootstrapping token, and sends its own base URL
    (`frappe.utils.get_url()`) so Central knows where this host lives.
 3. Saves the two access tokens Central returns.
@@ -89,7 +96,7 @@ instance that is still **Draft** never got them.
 
 ### Installing without enrolling
 
-If **none** of the three variables are set, the hook does nothing and the install succeeds.
+If **none** of the four variables are set, the hook does nothing and the install succeeds.
 That is CI, and a local dev site.
 
 If **some** of them are set, the install fails loudly. A half-supplied set is a typo, not an
@@ -99,19 +106,28 @@ intention.
 
 The bootstrapping token can only be spent once. Central stores the token it issued, and on
 enrolment compares the presented token against the stored one; a successful enrolment clears
-it. So a replay — the same token used a second time — is rejected with a 401.
+it and moves the instance to **Registered**. So a replay — the same token used a second
+time — is rejected with a 401.
 
 That's the point: a token leaked from a shell history or a log can't be used to collect a
 second set of credentials for a host that already enrolled.
+
+**Two replays at once are refused too.** Comparing the presented token against the stored one
+is not enough on its own: if two requests carrying the same token arrive together, both can
+read it as unspent before either clears it, and both walk away with valid credentials for the
+same host. So Central locks the Cargo Instance row before reading the token and holds it
+until the request commits. The second request waits, then sees **Registered** rather than
+**Draft**, and is refused. Whichever request loses the race gets a 401; the winner enrols
+normally.
 
 ## The two tokens the host runs on
 
 Cargo talks to two upstreams, so Central mints two tokens:
 
-| Token | Used for | Audience | Scope |
-|---|---|---|---|
-| `central_access_token` | calls to Central | `central` | `cargo:central` |
-| `atlas_access_token` | calls to Atlas | `atlas` | `cargo:atlas` |
+| Token | Used for | Audience | Scope | Instance |
+|---|---|---|---|---|
+| `central_access_token` | calls to Central | `central` | `cargo:central` | this Cargo Instance |
+| `atlas_access_token` | calls to Atlas | `atlas` | `cargo:atlas` | this Cargo Instance |
 
 Both are signed by Central. Central checks its own signature; Atlas checks it against
 Central's published public keys.
@@ -125,13 +141,40 @@ treats `Authorization` as OAuth or an API key and rejects anything else with a 4
 the request reaches the endpoint. The bootstrapping token rides
 `X-Cargo-Bootstrapping-Token` for the same reason.
 
+Both also carry an `instance` claim naming the Cargo Instance they were minted for. The
+audience says which upstream a token is for; the instance says which host is holding it.
+Central requires that claim, so a token minted before hosts were named is refused outright
+rather than being read as belonging to every host.
+
 These tokens are long-lived — a year. Cargo is infrastructure, not a session.
+
+## One host, one region
+
+A Cargo host may only act on the region its own Cargo Instance names. Every call that takes a
+`region` is checked against the region on the instance in the token, and a mismatch is
+refused before the endpoint runs.
+
+Without that check a valid token is a valid token: any Cargo host could name any region and
+Central would answer for it — handing over another cluster's `rpc_secret` and admin token,
+repointing its endpoints at a machine of the caller's choosing, or marking it down. The token
+proves *a* Cargo host is calling; the instance claim is what proves *which* one.
+
+This is also why the host never sends its own identity. Central creates the Cargo Instance,
+so Central already knows the name and puts it in the token; a host that could state its own
+identity could state someone else's.
+
+A host whose instance is set to **Disabled** is refused the same way, on every call. That is
+how you take a host out of service without deleting anything.
 
 ## Re-enrolling a host
 
 Press **Re-issue Bootstrapping Token** on the instance and run the enrolment again. Fresh
 tokens overwrite the old pair, so the previous tokens stop working. That is how you cut off
 a host you no longer trust.
+
+Re-issuing puts the instance back to **Draft**, which lets it enrol once more. The token it
+was holding before is refused from that moment: the row stores only the newest one, and the
+old one no longer matches.
 
 ## What Central knows and doesn't
 

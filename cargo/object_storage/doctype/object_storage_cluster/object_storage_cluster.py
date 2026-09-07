@@ -152,8 +152,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def apply_layout(self) -> None:
-		"""Apply the layout to the cluster. This is idempotent and can be called at any time."""
+		"""Apply the layout to the cluster. This is idempotent and can be called at any time.
+
+		Central is told after: the cluster cannot hold an object until this lands."""
 		self.garage.apply_layout()
+
+		if self.status == "Active":
+			self.inform_central_of_cluster_health("Active")
 
 	@flow
 	def _setup(self) -> None:
@@ -163,9 +168,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 			machine_doc = frappe.get_doc("Machine", machine)
 			was_successful = self.start_setup_on_machine(machine_doc)
 
-			# We don't care about anything here just make as failure and move on
+			# The machines are left alone: setup is idempotent, so a retry picks up whatever
+			# has not joined. Releasing them is the operator's call.
 			if not was_successful and machine_doc.role == GATEWAY:
-				self.release_failed_machines([node.name for node in self.all_nodes])
 				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
 				return
 
@@ -182,7 +187,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 				)
 				return
 
-		self.release_failed_machines(failed_storage_node_setup)
 		self.record_cluster_peers()
 		self.verify_connected_nodes()
 
@@ -215,14 +219,16 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def record_cluster_peers(self) -> None:
-		"""Give every node the same peers, now that they all exist"""
+		"""Give every node that joined the same peers, now that they all exist."""
 		setup = ClusterSetup(self)
 		peers = setup.peers()
 		if not peers:
 			return
 
+		joined = setup.healthy_nodes()
 		for machine in setup.machines:
-			setup.record_peers(machine, peers)
+			if machine["name"] in joined:
+				setup.record_peers(machine, peers)
 
 	@task
 	def verify_connected_nodes(self) -> None:
@@ -243,13 +249,22 @@ class ObjectStorageCluster(WorkflowBuilder):
 		# Short of a node but able to serve: Active, and health reports it as degraded.
 		self.mark_cluster_status("Active", None)
 
-	@task
-	def release_failed_machines(self, failed_machines: list[str]) -> None:
-		"""Release the failed machines back to the fleet."""
-		for name in failed_machines:
-			self.fleet.terminate(frappe.get_doc("Machine", name))
-			# Just remove from the cluster's list of machines, don't delete the machine record itself.
-			self.machines = [row for row in self.machines if row.machine != name]
+	@frappe.whitelist()
+	def release_machines(self, machines: list[str]) -> None:
+		"""Hand the named machines back to Atlas and drop them from this cluster."""
+		can_release_machines(self, machines)
+
+		named = set(machines)
+		failed_terminations = []
+		for name in named:
+			if not self.fleet.terminate(frappe.get_doc("Machine", name)):
+				failed_terminations.append(name)
+
+		self.machines = [
+			machine
+			for machine in self.machines
+			if machine.machine not in named or machine.machine in failed_terminations
+		]
 
 		self.save()
 
@@ -282,13 +297,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def inform_central_of_cluster_health(self, health: typing.Literal["Active", "Failed"]) -> None:
 		"""Tell Central whether this region's cluster may be used. Todo: add health reporting system.
 
-		Only a running cluster has endpoints to report, and only it can be asked for the
-		gateway address they are built from."""
-		endpoints = self.central_endpoints if health == "Active" else {}
+		Joined nodes carry no storage role until a layout is applied, so a cluster is not
+		servable until then. Zero also means Garage could not be reached."""
+		can_serve = health == "Active" and self.garage.layout_version() > 0
+		endpoints = self.central_endpoints if can_serve else {}
 		try:
-			CentralClient.from_settings().register_cluster(
-				region=self.region, active=health == "Active", **endpoints
-			)
+			CentralClient.from_settings().register_cluster(region=self.region, active=can_serve, **endpoints)
 		except Exception:
 			frappe.log_error(
 				title=f"{self.name} could not inform Central it is {health}",
@@ -363,8 +377,8 @@ def can_add_gateway_node(cluster: ObjectStorageCluster) -> None:
 
 def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 	"""Whether this cluster can add a storage node."""
-	if cluster.status in ["Failed", "Setting Up"]:
-		frappe.throw(_("Cannot add storage node to a cluster that is failed or setting up."))
+	if cluster.status == "Setting Up":
+		frappe.throw(_("Cannot add storage node to a cluster that is setting up."))
 
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
@@ -377,5 +391,44 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 		frappe.throw(
 			_("Not enough running storage nodes to setup the cluster. Required: {0}, running: {1}").format(
 				cluster.replication_factor, num_running_storage_nodes
+			)
+		)
+
+
+def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> None:
+	"""Whether the named machines can be released from this cluster."""
+	cluster.check_permission("write")
+
+	if cluster.status == "Setting Up":
+		frappe.throw(_("Cannot release machines from a cluster that is setting up."))
+
+	named = set(machines or [])
+	if not named:
+		frappe.throw(_("Name the machines to release."))
+
+	unknown = named - {row.machine for row in cluster.machines}
+	if unknown:
+		frappe.throw(_("{0} is not a machine of this cluster.").format(", ".join(sorted(unknown))))
+
+	# Nothing can have joined yet: no gateway to join through, or no secrets to join with.
+	if not cluster.gateway_node or not all(
+		cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
+	):
+		return
+
+	joined = cluster.garage.healthy_nodes()
+	if cluster.is_live:
+		roles = {row.machine: row.role for row in cluster.machines}
+		if any(roles[name] == GATEWAY for name in named):
+			frappe.throw(_("Cannot release the gateway machine from a live cluster."))
+
+		if not joined:
+			frappe.throw(_("Unable to release nodes currently garage is blocked."))
+
+	serving = sorted(named & joined)
+	if serving:
+		frappe.throw(
+			_("{0} joined this cluster. Releasing is for machines that failed to set up.").format(
+				", ".join(serving)
 			)
 		)

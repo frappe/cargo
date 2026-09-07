@@ -6,8 +6,12 @@ const HEALTH_COLORS = { Healthy: "green", Degraded: "orange", Critical: "red", U
 const HEADLINES = {
 	Draft: __("Add a gateway and its storage nodes. Each one is asked for as you add it."),
 	"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
-	Active: __("Garage is running. Apply the layout after adding nodes."),
-	Failed: __("The last run failed. See Error below, then set up again."),
+	Active: __(
+		"Garage is running. Central cannot hand this cluster out until the layout is applied — nodes carry no storage role before that."
+	),
+	Failed: __(
+		"The last run failed. See Error below, then set up again — the machines are kept, so setting up again retries them."
+	),
 };
 
 frappe.ui.form.on("Object Storage Cluster", {
@@ -102,11 +106,13 @@ function add_cluster_buttons(frm) {
 
 	if (frm.doc.status === "Draft") return;
 
+	add_release_button(frm);
+
 	// Separate from setup: a layout version moves data, so it is the operator's call.
 	frm.add_custom_button(__("Apply Layout"), () => {
 		frappe.confirm(
 			__(
-				"Give every node its place in the cluster? This publishes a new layout version and Garage will rebalance data across the nodes."
+				"Give every node its place in the cluster? This publishes a new layout version, Garage will rebalance data across the nodes, and Central is told the cluster can serve."
 			),
 			() =>
 				frm.call("apply_layout").then(() => {
@@ -115,6 +121,66 @@ function add_cluster_buttons(frm) {
 				})
 		);
 	});
+}
+
+// A failed run leaves its machines alone, so this is the only thing that terminates one.
+// The cluster's own table is the list: which machine failed is in Error and the setup log,
+// and nothing is preselected.
+function add_release_button(frm) {
+	frm.add_custom_button(__("Release Machines"), () => {
+		const machines = frm.doc.machines || [];
+		if (!machines.length) {
+			frappe.msgprint({
+				title: __("Nothing to release"),
+				message: __("This cluster has no machines."),
+				indicator: "blue",
+			});
+			return;
+		}
+
+		show_release_dialog(frm, machines);
+	});
+}
+
+function show_release_dialog(frm, machines) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Release Machines"),
+		fields: [
+			{
+				fieldtype: "HTML",
+				options: `<p>${__(
+					"Releasing a machine asks Atlas to terminate it — the machine and its disk are gone for good. Setting up again reinstalls whatever is left, so release only what you do not want retried."
+				)}</p>`,
+			},
+			{
+				fieldname: "machines",
+				fieldtype: "MultiCheck",
+				label: __("Machines"),
+				options: machines.map((row) => ({
+					label: `${row.machine} — ${row.role}`,
+					value: row.machine,
+				})),
+			},
+		],
+		primary_action_label: __("Release"),
+		primary_action: ({ machines: selected }) => {
+			if (!selected?.length) {
+				frappe.msgprint(__("Pick at least one machine."));
+				return;
+			}
+
+			dialog.hide();
+			frm.call("release_machines", { machines: selected }).then(() => {
+				frappe.show_alert({
+					message: __("Released {0} machine(s).", [selected.length]),
+					indicator: "orange",
+				});
+				frm.reload_doc();
+			});
+		},
+	});
+
+	dialog.show();
 }
 
 // vCPU and RAM are per machine; the disk is what Garage weights a storage node by.
