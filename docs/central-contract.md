@@ -20,6 +20,11 @@ is reached.
 The token's scope must be `cargo:central`. Cargo's Atlas token is signed by the same key, so
 the scope check is what stops it being replayed here.
 
+The token also names the Cargo Instance it was minted for. Every call below that takes a
+`region` must name that instance's own region — anything else is refused before the endpoint
+runs, so a valid host cannot ask about a cluster that is not its own. Details in
+[bootstrapping.md](bootstrapping.md#one-host-one-region).
+
 There is one endpoint that does not take this token: `request_control_credentials`, which is
 how a host gets it in the first place. See [bootstrapping.md](bootstrapping.md).
 
@@ -33,15 +38,16 @@ X-Cargo-Bootstrapping-Token: <one-time token>
 |---|---|
 | `base_url` | Where this host is served, so Central has a record of it |
 
-Returns `central_access_token` and `atlas_access_token`. The bootstrapping token is spent by
-this call and cannot be used again. Full walkthrough in
+Returns `central_access_token` and `atlas_access_token`, both naming the Cargo Instance the
+bootstrapping token was minted for. The bootstrapping token is spent by this call and cannot
+be used again, including by a second request arriving at the same moment. Full walkthrough in
 [bootstrapping.md](bootstrapping.md).
 
 ## Asking for cluster secrets — `garage_tokens`
 
 | Send | What it is |
 |---|---|
-| `region` | Which cluster this is. Central identifies a cluster by its region |
+| `region` | Which cluster this is. Central identifies a cluster by its region, and it must be the caller's own |
 | `vm_ids` | The machines that will run it |
 
 Returns all three:

@@ -163,9 +163,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 			machine_doc = frappe.get_doc("Machine", machine)
 			was_successful = self.start_setup_on_machine(machine_doc)
 
-			# We don't care about anything here just make as failure and move on
+			# The machines are left alone: setup is idempotent, so a retry picks up whatever
+			# has not joined. Releasing them is the operator's call.
 			if not was_successful and machine_doc.role == GATEWAY:
-				self.release_failed_machines([node.name for node in self.all_nodes])
 				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
 				return
 
@@ -182,7 +182,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 				)
 				return
 
-		self.release_failed_machines(failed_storage_node_setup)
 		self.record_cluster_peers()
 		self.verify_connected_nodes()
 
@@ -215,14 +214,16 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def record_cluster_peers(self) -> None:
-		"""Give every node the same peers, now that they all exist"""
+		"""Give every node that joined the same peers, now that they all exist."""
 		setup = ClusterSetup(self)
 		peers = setup.peers()
 		if not peers:
 			return
 
+		joined = setup.healthy_nodes()
 		for machine in setup.machines:
-			setup.record_peers(machine, peers)
+			if machine["name"] in joined:
+				setup.record_peers(machine, peers)
 
 	@task
 	def verify_connected_nodes(self) -> None:
@@ -243,14 +244,25 @@ class ObjectStorageCluster(WorkflowBuilder):
 		# Short of a node but able to serve: Active, and health reports it as degraded.
 		self.mark_cluster_status("Active", None)
 
-	@task
-	def release_failed_machines(self, failed_machines: list[str]) -> None:
-		"""Release the failed machines back to the fleet."""
-		for name in failed_machines:
-			self.fleet.terminate(frappe.get_doc("Machine", name))
-			# Just remove from the cluster's list of machines, don't delete the machine record itself.
-			self.machines = [row for row in self.machines if row.machine != name]
+	@frappe.whitelist()
+	def release_machines(self, machines: list[str]) -> None:
+		"""Hand the named machines back to Atlas and drop them from this cluster."""
+		if self.status == "Setting Up":
+			frappe.throw(_("This cluster is being set up. Wait for that to finish."))
 
+		named = set(machines or [])
+		if not named:
+			frappe.throw(_("Name the machines to release."))
+
+		unknown = named - {row.machine for row in self.machines}
+		if unknown:
+			frappe.throw(_("{0} is not a machine of this cluster.").format(", ".join(sorted(unknown))))
+
+		for name in named:
+			self.fleet.terminate(frappe.get_doc("Machine", name))
+
+		# Drop them from the cluster; the Machine rows stay, so the audit trail survives.
+		self.machines = [row for row in self.machines if row.machine not in named]
 		self.save()
 
 	def sync_machines(self) -> None:
@@ -363,8 +375,8 @@ def can_add_gateway_node(cluster: ObjectStorageCluster) -> None:
 
 def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 	"""Whether this cluster can add a storage node."""
-	if cluster.status in ["Failed", "Setting Up"]:
-		frappe.throw(_("Cannot add storage node to a cluster that is failed or setting up."))
+	if cluster.status == "Setting Up":
+		frappe.throw(_("Cannot add storage node to a cluster that is setting up."))
 
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:

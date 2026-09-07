@@ -2,8 +2,8 @@
 # Bring up a Cargo host from a bare Ubuntu machine.
 #
 # Pilot's installer brings its own MariaDB, Redis and nginx, so nothing is expected to be
-# on the machine beforehand. Central registers this host afterwards and pushes its Cargo
-# Settings; nothing here needs to know about Central.
+# on the machine beforehand. This host enrols itself with Central on install, using the
+# bootstrapping token below: Central never calls back, so it needs Central's URL up front.
 set -euo pipefail
 
 PILOT_VERSION="${PILOT_VERSION:-v0.0.29-pre-alpha}"
