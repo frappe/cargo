@@ -3,7 +3,7 @@
 
 from contextlib import contextmanager
 from typing import ClassVar
-from unittest.mock import PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -257,9 +257,25 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 		).insert()
 
 	@contextmanager
-	def _garage(self):
-		with patch.object(ClusterSetup, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create:
+	def _garage(self, bucket_exists: bool = False):
+		"""What Garage answers for GetBucketInfo, and a stub for making the bucket.
+
+		`admin` is patched rather than the client's method: building the real one needs a
+		booted gateway to address."""
+		admin = MagicMock()
+		admin.bucket.return_value = {"id": "b1"} if bucket_exists else None
+		with (
+			patch.object(ClusterSetup, "admin", new_callable=PropertyMock, return_value=admin),
+			patch.object(ClusterSetup, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create,
+		):
+			create.admin = admin
 			yield create
+
+	def _record_bucket(self) -> None:
+		self.cluster.db_set(
+			{"metadata_bucket": self.BUCKET["name"], "metadata_bucket_access_key": self.BUCKET["access_key"]}
+		)
+		self.cluster.reload()
 
 	@contextmanager
 	def _applying(self):
@@ -274,7 +290,7 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 		self.cluster.db_set("status", "Active")
 		self.cluster.reload()
 
-		with self._garage(), self._applying():
+		with self._garage(bucket_exists=False), self._applying():
 			self.cluster.apply_layout()
 
 		cluster = frappe.get_doc("Object Storage Cluster", self.cluster.name)
@@ -282,17 +298,31 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 		self.assertEqual(cluster.metadata_bucket_access_key, self.BUCKET["access_key"])
 		self.assertEqual(cluster.get_password("metadata_bucket_secret_key"), self.BUCKET["secret_key"])
 
-	def test_a_cluster_that_already_has_one_does_not_mint_a_second_key(self):
-		"""Garage returns a key's secret once, so a second key would be unreachable."""
-		self.cluster.db_set(
-			{"metadata_bucket": self.BUCKET["name"], "metadata_bucket_access_key": self.BUCKET["access_key"]}
-		)
-		self.cluster.reload()
+	def test_a_bucket_garage_still_has_is_left_alone(self):
+		self._record_bucket()
 
-		with self._garage() as create:
+		with self._garage(bucket_exists=True) as create:
 			self.cluster.create_metadata_bucket_if_needed()
 
 		create.assert_not_called()
+
+	def test_a_bucket_garage_no_longer_has_is_made_again(self):
+		"""The row can outlive the bucket -- dropped at Garage, or the cluster rebuilt
+		under it. Uploads would fail on a name Cargo still believes in."""
+		self._record_bucket()
+
+		with self._garage(bucket_exists=False) as create:
+			self.cluster.create_metadata_bucket_if_needed()
+
+		create.assert_called_once()
+
+	def test_garage_is_not_asked_before_anything_was_recorded(self):
+		"""Nothing to check against, and the answer would not change the outcome."""
+		with self._garage(bucket_exists=False) as create:
+			self.cluster.create_metadata_bucket_if_needed()
+
+		create.admin.bucket.assert_not_called()
+		create.assert_called_once()
 
 	def test_a_cluster_that_is_not_active_gets_no_bucket(self):
 		"""A layout can be applied to a cluster that failed; it still serves nothing."""

@@ -350,9 +350,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	def create_metadata_bucket_if_needed(self) -> None:
 		"""Cargo's own bucket on this cluster, and the key that reaches it.
-		THIS IS ONLY FOR INTERNAL/CARGO USAGE NOT FOR CUSTOMERS!
-		"""
-		if self.metadata_bucket and self.metadata_bucket_access_key:
+		THIS IS ONLY FOR INTERNAL/CARGO USAGE NOT FOR CUSTOMERS!"""
+		if (
+			self.metadata_bucket
+			and self.metadata_bucket_access_key
+			and self.garage.admin.bucket(self.metadata_bucket)
+		):
 			return
 
 		bucket = self.garage.create_metadata_bucket()
