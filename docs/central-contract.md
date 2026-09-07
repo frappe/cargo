@@ -92,6 +92,11 @@ Central fills the three endpoints in on the `Service Backend` row and marks it a
 this lands the backend has secrets but no address, so Central skips it and no bucket can be
 created against it.
 
+`active` is not "the nodes joined". It is "this cluster can hold an object", which needs an
+applied layout as well — before that Garage answers but its nodes carry no storage role. So a
+cluster reports active twice over its life: never on setup alone, and then once the layout is
+applied.
+
 A cluster reporting `active: false` sends no endpoints: it has none to offer while it is
 down, and the ones Central holds are the last known good. **Its secrets are kept**, so a
 retry reuses them and the nodes still recognise each other.
