@@ -69,32 +69,26 @@ knows where the cluster is.
 Which secrets get asked for is the *service's* choice, not Central's. Object storage wants
 these three (`cargo/object_storage/credentials.py`); print and email will want their own.
 
-## Reporting success — `register_cluster`
+## Reporting status — `register_cluster`
 
 | Send | What it is |
 |---|---|
 | `region` | The cluster |
+| `active` | Whether Central may use it |
 | `base_url` | Garage's admin API, where Central manages buckets and keys |
 | `s3_endpoint` | Where benches read and write objects |
+| `web_endpoint` | Where buckets are served as static sites |
 
-Central fills these in on the `Service Backend` row, clears any recorded error, and marks it
-active. Until this lands the backend has secrets but no address, so Central skips it and no
-bucket can be created against it.
+Every endpoint is built from the cluster's gateway address — every S3 and admin call goes
+through the gateway — and none of them is behind TLS.
 
-## Reporting failure — `report_failure`
+Central fills the three endpoints in on the `Service Backend` row and marks it active. Until
+this lands the backend has secrets but no address, so Central skips it and no bucket can be
+created against it.
 
-| Send | What it is |
-|---|---|
-| `region` | The cluster |
-| `step` | Which stage broke |
-| `error` | What went wrong, trimmed to 500 characters |
-
-Central records the error on the backend and marks it inactive. **The secrets are kept**, so
-a retry reuses them and the nodes still recognise each other.
-
-This exists because the secrets are minted before the cluster is built. Without it, a failed
-provision would leave Central holding secrets for a cluster that does not exist and no way
-of knowing.
+A cluster reporting `active: false` sends no endpoints: it has none to offer while it is
+down, and the ones Central holds are the last known good. **Its secrets are kept**, so a
+retry reuses them and the nodes still recognise each other.
 
 ## Who holds which key
 

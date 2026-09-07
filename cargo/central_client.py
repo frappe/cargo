@@ -38,10 +38,6 @@ class CentralClient:
 			is_bootstrapping=is_bootstrapping,
 		)
 
-	def report_failure(self, region: str, step: str, error: str) -> dict[str, Any]:
-		"""Tell Central a cluster it holds secrets for did not come up."""
-		return self.call("report_failure", data={"region": region, "step": step, "error": error[-500:]})
-
 	def get_required_credentials(
 		self, region: str, vm_ids: list[str], required: Sequence[str]
 	) -> dict[str, str]:
@@ -54,11 +50,27 @@ class CentralClient:
 
 		return {name: tokens[name] for name in required}
 
-	def register_cluster(self, region: str, base_url: str, s3_endpoint: str) -> dict[str, Any]:
-		"""Object storage: the cluster is running, and this is where to reach it."""
+	def register_cluster(
+		self,
+		region: str,
+		active: bool,
+		base_url: str = "",
+		s3_endpoint: str = "",
+		web_endpoint: str = "",
+	) -> dict[str, Any]:
+		"""Object storage: whether the cluster is running, and where to reach it.
+
+		A cluster reporting itself down sends no endpoints -- it has none while it is down,
+		and Central keeps the last known good."""
 		return self.call(
 			"register_cluster",
-			data={"region": region, "base_url": base_url, "s3_endpoint": s3_endpoint},
+			data={
+				"region": region,
+				"active": active,
+				"base_url": base_url,
+				"s3_endpoint": s3_endpoint,
+				"web_endpoint": web_endpoint,
+			},
 		)
 
 	def call(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
