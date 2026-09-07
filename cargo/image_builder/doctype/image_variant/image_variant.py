@@ -10,8 +10,8 @@ import frappe
 from frappe.utils import now_datetime
 
 from cargo.atlas_client import AtlasClient
-from cargo.garage_admin_client import MetadataBucket
 from cargo.image_builder.builder import Builder
+from cargo.object_storage.metadata_bucket import MetadataBucket
 from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder

@@ -12,7 +12,7 @@ from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	ObjectStorageCluster,
 )
-from cargo.object_storage.doctype.object_storage_cluster.setup import ClusterSetup
+from cargo.object_storage.garage import Garage
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -93,7 +93,7 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		# ClusterSetup refuses a cluster with no secrets.
+		# Garage refuses a cluster with no secrets.
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -113,7 +113,7 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 			"web_endpoint": "http://10.0.0.5:3902",
 		}
 		with (
-			patch.object(ClusterSetup, "layout_version", return_value=layout_version),
+			patch.object(Garage, "layout_version", return_value=layout_version),
 			# Applying the layout also makes the metadata bucket; that is its own test.
 			patch.object(ObjectStorageCluster, "create_metadata_bucket_if_needed"),
 			patch.object(
@@ -140,7 +140,7 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 		self.assertEqual(register.call_args.kwargs["s3_endpoint"], "http://10.0.0.5:3900")
 
 	def test_applying_the_layout_tells_central(self):
-		with self._garage(layout_version=1) as register, patch.object(ClusterSetup, "apply_layout"):
+		with self._garage(layout_version=1) as register, patch.object(Garage, "apply_layout"):
 			self.cluster.apply_layout()
 
 		self.assertTrue(register.call_args.kwargs["active"])
@@ -149,7 +149,7 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 		self.cluster.db_set("status", "Failed")
 		self.cluster.reload()
 
-		with self._garage(layout_version=1) as register, patch.object(ClusterSetup, "apply_layout"):
+		with self._garage(layout_version=1) as register, patch.object(Garage, "apply_layout"):
 			self.cluster.apply_layout()
 
 		register.assert_not_called()
@@ -193,7 +193,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 	@contextmanager
 	def _joined(self, names: list[str]):
-		with patch.object(ClusterSetup, "healthy_nodes", return_value=set(names)):
+		with patch.object(Garage, "healthy_nodes", return_value=set(names)):
 			yield
 
 	def test_the_gateway_cannot_be_released(self):
@@ -265,8 +265,8 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 		admin = MagicMock()
 		admin.bucket.return_value = {"id": "b1"} if bucket_exists else None
 		with (
-			patch.object(ClusterSetup, "admin", new_callable=PropertyMock, return_value=admin),
-			patch.object(ClusterSetup, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create,
+			patch.object(Garage, "admin", new_callable=PropertyMock, return_value=admin),
+			patch.object(Garage, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create,
 		):
 			create.admin = admin
 			yield create
@@ -280,7 +280,7 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 	@contextmanager
 	def _applying(self):
 		with (
-			patch.object(ClusterSetup, "apply_layout"),
+			patch.object(Garage, "apply_layout"),
 			patch.object(ObjectStorageCluster, "inform_central_of_cluster_health"),
 		):
 			yield
@@ -341,3 +341,67 @@ class IntegrationTestMetadataBucket(IntegrationTestCase):
 			self.cluster.mark_cluster_status("Active", None)
 
 		create.assert_not_called()
+
+
+class IntegrationTestClusterPeers(IntegrationTestCase):
+	"""Recording peers: one read of Garage, and only the machines that joined are written to."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.cluster = frappe.get_doc(
+			{
+				"doctype": "Object Storage Cluster",
+				"rpc_secret": "rpc",
+				"admin_token": "admin",
+				"metrics_token": "metrics",
+			}
+		).insert()
+		self.vm_ids: dict[str, str] = {}
+		self.gateway = self.add_machine(GATEWAY)
+		self.storage = self.add_machine(STORAGE)
+
+	add_machine = IntegrationTestObjectStorageCluster.add_machine
+
+	def _admin(self, joined: list[str]) -> MagicMock:
+		"""Garage answering that `joined` are up, each tagged with its machine name."""
+		admin = MagicMock()
+		admin.status.return_value = {
+			"nodes": [
+				{"id": f"node{index}", "addr": "10.0.0.1:3901", "isUp": True, "role": {"tags": [name]}}
+				for index, name in enumerate(joined)
+			]
+		}
+		admin.layout.return_value = {"stagedRoleChanges": []}
+
+		return admin
+
+	@contextmanager
+	def _garage(self, joined: list[str]):
+		admin = self._admin(joined)
+		with (
+			patch.object(Garage, "admin", new_callable=PropertyMock, return_value=admin),
+			patch.object(Garage, "record_peers") as record,
+		):
+			yield admin, record
+
+	def test_peers_are_read_once_and_written_to_joined_machines(self):
+		with self._garage([self.gateway, self.storage]) as (admin, record):
+			self.cluster.record_cluster_peers()
+
+		self.assertEqual(admin.status.call_count, 1)
+		self.assertEqual(admin.layout.call_count, 1)
+		self.assertEqual(
+			{call.args[0]["name"] for call in record.call_args_list}, {self.gateway, self.storage}
+		)
+
+	def test_a_machine_that_never_joined_is_not_written_to(self):
+		with self._garage([self.gateway]) as (_, record):
+			self.cluster.record_cluster_peers()
+
+		self.assertEqual({call.args[0]["name"] for call in record.call_args_list}, {self.gateway})
+
+	def test_nothing_is_written_when_garage_reports_no_peers(self):
+		with self._garage([]) as (_, record):
+			self.cluster.record_cluster_peers()
+
+		record.assert_not_called()

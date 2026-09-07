@@ -13,7 +13,7 @@ from frappe.utils import now_datetime
 from cargo.central_client import CentralClient
 from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
-from cargo.object_storage.doctype.object_storage_cluster.setup import ClusterSetup
+from cargo.object_storage.garage import Garage
 from cargo.object_storage.machines import DEAD_STATES, MachineFleet
 from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
@@ -102,9 +102,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return MachineFleet(self)
 
 	@cached_property
-	def garage(self) -> ClusterSetup:
-		"""The cluster setup helper."""
-		return ClusterSetup(self)
+	def garage(self) -> Garage:
+		"""This cluster's Garage."""
+		return Garage(self)
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
@@ -207,8 +207,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Install Garage on one machine and fold it into the cluster."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				setup = ClusterSetup(self, on_output=log.write)
-				setup.setup_machine(setup.machine(machine.name))
+				garage = Garage(self)
+				garage.setup_machine(garage.machine(machine.name), on_output=log.write)
 			except Exception:
 				frappe.log_error(
 					title=f"{machine.name} failed to set up",
@@ -221,15 +221,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 	@task
 	def record_cluster_peers(self) -> None:
 		"""Give every node that joined the same peers, now that they all exist."""
-		setup = ClusterSetup(self)
-		peers = setup.peers()
-		if not peers:
+		garage = Garage(self)
+		connected = garage.get_connected_nodes()
+		if not connected.peers:
 			return
 
-		joined = setup.healthy_nodes()
-		for machine in setup.machines:
-			if machine["name"] in joined:
-				setup.record_peers(machine, peers)
+		for machine in garage.machines:
+			if machine["name"] in connected.machines:
+				garage.record_peers(machine, connected.peers)
 
 	@task
 	def verify_connected_nodes(self) -> None:
