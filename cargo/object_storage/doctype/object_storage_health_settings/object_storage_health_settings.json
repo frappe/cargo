@@ -1,0 +1,106 @@
+{
+ "actions": [],
+ "creation": "2026-09-08 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_disk",
+  "disk_degraded_percent",
+  "disk_critical_percent",
+  "column_break_nodes",
+  "node_offline_seconds",
+  "section_break_reads",
+  "admin_timeout_seconds",
+  "column_break_history",
+  "history_hours"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_disk",
+   "fieldtype": "Section Break",
+   "label": "Thresholds"
+  },
+  {
+   "default": "20",
+   "description": "Free space below this is Degraded. Garage stops accepting writes when a volume fills.",
+   "fieldname": "disk_degraded_percent",
+   "fieldtype": "Int",
+   "label": "Disk Degraded Percent",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "10",
+   "description": "Free space below this is Critical.",
+   "fieldname": "disk_critical_percent",
+   "fieldtype": "Int",
+   "label": "Disk Critical Percent",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_nodes",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "120",
+   "description": "How long a node may be unreachable before it counts against the cluster. Shorter than this is a blip, not an outage.",
+   "fieldname": "node_offline_seconds",
+   "fieldtype": "Int",
+   "label": "Node Offline Seconds",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_reads",
+   "fieldtype": "Section Break",
+   "label": "Reads"
+  },
+  {
+   "default": "5",
+   "description": "Timeout for the two calls to the gateway. Health runs every minute, so a hung gateway must not still be waiting when the next tick starts.",
+   "fieldname": "admin_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Admin Timeout Seconds",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_history",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "6",
+   "description": "How long readings are kept in logs/cluster_health.json.log, the local copy for when datum was unreachable. Nothing queries it.",
+   "fieldname": "history_hours",
+   "fieldtype": "Int",
+   "label": "History Hours",
+   "non_negative": 1,
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-08 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Object Storage",
+ "name": "Object Storage Health Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
