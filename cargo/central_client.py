@@ -50,7 +50,7 @@ class CentralClient:
 
 		return {name: tokens[name] for name in required}
 
-	def register_cluster(
+	def register_storage_cluster(
 		self,
 		region: str,
 		active: bool,
@@ -63,7 +63,7 @@ class CentralClient:
 		A cluster reporting itself down sends no endpoints -- it has none while it is down,
 		and Central keeps the last known good."""
 		return self.call(
-			"register_cluster",
+			"register_storage_cluster",
 			data={
 				"region": region,
 				"active": active,
