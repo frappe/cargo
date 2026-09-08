@@ -123,7 +123,7 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 				"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.CentralClient"
 			) as central,
 		):
-			yield central.from_settings.return_value.register_cluster
+			yield central.from_settings.return_value.register_storage_cluster
 
 	def test_joined_but_unapplied_is_not_handed_out(self):
 		with self._garage(layout_version=0) as register:

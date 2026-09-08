@@ -20,4 +20,5 @@ class CargoSettings(Document):
 		central_access_token: DF.Password | None
 		central_bootstrapping_token: DF.Password | None
 		central_url: DF.Data
+		region: DF.Data
 	# end: auto-generated types

@@ -302,7 +302,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		can_serve = health == "Active" and self.garage.layout_version() > 0
 		endpoints = self.central_endpoints if can_serve else {}
 		try:
-			CentralClient.from_settings().register_cluster(region=self.region, active=can_serve, **endpoints)
+			CentralClient.from_settings().register_storage_cluster(
+				region=self.region, active=can_serve, **endpoints
+			)
 		except Exception:
 			frappe.log_error(
 				title=f"{self.name} could not inform Central it is {health}",

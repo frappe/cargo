@@ -24,9 +24,7 @@ class CentralClient:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
 		# See AtlasClient: `Authorization` is unusable against a Frappe guest endpoint.
-		self.headers = (
-			{"X-Cargo-Token": token} if not is_bootstrapping else {"X-Cargo-Bootstrapping-Token": token}
-		)
+		self.headers = {"X-Cargo-Token": token} if not is_bootstrapping else {"X-Bootstrapping-Token": token}
 
 	@classmethod
 	def from_settings(cls, is_bootstrapping: bool = False) -> Self:
@@ -50,7 +48,7 @@ class CentralClient:
 
 		return {name: tokens[name] for name in required}
 
-	def register_cluster(
+	def register_storage_cluster(
 		self,
 		region: str,
 		active: bool,
@@ -63,7 +61,7 @@ class CentralClient:
 		A cluster reporting itself down sends no endpoints -- it has none while it is down,
 		and Central keeps the last known good."""
 		return self.call(
-			"register_cluster",
+			"register_storage_cluster",
 			data={
 				"region": region,
 				"active": active,
