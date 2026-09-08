@@ -280,4 +280,7 @@ scheduler_events = {
 			"cargo.object_storage.health.ship_metrics",
 		],
 	},
+	"hourly": [
+		"cargo.object_storage.health.prune_history",
+	],
 }

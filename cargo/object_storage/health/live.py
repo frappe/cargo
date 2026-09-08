@@ -21,11 +21,10 @@ if typing.TYPE_CHECKING:
 	)
 
 UNKNOWN, HEALTHY, DEGRADED, CRITICAL = "Unknown", "Healthy", "Degraded", "Critical"
-# Worst last: a run's verdict is the highest severity anything reported.
 SEVERITY = (UNKNOWN, HEALTHY, DEGRADED, CRITICAL)
 
-# The name of the log, not a tuning knob: how long it is kept is in the settings.
 HISTORY_FILE = "cluster_health.json.log"
+HISTORY_LOCK = "cluster_health_log"
 
 
 @dataclass(frozen=True)
@@ -61,6 +60,7 @@ class LiveHealth:
 		self.cluster = cluster
 		self.settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
 		self.admin = GarageAdminClient.for_cluster(self.cluster)
+		# Health runs every minute, so a hung gateway must not still be waiting on the next tick.
 		self.admin.timeout = self.settings.admin_timeout_seconds
 
 	def check(self) -> Finding:
@@ -80,33 +80,24 @@ class LiveHealth:
 
 	@cached_property
 	def reading(self) -> Reading:
-		"""One read of the gateway, shared by every check and by the history line.
-
-		Cached for the life of this object: a check that re-asked would be judging a
-		different moment than the one beside it."""
+		"""One read of the gateway, shared by every check and by the log line."""
 		try:
 			return Reading(health=self.admin.health(), nodes=self.admin.status().get("nodes") or [])
 		except GarageError as error:
 			return Reading(health={}, nodes=[], error=str(error))
 
 	def findings(self) -> list[Finding]:
-		"""Everything the cluster has against it, from one read of the gateway.
-
-		A gateway that cannot be reached is the only finding: the rest would be invented
-		from data we do not have."""
+		"""Everything the cluster has against it. An unreachable gateway is the only
+		finding: the rest would be invented from data we do not have."""
 		reading = self.reading
 		if reading.error:
-			# If gateway does not respond we immediately know that cluster is in critical state.
 			return [Finding(CRITICAL, f"the gateway's admin API could not be reached: {reading.error}")]
 
 		return [*self.quorum_findings(reading.health), *self.node_findings(reading.nodes)]
 
 	def quorum_findings(self, health: dict) -> list[Finding]:
-		"""Partitions are the keyspace, not the nodes: 256 of them regardless of cluster size.
-
-		Losing quorum on some means the objects living there cannot be written, which is why
-		it outranks a node being down. `partitionsAllOk` is the weaker signal -- every replica
-		present -- and only differs from quorum above `replication_factor` 2."""
+		"""Partitions are the keyspace, not the nodes. Losing quorum on some means the objects
+		living there cannot be written, which is why it outranks a node being down."""
 		partitions = health.get("partitions") or 0
 		if not partitions:
 			return []
@@ -120,8 +111,8 @@ class LiveHealth:
 		return []
 
 	def node_findings(self, nodes: list[dict]) -> list[Finding]:
-		"""Findings name the machine, not the Garage node id: the tag setup wrote is the
-		only thing an operator can look up. A node with no role is not in the layout yet."""
+		"""Named by machine, not Garage node id: the tag setup wrote is what an operator can
+		look up. A node with no role is not in the layout yet."""
 		findings = []
 		for node in nodes:
 			tags = (node.get("role") or {}).get("tags") or []
@@ -140,8 +131,7 @@ class LiveHealth:
 		return findings
 
 	def disk_findings(self, machine: str, node: dict) -> list[Finding]:
-		"""Both volumes matter: Garage stops accepting writes when either fills, and on most
-		of these nodes they are the same filesystem reported twice."""
+		"""Both volumes matter: Garage stops accepting writes when either fills."""
 		findings = []
 		for volume, key in (("data", "dataPartition"), ("metadata", "metadataPartition")):
 			partition = node.get(key) or {}
@@ -158,15 +148,11 @@ class LiveHealth:
 		return findings
 
 	def record(self) -> Finding:
-		"""Write the verdict onto the cluster, and say so loudly when it is Critical.
-
-		db_set rather than save: health is a reading about the cluster, not a change to it,
-		and a save here would re-run the cluster's own hooks on a one-minute clock."""
+		"""Write the verdict onto the cluster, and say so loudly when it is Critical."""
 		finding = self.check()
 		if (self.cluster.health, self.cluster.health_reason) != (finding.severity, finding.reason):
 			self.cluster.db_set({"health": finding.severity, "health_reason": finding.reason}, notify=True)
 			if finding.severity == CRITICAL:
-				# The seam alerting will hang off. Until then this is what pages a human.
 				frappe.log_error(title=f"{self.cluster.name} is critical", message=finding.reason)
 
 		self.dump(finding)
@@ -174,34 +160,50 @@ class LiveHealth:
 		return finding
 
 	def dump(self, finding: Finding) -> None:
-		"""Append this reading to the log and drop anything past the window.
-
-		Kept only so there is something to read after the fact when datum was unreachable.
-		Nothing queries it: no index, no rotation, no viewer."""
-		path = Path(frappe.utils.get_bench_path()) / "logs" / HISTORY_FILE
-		now = frappe.utils.now_datetime()
-		cutoff = frappe.utils.add_to_date(now, hours=-self.settings.history_hours).isoformat()
-		entry = {
-			"timestamp": now.isoformat(),
-			"cluster": self.cluster.name,
-			"severity": finding.severity,
-			"reason": finding.reason,
-			"error": self.reading.error,
-			"health": self.reading.health,
-			"nodes": self.reading.nodes,
-		}
-
+		"""Append this reading to the log. Kept only so there is something to read after the
+		fact when datum was unreachable; `prune_history` drops it once it is old."""
 		try:
-			with filelock("cluster_health_dump", is_global=True, timeout=5):
-				# Appended in order, so everything expired is at the front: stop at the first
-				# line still inside the window and keep the rest as written.
-				existing = path.read_text().splitlines() if path.exists() else []
-				kept = dropwhile(lambda line: json.loads(line)["timestamp"] < cutoff, existing)
-				# Written whole and renamed over: a crash mid-write leaves the old log, not a
-				# torn line the next run would choke on.
-				scratch = path.with_suffix(".tmp")
-				scratch.write_text("\n".join([*kept, json.dumps(entry)]) + "\n")
-				scratch.replace(path)
+			# Stamped under the lock, so the log stays ordered and `prune_history` can stop
+			# at the first line still inside the window.
+			with filelock(HISTORY_LOCK, is_global=True, timeout=5):
+				entry = {
+					"timestamp": frappe.utils.now_datetime().isoformat(),
+					"cluster": self.cluster.name,
+					"severity": finding.severity,
+					"reason": finding.reason,
+					"error": self.reading.error,
+					"health": self.reading.health,
+					"nodes": self.reading.nodes,
+				}
+				with history_file().open("a") as log:
+					log.write(json.dumps(entry) + "\n")
 		except Exception:
 			# The verdict on the cluster matters more than the copy of it.
 			frappe.log_error(title="Could not write cluster health log")
+
+
+def history_file() -> Path:
+	return Path(frappe.utils.get_bench_path()) / "logs" / HISTORY_FILE
+
+
+def prune_history() -> None:
+	"""Drop readings past the window. Scheduled hourly."""
+	path = history_file()
+	if not path.exists():
+		return
+
+	hours = frappe.get_cached_doc("Object Storage Health Settings").history_hours
+	cutoff = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-hours).isoformat()
+
+	try:
+		with filelock(HISTORY_LOCK, is_global=True, timeout=30):
+			# Appended in order, so everything expired is at the front.
+			kept = list(
+				dropwhile(lambda line: json.loads(line)["timestamp"] < cutoff, path.read_text().splitlines())
+			)
+			# Written whole and renamed over, so a crash leaves the old log rather than a torn line.
+			scratch = path.with_suffix(".tmp")
+			scratch.write_text("\n".join(kept) + "\n" if kept else "")
+			scratch.replace(path)
+	except Exception:
+		frappe.log_error(title="Could not prune cluster health log")
