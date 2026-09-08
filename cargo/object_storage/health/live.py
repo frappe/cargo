@@ -96,6 +96,7 @@ class LiveHealth:
 		from data we do not have."""
 		reading = self.reading
 		if reading.error:
+			# If gateway does not respond we immediately know that cluster is in critical state.
 			return [Finding(CRITICAL, f"the gateway's admin API could not be reached: {reading.error}")]
 
 		return [*self.quorum_findings(reading.health), *self.node_findings(reading.nodes)]
