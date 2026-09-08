@@ -58,6 +58,10 @@ class GarageAdminClient:
 	def status(self) -> dict[str, Any]:
 		return self.call("GetClusterStatus")
 
+	def health(self) -> dict[str, Any]:
+		"""Quorum and how many storage nodes are up, as Garage itself judges it."""
+		return self.call("GetClusterHealth")
+
 	def layout(self) -> dict[str, Any]:
 		return self.call("GetClusterLayout")
 

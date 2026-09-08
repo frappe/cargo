@@ -265,16 +265,19 @@ export_python_type_annotations = True
 
 scheduler_events = {
 	"cron": {
-		# Machines die without telling anyone, so a cluster's health is re-read on a clock.
-		# Off until health is wired into the cluster: it still reads fields that moved.
-		# "*/10 * * * *": [
-		# 	"cargo.object_storage.health.refresh_health",
-		# ],
 		"* * * * *": [
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
 			"cargo.object_storage.machines.sync_pending_machines",
 			"cargo.image_builder.doctype.image_variant.image_variant.sync_build_machines",
+			# Machines die without telling anyone, so health is re-read on a clock. A minute
+			# is what sets alerting latency; the read is two calls to the gateway.
+			"cargo.object_storage.health.refresh_health",
+		],
+		# One SSH session per node, so five minutes rather than one. Nothing Garage
+		# exports moves meaningfully faster.
+		"*/5 * * * *": [
+			"cargo.object_storage.health.ship_metrics",
 		],
 	},
 }
