@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "creation": "2026-09-09 11:18:23.483006",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "datum_section",
+  "repository",
+  "version",
+  "clickhouse_section",
+  "clickhouse_host",
+  "clickhouse_port",
+  "clickhouse_user",
+  "column_break_clickhouse",
+  "clickhouse_password",
+  "timeout_seconds",
+  "token_verification_section",
+  "oidc_issuer",
+  "testing_section",
+  "public_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "datum_section",
+   "fieldtype": "Section Break",
+   "label": "Datum"
+  },
+  {
+   "fieldname": "repository",
+   "fieldtype": "Data",
+   "label": "Repository"
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "label": "Version"
+  },
+  {
+   "description": "Written into datum's environment. Read by the service and by datum-migrate.",
+   "fieldname": "clickhouse_section",
+   "fieldtype": "Section Break",
+   "label": "ClickHouse"
+  },
+  {
+   "description": "DATUM_CLICKHOUSE_HOST",
+   "fieldname": "clickhouse_host",
+   "fieldtype": "Data",
+   "label": "Host",
+   "reqd": 1
+  },
+  {
+   "default": "8123",
+   "description": "DATUM_CLICKHOUSE_PORT. ClickHouse's HTTP port.",
+   "fieldname": "clickhouse_port",
+   "fieldtype": "Int",
+   "label": "Port",
+   "non_negative": 1
+  },
+  {
+   "default": "datum",
+   "description": "DATUM_CLICKHOUSE_USER",
+   "fieldname": "clickhouse_user",
+   "fieldtype": "Data",
+   "label": "User"
+  },
+  {
+   "fieldname": "column_break_clickhouse",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "DATUM_CLICKHOUSE_PASSWORD. The migration creates the user with this.",
+   "fieldname": "clickhouse_password",
+   "fieldtype": "Password",
+   "label": "Password"
+  },
+  {
+   "default": "30",
+   "description": "DATUM_TIMEOUT. Seconds, connect and execute.",
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout (Seconds)",
+   "non_negative": 1
+  },
+  {
+   "description": "How datum checks the tokens Central mints.",
+   "fieldname": "token_verification_section",
+   "fieldtype": "Section Break",
+   "label": "Token Verification"
+  },
+  {
+   "description": "DATUM_OIDC_ISSUER. Central's base URL. Datum reads {issuer}/.well-known/openid-configuration for the JWKS, so keys rotate without redeploying datum. This is how a real host authenticates.",
+   "fieldname": "oidc_issuer",
+   "fieldtype": "Data",
+   "label": "OIDC Issuer",
+   "options": "URL"
+  },
+  {
+   "collapsible": 1,
+   "description": "A pinned key, for working without a reachable issuer. Not how a deployed host runs.",
+   "fieldname": "testing_section",
+   "fieldtype": "Section Break",
+   "label": "Testing"
+  },
+  {
+   "description": "DATUM_JWT_PUBLIC_KEY_FILE. Written to disk and passed as a path. Testing only: it pins one key and does not follow a rotation. Leave empty and set an issuer instead.",
+   "fieldname": "public_key",
+   "fieldtype": "Code",
+   "label": "Public Key (PEM)"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-09 11:22:14.053304",
+ "modified_by": "Administrator",
+ "module": "Telemetry",
+ "name": "Datum Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
