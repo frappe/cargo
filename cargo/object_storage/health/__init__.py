@@ -4,7 +4,7 @@ import typing
 
 import frappe
 
-from cargo.object_storage.health.live import LiveHealth
+from cargo.object_storage.health.live import LiveHealth, prune_history
 from cargo.object_storage.health.telemetry import Telemetry, get_metrics_info
 
 if typing.TYPE_CHECKING:
@@ -12,7 +12,7 @@ if typing.TYPE_CHECKING:
 		ObjectStorageCluster,
 	)
 
-__all__ = ["LiveHealth", "Telemetry", "refresh_health", "ship_metrics"]
+__all__ = ["LiveHealth", "Telemetry", "prune_history", "refresh_health", "ship_metrics"]
 
 
 def live_clusters() -> list[str]:
