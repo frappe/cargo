@@ -4,6 +4,7 @@
 # The whole stack lives on this one machine: ClickHouse, the checkout and the API. Nothing
 # it serves is reachable from outside -- ClickHouse and datum both bind to loopback.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 : "${DATUM_REPOSITORY:?DATUM_REPOSITORY is required}"
 : "${DATUM_VERSION:?DATUM_VERSION is required}"
@@ -17,7 +18,10 @@ if [ -z "${DATUM_JWT_PUBLIC_KEY_FILE:-}" ] && [ -z "${DATUM_OIDC_ISSUER:-}" ]; t
 	exit 1
 fi
 
-DATUM_DIR="${DATUM_DIR:-/opt/datum}"
+SERVICE_USER="${SERVICE_USER:-frappe}"
+SERVICE_UID="${SERVICE_UID:-1001}"
+SERVICE_GID="${SERVICE_GID:-1001}"
+DATUM_DIR="${DATUM_DIR:-/home/$SERVICE_USER/datum}"
 DATUM_HOST="${DATUM_HOST:-127.0.0.1}"
 DATUM_PORT="${DATUM_PORT:-8000}"
 DATUM_WORKERS="${DATUM_WORKERS:-2}"
@@ -27,9 +31,38 @@ UV="${UV:-/usr/local/bin/uv}"
 CLICKHOUSE_KEYRING=/usr/share/keyrings/clickhouse-keyring.gpg
 CLICKHOUSE_ACCESS=/etc/clickhouse-server/users.d/datum.xml
 
-export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq git curl ca-certificates gnupg apt-transport-https
+
+# Datum runs as its own user, never root. The uid is pinned so anything baked into an
+# image is owned by the same account this creates.
+if ! id -u "$SERVICE_USER" > /dev/null 2>&1; then
+	groupadd -g "$SERVICE_GID" "$SERVICE_USER" 2> /dev/null || groupadd "$SERVICE_USER"
+	useradd -m -s /bin/bash -u "$SERVICE_UID" -g "$SERVICE_USER" "$SERVICE_USER" 2> /dev/null ||
+		useradd -m -s /bin/bash -g "$SERVICE_USER" "$SERVICE_USER"
+fi
+
+as_user() {
+	su - "$SERVICE_USER" -c "$1"
+}
+
+# Poll until it answers: nothing here starts instantly.
+wait_for() {
+	local seconds="$1" what="$2"
+	shift 2
+
+	local waited=0
+	while [ "$waited" -lt "$seconds" ]; do
+		if "$@" > /dev/null 2>&1; then
+			return 0
+		fi
+		sleep 2
+		waited=$((waited + 2))
+	done
+
+	echo "$what did not come up within ${seconds}s" >&2
+	return 1
+}
 
 # --- ClickHouse ------------------------------------------------------------------------
 # apt-key is gone in 24.04, so the key is dearmoured and the repo line signed-by= it.
@@ -46,28 +79,27 @@ fi
 # Two things a stock install will not do: let `default` issue CREATE USER, which the ACL
 # migration needs, and give it a password. Both are ours to set -- we installed it.
 install -d -m 755 /etc/clickhouse-server/users.d
+# `remove="remove"` drops the empty <password> the stock users.xml ships: ClickHouse
+# refuses a user carrying two authentication methods.
 cat > "$CLICKHOUSE_ACCESS" <<CLICKHOUSE_USERS
 <clickhouse>
     <users>
         <default>
             <access_management>1</access_management>
+            <password remove="remove"/>
             <password_sha256_hex>$(printf '%s' "$DATUM_DEFAULT_PASSWORD" | sha256sum | cut -d' ' -f1)</password_sha256_hex>
         </default>
     </users>
 </clickhouse>
 CLICKHOUSE_USERS
+# The server drops to its own user before reading this, so root-only would lock it out.
+chown clickhouse:clickhouse "$CLICKHOUSE_ACCESS"
 chmod 600 "$CLICKHOUSE_ACCESS"
 
 systemctl enable --quiet clickhouse-server
 systemctl restart clickhouse-server
 
-for _ in $(seq 1 30); do
-	if clickhouse-client --password "$DATUM_DEFAULT_PASSWORD" --query "SELECT 1" > /dev/null 2>&1; then
-		break
-	fi
-	sleep 2
-done
-clickhouse-client --password "$DATUM_DEFAULT_PASSWORD" --query "SELECT 1" > /dev/null
+wait_for 60 "clickhouse" clickhouse-client --password "$DATUM_DEFAULT_PASSWORD" --query "SELECT 1"
 
 # --- datum -------------------------------------------------------------------------------
 if ! "$UV" --version > /dev/null 2>&1; then
@@ -75,38 +107,39 @@ if ! "$UV" --version > /dev/null 2>&1; then
 fi
 
 # Re-run safe: the machine may already hold a checkout from an earlier attempt.
+install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$DATUM_DIR"
 if [ ! -d "$DATUM_DIR/.git" ]; then
-	git clone --quiet "$DATUM_REPOSITORY" "$DATUM_DIR"
+	as_user "git clone --quiet $(printf '%q' "$DATUM_REPOSITORY") $(printf '%q' "$DATUM_DIR")"
 fi
 
 cd "$DATUM_DIR"
-git remote set-url origin "$DATUM_REPOSITORY"
-git fetch --quiet --tags --prune origin
+as_user "git -C $(printf '%q' "$DATUM_DIR") remote set-url origin $(printf '%q' "$DATUM_REPOSITORY")"
+as_user "git -C $(printf '%q' "$DATUM_DIR") fetch --quiet --tags --prune origin"
 
 # `version` is whatever the operator wrote: a branch, a tag or a commit. A branch has to
 # follow the remote, so it is reset to origin's; anything else is checked out detached.
-if git rev-parse --verify --quiet "refs/remotes/origin/$DATUM_VERSION" > /dev/null; then
-	git checkout --quiet -B "$DATUM_VERSION" "origin/$DATUM_VERSION"
-	git reset --quiet --hard "origin/$DATUM_VERSION"
-elif git rev-parse --verify --quiet "$DATUM_VERSION^{commit}" > /dev/null; then
-	git checkout --quiet --detach "$DATUM_VERSION"
+if as_user "git -C $DATUM_DIR rev-parse --verify --quiet refs/remotes/origin/$DATUM_VERSION" > /dev/null; then
+	as_user "git -C $DATUM_DIR checkout --quiet -B $DATUM_VERSION origin/$DATUM_VERSION"
+	as_user "git -C $DATUM_DIR reset --quiet --hard origin/$DATUM_VERSION"
+elif as_user "git -C $DATUM_DIR rev-parse --verify --quiet ${DATUM_VERSION}^{commit}" > /dev/null; then
+	as_user "git -C $DATUM_DIR checkout --quiet --detach $DATUM_VERSION"
 else
 	echo "no branch, tag or commit named '$DATUM_VERSION' in $DATUM_REPOSITORY" >&2
 	exit 1
 fi
-echo "datum is at $(git rev-parse --short HEAD)"
+echo "datum is at $(as_user "git -C $DATUM_DIR rev-parse --short HEAD")"
 
-"$UV" sync --group api
+as_user "$UV sync --group api --directory $(printf '%q' "$DATUM_DIR")"
 
 if [ -n "${DATUM_JWT_PUBLIC_KEY:-}" ]; then
-	install -d -m 700 "$(dirname "$DATUM_JWT_PUBLIC_KEY_FILE")"
-	install -m 600 /dev/null "$DATUM_JWT_PUBLIC_KEY_FILE"
+	install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 700 "$(dirname "$DATUM_JWT_PUBLIC_KEY_FILE")"
+	install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null "$DATUM_JWT_PUBLIC_KEY_FILE"
 	printf '%s\n' "$DATUM_JWT_PUBLIC_KEY" > "$DATUM_JWT_PUBLIC_KEY_FILE"
 fi
 
 # The unit reads its secrets from here rather than carrying them in its own text, where
 # they would be world-readable through systemctl show.
-install -m 600 /dev/null /etc/datum.env
+install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 {
 	echo "DATUM_CLICKHOUSE_HOST=${DATUM_CLICKHOUSE_HOST:-127.0.0.1}"
 	echo "DATUM_CLICKHOUSE_PORT=$CLICKHOUSE_PORT"
@@ -118,9 +151,9 @@ install -m 600 /dev/null /etc/datum.env
 } >> /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.
-"$UV" run datum-migrate \
-	--insights-user-password "$DATUM_INSIGHTS_PASSWORD" \
-	--default-user-password "$DATUM_DEFAULT_PASSWORD"
+as_user "set -a; . /etc/datum.env; set +a; $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate \
+	--insights-user-password $(printf '%q' "$DATUM_INSIGHTS_PASSWORD") \
+	--default-user-password $(printf '%q' "$DATUM_DEFAULT_PASSWORD")"
 
 cat > /etc/systemd/system/datum.service <<DATUM_UNIT
 [Unit]
@@ -129,6 +162,8 @@ After=network-online.target clickhouse-server.service
 Wants=network-online.target
 
 [Service]
+User=$SERVICE_USER
+Group=$SERVICE_USER
 WorkingDirectory=$DATUM_DIR
 EnvironmentFile=/etc/datum.env
 ExecStart=$DATUM_DIR/.venv/bin/uvicorn datum.api.app:create_app --factory --host $DATUM_HOST --port $DATUM_PORT --workers $DATUM_WORKERS
@@ -146,13 +181,9 @@ systemctl daemon-reload
 systemctl enable --quiet datum
 systemctl restart datum
 
-for _ in $(seq 1 30); do
-	if curl -fsS -o /dev/null "http://$DATUM_HOST:$DATUM_PORT/health"; then
-		exit 0
-	fi
-	sleep 2
-done
+if ! wait_for 60 "datum" curl -fs -o /dev/null "http://$DATUM_HOST:$DATUM_PORT/health"; then
+	systemctl status datum --no-pager --lines 30 >&2
+	exit 1
+fi
 
-echo "datum did not come up within 60s" >&2
-systemctl status datum --no-pager --lines 30 >&2
-exit 1
+echo "datum is answering on $DATUM_HOST:$DATUM_PORT"

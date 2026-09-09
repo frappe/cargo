@@ -12,7 +12,7 @@ from cargo.ssh import OutputLog, run_over_ssh, script
 
 CONF = ("telemetry", "conf", "install.sh")
 SETUP_TIMEOUT = 30 * 60
-PUBLIC_KEY_FILE = "/opt/datum/.dev/datum.pub"
+PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
 DATUM_USER = "datum"
 SECRET_LENGTH = 32
@@ -152,6 +152,7 @@ class DatumServer(Document):
 			"DATUM_DEFAULT_PASSWORD": self.get_password("default_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
 			"DATUM_OIDC_ISSUER": self.oidc_issuer,
+			# This is for the fastapi server to read.
 			"DATUM_JWT_PUBLIC_KEY_FILE": key_file if self.public_key else None,
 			# The PEM itself, which the install writes to that path.
 			"DATUM_JWT_PUBLIC_KEY": self.public_key,
