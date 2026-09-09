@@ -113,23 +113,31 @@ if [ ! -d "$DATUM_DIR/.git" ]; then
 fi
 
 cd "$DATUM_DIR"
-as_user "git -C $(printf '%q' "$DATUM_DIR") remote set-url origin $(printf '%q' "$DATUM_REPOSITORY")"
-as_user "git -C $(printf '%q' "$DATUM_DIR") fetch --quiet --tags --prune origin"
 
-# `version` is whatever the operator wrote: a branch, a tag or a commit. A branch has to
-# follow the remote, so it is reset to origin's; anything else is checked out detached.
-if as_user "git -C $DATUM_DIR rev-parse --verify --quiet refs/remotes/origin/$DATUM_VERSION" > /dev/null; then
-	as_user "git -C $DATUM_DIR checkout --quiet -B $DATUM_VERSION origin/$DATUM_VERSION"
-	as_user "git -C $DATUM_DIR reset --quiet --hard origin/$DATUM_VERSION"
-elif as_user "git -C $DATUM_DIR rev-parse --verify --quiet ${DATUM_VERSION}^{commit}" > /dev/null; then
-	as_user "git -C $DATUM_DIR checkout --quiet --detach $DATUM_VERSION"
+# `as_user` hands its argument to a login shell, which parses it again -- so everything
+# that came from outside this script is quoted for that second pass. A version is whatever
+# the operator typed; unquoted, one carrying `;` or `$(` would run as the service account.
+DIR=$(printf '%q' "$DATUM_DIR")
+VERSION=$(printf '%q' "$DATUM_VERSION")
+REPOSITORY=$(printf '%q' "$DATUM_REPOSITORY")
+
+as_user "git -C $DIR remote set-url origin $REPOSITORY"
+as_user "git -C $DIR fetch --quiet --tags --prune origin"
+
+# A branch has to follow the remote, so it is reset to origin's; a tag or commit is
+# checked out detached.
+if as_user "git -C $DIR rev-parse --verify --quiet refs/remotes/origin/$VERSION" > /dev/null; then
+	as_user "git -C $DIR checkout --quiet -B $VERSION origin/$VERSION"
+	as_user "git -C $DIR reset --quiet --hard origin/$VERSION"
+elif as_user "git -C $DIR rev-parse --verify --quiet $VERSION^{commit}" > /dev/null; then
+	as_user "git -C $DIR checkout --quiet --detach $VERSION"
 else
 	echo "no branch, tag or commit named '$DATUM_VERSION' in $DATUM_REPOSITORY" >&2
 	exit 1
 fi
-echo "datum is at $(as_user "git -C $DATUM_DIR rev-parse --short HEAD")"
+echo "datum is at $(as_user "git -C $DIR rev-parse --short HEAD")"
 
-as_user "$UV sync --group api --directory $(printf '%q' "$DATUM_DIR")"
+as_user "$UV sync --group api --directory $DIR"
 
 if [ -n "${DATUM_JWT_PUBLIC_KEY:-}" ]; then
 	install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 700 "$(dirname "$DATUM_JWT_PUBLIC_KEY_FILE")"
