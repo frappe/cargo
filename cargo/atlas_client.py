@@ -64,16 +64,17 @@ class AtlasClient:
 
 		return payload["message"] if isinstance(payload, dict) and "message" in payload else payload
 
-	def create_vms(
+	def create_vm(
 		self,
 		title: str,
 		*,
 		public_key: str,
 		base_image: str,
 		placement: PlacementGroupSchema | None = None,
-	) -> list[str]:
-		"""Ask Atlas for machines and return their VM ids. They are still booting and have no
-		address. Atlas builds one per `NodeSpec.count`, or one when no placement is given."""
+	) -> str:
+		"""Ask Atlas for one machine and return its VM id. It is still booting and has no
+		address. Atlas builds one per `NodeSpec.count`, so anything past the first is a
+		placement asking for more than a machine can be: refused rather than disowned."""
 		created = self.call(
 			"create_bare_vms",
 			title=title,
@@ -84,22 +85,6 @@ class AtlasClient:
 		vm_ids = created.get("vm_ids") if isinstance(created, dict) else created
 		if not vm_ids:
 			raise AtlasError(f"create_bare_vms returned no VM ids: {created!r}")
-
-		return list(vm_ids)
-
-	def create_vm(
-		self,
-		title: str,
-		*,
-		public_key: str,
-		base_image: str,
-		placement: PlacementGroupSchema | None = None,
-	) -> str:
-		"""One machine. Anything Atlas built beyond it is disowned, so it is cleaned up
-		rather than left running unrecorded."""
-		vm_ids = self.create_vms(title, public_key=public_key, base_image=base_image, placement=placement)
-		if len(vm_ids) != 1:
-			raise AtlasError(f"Asked Atlas for one machine and got {len(vm_ids)}: {', '.join(vm_ids)}.")
 
 		return vm_ids[0]
 

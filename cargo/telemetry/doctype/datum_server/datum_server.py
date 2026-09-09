@@ -15,6 +15,7 @@ SETUP_TIMEOUT = 30 * 60
 PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
 DATUM_USER = "datum"
+MAX_PORT = 65535
 SECRET_LENGTH = 32
 
 
@@ -46,14 +47,28 @@ class DatumServer(Document):
 	# end: auto-generated types
 
 	def validate(self) -> None:
+		self.validate_token_verification()
+		self.validate_connection()
+
+	def validate_token_verification(self) -> None:
+		"""One of the two, and a real one: whitespace is truthy, and a key datum cannot read
+		is the 401-to-everything this check exists to prevent."""
 		self.oidc_issuer = (self.oidc_issuer or "").strip().rstrip("/") or None
+		self.public_key = (self.public_key or "").strip() or None
+
 		if not (self.oidc_issuer or self.public_key):
 			frappe.throw(
 				_("Set an OIDC issuer or a public key, or datum will answer 401 to everything."),
 				frappe.ValidationError,
 			)
 
-		if self.timeout_seconds < 1:
+	def validate_connection(self) -> None:
+		"""Both reach datum as strings it cannot argue with, so a nonsense value here is a
+		host that starts and then cannot serve."""
+		if not 1 <= cint(self.clickhouse_port) <= MAX_PORT:
+			frappe.throw(_("ClickHouse port must be between 1 and {0}.").format(MAX_PORT))
+
+		if cint(self.timeout_seconds) < 1:
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
 
 	def before_insert(self) -> None:

@@ -6,7 +6,7 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.telemetry.doctype.datum_server.datum_server import PUBLIC_KEY_FILE
 
-PEM = "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----"
+PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
 
 
 class IntegrationTestDatumServer(IntegrationTestCase):
@@ -43,6 +43,35 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.addCleanup(frappe.db.rollback)
 
 		return doc.environment()
+
+	def test_a_key_of_whitespace_is_no_key_at_all(self):
+		"""Whitespace is truthy, so it would satisfy the either/or and then advertise a key
+		file holding nothing -- the 401-to-everything this refuses."""
+		self.assertFalse(self.saved(public_key="   \n  "))
+
+	def test_a_key_is_stored_stripped(self):
+		"""It is written to the host verbatim, so the padding would go with it."""
+		doc = self.server(public_key=f"  {PEM}  \n")
+		doc.insert()
+		self.addCleanup(frappe.db.rollback)
+
+		self.assertEqual(doc.public_key, PEM)
+
+	def test_a_port_outside_the_range_is_refused(self):
+		"""It reaches datum as a string it cannot argue with: the host starts, then cannot
+		reach ClickHouse."""
+		issuer = "https://central.test"
+
+		self.assertFalse(self.saved(oidc_issuer=issuer, clickhouse_port=0))
+		self.assertFalse(self.saved(oidc_issuer=issuer, clickhouse_port=65536))
+		self.assertTrue(self.saved(oidc_issuer=issuer, clickhouse_port=65535))
+
+	def test_a_timeout_of_zero_is_refused(self):
+		"""Zero is not "no timeout": every ClickHouse call would expire at once."""
+		issuer = "https://central.test"
+
+		self.assertFalse(self.saved(oidc_issuer=issuer, timeout_seconds=0))
+		self.assertFalse(self.saved(oidc_issuer=issuer, timeout_seconds=-5))
 
 	def test_no_way_to_check_a_token_is_refused(self):
 		"""With neither, datum answers 401 to every call."""
