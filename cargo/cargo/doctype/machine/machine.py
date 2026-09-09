@@ -18,7 +18,11 @@ if TYPE_CHECKING:
 
 MachineStatus = Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
 
+# This duplicity should go once atlas api is integrated :)
+# What Atlas calls a machine that is not coming back.
 DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
+# And what we call it once recorded. Not the same vocabulary: these are Machine.status.
+DEAD_MACHINE_STATES = ("Broken", "Terminated")
 
 
 class Machine(Document):
@@ -110,6 +114,25 @@ class Machine(Document):
 			)
 			frappe.throw(_("Atlas would not build this machine. See the Error Log."))
 
+	def terminate(self) -> bool:
+		"""Tell Atlas to let this machine go. A refusal leaves it Broken rather than
+		pretending it is gone, since it is still running and still costing money."""
+		from cargo.atlas_client import AtlasClient
+
+		try:
+			AtlasClient.from_settings().terminate_vm(self.vm_id)
+		except Exception:
+			frappe.log_error(
+				title=f"Could not terminate {self.role} machine {self.name}",
+				message=frappe.get_traceback(with_context=True),
+			)
+			self.record("Broken")
+			return False
+
+		self.record("Terminated")
+
+		return True
+
 	def assign(self, vm_id: str) -> MachineStatus:
 		"""Atlas built this machine: it has an id now, and is booting."""
 		self.vm_id = vm_id
@@ -147,3 +170,23 @@ class Machine(Document):
 		self.save(ignore_permissions=True)
 
 		return self.status
+
+
+def sync_pending_machines() -> None:
+	"""Refresh every machine Atlas is still building, then let each owner react."""
+	from cargo.atlas_client import AtlasClient
+
+	client = AtlasClient.from_settings()
+	settled: set[tuple[str, str]] = set()
+
+	for name in frappe.get_all("Machine", filters={"status": "Pending"}, pluck="name"):
+		machine: Machine = frappe.get_doc("Machine", name)
+		if machine.sync(client) != "Pending":
+			settled.add((machine.reference_doctype, machine.reference_name))
+
+	# Only owners whose machines actually moved: the rest have nothing new to judge.
+	for doctype, name in settled:
+		try:
+			frappe.get_doc(doctype, name).sync_machines()
+		except Exception:
+			frappe.log_error(title=f"{name} could not take its machines' new state")

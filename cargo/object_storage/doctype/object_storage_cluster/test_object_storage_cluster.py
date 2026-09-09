@@ -53,7 +53,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 		return {row.machine for row in frappe.get_doc("Object Storage Cluster", self.cluster.name).machines}
 
 	def test_releasing_terminates_only_the_named_machines(self):
-		with patch("cargo.object_storage.machines.AtlasClient") as atlas:
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			self.cluster.release_machines([self.storage])
 
 		atlas.from_settings.return_value.terminate_vm.assert_called_once_with(self.vm_ids[self.storage])
@@ -61,13 +61,13 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage, "status"), "Terminated")
 
 	def test_the_machine_row_outlives_the_release(self):
-		with patch("cargo.object_storage.machines.AtlasClient"):
+		with patch("cargo.atlas_client.AtlasClient"):
 			self.cluster.release_machines([self.storage])
 
 		self.assertTrue(frappe.db.exists("Machine", self.storage))
 
 	def test_a_machine_of_another_cluster_is_refused(self):
-		with patch("cargo.object_storage.machines.AtlasClient") as atlas:
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			with self.assertRaises(frappe.ValidationError):
 				self.cluster.release_machines([self.storage, "not-ours"])
 
@@ -216,7 +216,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 	def test_a_node_that_never_joined_can_be_released(self):
 		with (
 			self._joined(self.storage[:2]),
-			patch("cargo.object_storage.machines.AtlasClient"),
+			patch("cargo.atlas_client.AtlasClient"),
 		):
 			self.cluster.release_machines([self.storage[2]])
 
@@ -234,7 +234,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		self.cluster.db_set("activated_on", None)
 		self.cluster.reload()
 
-		with self._joined([]), patch("cargo.object_storage.machines.AtlasClient"):
+		with self._joined([]), patch("cargo.atlas_client.AtlasClient"):
 			self.cluster.release_machines([self.storage[0]])
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Terminated")
