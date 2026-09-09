@@ -9,7 +9,7 @@ from typing import TypedDict
 import frappe
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import AtlasClient
+from cargo.atlas_client import DEAD_STATES, RUNNING_STATE, AtlasClient, AtlasNotFound
 from cargo.image_builder.builder import Builder
 from cargo.object_storage.metadata_bucket import MetadataBucket
 from cargo.ssh import OutputLog, create_keypair
@@ -18,7 +18,6 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 
 BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
-DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 SITE_DOMAIN = "frappe.cloud"
 NAME_LENGTH = 8
 PASSWORD_LENGTH = 24
@@ -136,19 +135,24 @@ class ImageVariant(WorkflowBuilder):
 
 	def sync_build_vm(self) -> None:
 		"""Move the variant on once its machine is up. Scheduled, one machine at a time."""
-		machine = AtlasClient.from_settings().get_vm(self.temporary_vm_id)
-		status = machine.get("status")
-
-		if status in DEAD_STATES:
-			self.mark("Failed", error=f"Atlas reported {status}")
+		client = AtlasClient.from_settings()
+		try:
+			machine = client.get_vm(self.temporary_vm_id)
+		except AtlasNotFound:
+			self.mark("Failed", error="Atlas no longer has this build machine")
 			return
 
-		if status != "Running" or not machine.get("ipv4_address"):
+		state = machine.get("current_state")
+		if state in DEAD_STATES:
+			self.mark("Failed", error=f"Atlas reported {state}")
+			return
+
+		if state != RUNNING_STATE:
 			return
 
 		# One transaction, so `retry_workflows` can find a build whose job never started.
 		self.mark("Building")
-		self.run_build.run_as_workflow(address=machine["ipv4_address"], vm_id=self.temporary_vm_id)
+		self.run_build.run_as_workflow(address=client.address_of(machine), vm_id=self.temporary_vm_id)
 
 	@flow
 	def run_build(self, address: str, vm_id: str) -> None:

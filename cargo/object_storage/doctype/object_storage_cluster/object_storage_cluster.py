@@ -13,7 +13,7 @@ from frappe.utils import now_datetime
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.central_client import CentralClient
-from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema, Role
+from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.garage import Garage
 from cargo.ssh import OutputLog
@@ -97,10 +97,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not gateway:
 			frappe.throw(_("This cluster has no gateway to reach it at."))
 
-		if not gateway.ipv4_address:
+		if not gateway.address:
 			frappe.throw(_("This cluster's gateway has not booted yet."))
 
-		return gateway.ipv4_address
+		return gateway.address
 
 	def request_machine(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
 		"""Record one machine and ask Atlas to build it. Throws, rolling the record back."""
@@ -110,14 +110,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			self,
 			spec,
 			base_image=self.base_image,
-			title=f"{self.name} object storage",
 			zone=self.region,
-			placement=PlacementGroupSchema(
-				specs=[spec],
-				strategy=self.strategy,
-				topology_key=self.topology_key,
-				partition_count=self.partition_count,
-			),
 		)
 
 	@cached_property

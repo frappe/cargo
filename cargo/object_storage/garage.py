@@ -11,6 +11,7 @@ import frappe
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
+from cargo.atlas_client import host_port
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.garage_admin_client import GarageAdminClient, GarageError
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
@@ -39,7 +40,7 @@ class MachineRow(TypedDict):
 	name: MachineName
 	role: str
 	zone: str
-	ipv4_address: str
+	address: str
 	disk_size_gb: int
 
 
@@ -77,7 +78,7 @@ class Garage:
 				"reference_name": self.cluster.name,
 				"status": "Running",
 			},
-			fields=["name", "role", "zone", "ipv4_address", "disk_size_gb"],
+			fields=["name", "role", "zone", "address", "disk_size_gb"],
 			order_by="creation",
 		)
 
@@ -94,7 +95,7 @@ class Garage:
 
 	def run(self, machine: MachineRow, script: str, on_output: Callable[[str], None] | None = None) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(machine["ipv4_address"], script, self.key_for(machine), on_output=on_output)
+		return run_over_ssh(machine["address"], script, self.key_for(machine), on_output=on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -153,7 +154,9 @@ class Garage:
 			"BINARY_URL": BINARY_URL.format(version=cluster.garage_version, arch=cluster.garage_arch),
 			"METADATA_DIR": cluster.metadata_dir,
 			"DATA_DIR": cluster.data_dir,
-			"RPC_PUBLIC_ADDR": machine["ipv4_address"],
+			# Bracketed here rather than in the script: garage.toml wants one literal, and
+			# an IPv6 address without brackets reads as a host and port.
+			"RPC_PUBLIC_ADDR": host_port(machine["address"], cluster.rpc_port),
 			"REGION": cluster.region,
 			"BASE_DOMAIN": cluster.base_domain,
 			"REPLICATION_FACTOR": cluster.replication_factor,
@@ -177,7 +180,7 @@ class Garage:
 	def setup_machine(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install Garage on one machine and fold it into whatever cluster already exists."""
 		if on_output:
-			on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
+			on_output(f"\n=== {machine['name']} ({machine['address']}) ===\n")
 
 		self.run(
 			machine,

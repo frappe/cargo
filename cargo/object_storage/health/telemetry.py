@@ -8,6 +8,7 @@ from pathlib import Path
 import frappe
 import requests
 
+from cargo.atlas_client import host_port
 from cargo.object_storage.garage import Garage
 
 if typing.TYPE_CHECKING:
@@ -160,10 +161,9 @@ class Telemetry:
 		)
 
 	def scrape(self, machine: MachineRow) -> str:
-		"""Every node serves its own metrics on the admin port, reachable from Cargo."""
-		# Todo: Expose ports to Cargo Machine via atlas's firewall rules, when implemented.
+		"""Every node serves its own metrics on the admin port, reached over the mesh."""
 		response = requests.get(
-			f"http://{machine['ipv4_address']}:{self.cluster.admin_port}/metrics",
+			f"http://{host_port(machine['address'], self.cluster.admin_port)}/metrics",
 			headers={"Authorization": f"Bearer {self.metrics_token}"},
 			timeout=SCRAPE_TIMEOUT,
 		)
