@@ -11,6 +11,8 @@
   "central_access_token",
   "column_break_atlas",
   "atlas_url",
+  "atlas_region_id",
+  "atlas_tenant_id",
   "atlas_access_token"
  ],
  "fields": [
@@ -21,11 +23,11 @@
    "label": "Central"
   },
   {
+   "description": "Which region this Cargo provisions for. Set by setup.sh.",
    "fieldname": "region",
    "fieldtype": "Data",
    "label": "Region",
-   "reqd": 1,
-   "description": "Which region this Cargo provisions for. Set by setup.sh."
+   "reqd": 1
   },
   {
    "fieldname": "central_url",
@@ -64,6 +66,20 @@
    "in_list_view": 1,
    "label": "Central Bootstrapping Token",
    "reqd": 0
+  },
+  {
+   "description": "Which Atlas tenant this Cargo owns its machines as. Issued by Central with the tokens.",
+   "fieldname": "atlas_tenant_id",
+   "fieldtype": "Int",
+   "label": "Atlas Tenant ID",
+   "non_negative": 1
+  },
+  {
+   "description": "Atlas's own region number. With the tenant, it fixes the mesh addresses this Cargo's machines answer on.",
+   "fieldname": "atlas_region_id",
+   "fieldtype": "Int",
+   "label": "Atlas Region ID",
+   "non_negative": 1
   }
  ],
  "grid_page_length": 50,

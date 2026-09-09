@@ -16,6 +16,8 @@ class CargoSettings(Document):
 		from frappe.types import DF
 
 		atlas_access_token: DF.Password | None
+		atlas_region_id: DF.Int
+		atlas_tenant_id: DF.Int
 		atlas_url: DF.Data
 		central_access_token: DF.Password | None
 		central_bootstrapping_token: DF.Password | None

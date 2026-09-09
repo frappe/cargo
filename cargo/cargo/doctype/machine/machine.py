@@ -10,18 +10,14 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.client_models import NodeSpec, PlacementGroupSchema
+from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
+from cargo.client_models import NodeSpec
 from cargo.ssh import create_keypair
 
 if TYPE_CHECKING:
 	from cargo.atlas_client import AtlasClient
 
 MachineStatus = Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
-
-# This duplicity should go once atlas api is integrated :)
-# What Atlas calls a machine that is not coming back.
-DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
-# And what we call it once recorded. Not the same vocabulary: these are Machine.status.
 DEAD_MACHINE_STATES = ("Broken", "Terminated")
 
 
@@ -38,12 +34,11 @@ class Machine(Document):
 
 		disk_size_gb: DF.Int
 		error: DF.SmallText | None
-		ipv4_address: DF.Data | None
+		address: DF.Data | None
 		last_synced_at: DF.Datetime | None
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
 		role: DF.Data
-		server: DF.Data | None
 		ssh_private_key: DF.Password | None
 		ssh_public_key: DF.SmallText | None
 		status: DF.Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
@@ -64,9 +59,7 @@ class Machine(Document):
 		spec: NodeSpec,
 		*,
 		base_image: str,
-		title: str = "",
 		zone: str = "",
-		placement: PlacementGroupSchema | None = None,
 		ssh_keypair: tuple[str, str] | None = None,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
@@ -86,26 +79,27 @@ class Machine(Document):
 			}
 		).insert(ignore_permissions=True)
 
-		machine.assign(machine.build(spec, base_image, title or owner.name, placement))
+		machine.assign(machine.build(spec, base_image))
 
 		return machine
 
-	def build(
-		self,
-		spec: NodeSpec,
-		base_image: str,
-		title: str,
-		placement: PlacementGroupSchema | None = None,
-	) -> str:
-		"""The VM id Atlas built for this machine."""
+	def build(self, spec: NodeSpec, base_image: str) -> dict[str, str]:
+		"""Ask Atlas to build this machine, and work out where it will answer.
+
+		Nothing here holds a public address: machines are reached over the WG mesh, whose
+		addresses Atlas derives rather than allocates, so one is known before it boots."""
 		from cargo.atlas_client import AtlasClient
 
+		client = AtlasClient.from_settings()
 		try:
-			return AtlasClient.from_settings().create_vm(
-				title,
-				placement=placement or PlacementGroupSchema(specs=[spec]),
-				base_image=base_image,
+			created = client.create_vm(
+				image_id=base_image,
+				vcpus=spec.cpu,
+				memory_mib=spec.ram_gb * MIB_PER_GB,
+				disk_mib=spec.disk_gb * MIB_PER_GB,
 				public_key=self.ssh_public_key,
+				hostname=self.name,
+				metadata={"role": self.role},
 			)
 		except Exception:
 			frappe.log_error(
@@ -113,6 +107,8 @@ class Machine(Document):
 				message=frappe.get_traceback(with_context=True),
 			)
 			frappe.throw(_("Atlas would not build this machine. See the Error Log."))
+
+		return {"vm_id": created["id"], "address": client.address_of(created)}
 
 	def terminate(self) -> bool:
 		"""Tell Atlas to let this machine go. A refusal leaves it Broken rather than
@@ -133,34 +129,31 @@ class Machine(Document):
 
 		return True
 
-	def assign(self, vm_id: str) -> MachineStatus:
-		"""Atlas built this machine: it has an id now, and is booting."""
-		self.vm_id = vm_id
+	def assign(self, built: dict[str, str]) -> MachineStatus:
+		"""Atlas built this machine: it has an id and an address now, and is booting."""
+		self.vm_id = built["vm_id"]
+		self.address = built["address"]
 
 		return self.record("Pending")
 
 	def sync(self, client: AtlasClient) -> MachineStatus:
-		"""Record this machine's state from Atlas. ``client`` is anything with
-		``get_vm(vm_id) -> dict``."""
+		"""Record this machine's state from Atlas. A machine Atlas no longer has is one
+		whose termination finished, so 404 is an answer rather than a failure."""
 		self.last_synced_at = now_datetime()
 
 		try:
 			payload = client.get_vm(self.vm_id)
+		except AtlasNotFound:
+			return self.record("Terminated", error="Atlas no longer has this machine")
 		except Exception as exception:
 			return self.record(self.status, error=str(exception))
 
-		status = payload.get("status")
-		if status in DEAD_STATES:
-			return self.record(
-				"Terminated" if status == "Terminated" else "Broken",
-				error=f"Atlas reported {status}",
-			)
+		state = payload.get("current_state")
+		if state in DEAD_STATES:
+			return self.record("Broken", error=f"Atlas reported {state}")
 
-		if status != "Running" or not payload.get("ipv4_address"):
+		if state != RUNNING_STATE:
 			return self.record(self.status)
-
-		self.ipv4_address = payload["ipv4_address"]
-		self.server = payload.get("server")
 
 		return self.record("Running")
 
