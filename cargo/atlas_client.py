@@ -9,7 +9,7 @@ import requests
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.object_storage.client_models import PlacementGroupSchema
+	from cargo.client_models import PlacementGroupSchema
 
 METHOD_PREFIX = "/api/method/atlas.atlas.api.service."
 
@@ -73,7 +73,7 @@ class AtlasClient:
 		placement: PlacementGroupSchema | None = None,
 	) -> list[str]:
 		"""Ask Atlas for machines and return their VM ids. They are still booting and have no
-		address. ``placement`` is dropped when a service does not care where they land."""
+		address. Atlas builds one per `NodeSpec.count`, or one when no placement is given."""
 		created = self.call(
 			"create_bare_vms",
 			title=title,
@@ -86,6 +86,22 @@ class AtlasClient:
 			raise AtlasError(f"create_bare_vms returned no VM ids: {created!r}")
 
 		return list(vm_ids)
+
+	def create_vm(
+		self,
+		title: str,
+		*,
+		public_key: str,
+		base_image: str,
+		placement: PlacementGroupSchema | None = None,
+	) -> str:
+		"""One machine. Anything Atlas built beyond it is disowned, so it is cleaned up
+		rather than left running unrecorded."""
+		vm_ids = self.create_vms(title, public_key=public_key, base_image=base_image, placement=placement)
+		if len(vm_ids) != 1:
+			raise AtlasError(f"Asked Atlas for one machine and got {len(vm_ids)}: {', '.join(vm_ids)}.")
+
+		return vm_ids[0]
 
 	def create_snapshot(self, vm_id: str, title: str) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""

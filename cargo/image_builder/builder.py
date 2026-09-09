@@ -68,9 +68,7 @@ class Builder:
 
 	def provision_build_machine(self, public_key: str) -> str:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
-		vm_ids = self.client.create_vms(self.atlas_name, public_key=public_key, base_image=BASE_IMAGE)
-
-		return vm_ids[0]
+		return self.client.create_vm(self.atlas_name, public_key=public_key, base_image=BASE_IMAGE)
 
 	def snapshot_build_machine(self, vm_id: str) -> str:
 		"""Photograph the baked machine. This is the image."""
