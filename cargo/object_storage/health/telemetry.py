@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 import typing
+from functools import cached_property
 from pathlib import Path
 
 import frappe
@@ -118,9 +119,11 @@ class Telemetry:
 
 	def __init__(self, cluster: ObjectStorageCluster) -> None:
 		self.cluster = cluster
-		# Only the gateway's admin port is reachable from here, so metrics come off each
-		# node over the SSH channel setup already uses.
 		self.garage = Garage(self.cluster)
+
+	@cached_property
+	def metrics_token(self) -> str:
+		return self.cluster.get_password("metrics_token")
 
 	def check(self) -> None:
 		"""Run the telemetry checks"""
@@ -145,10 +148,8 @@ class Telemetry:
 	def samples_for(self, machine: MachineRow, timestamp: str) -> list[dict]:
 		"""One scrape of a node, labelled with where it came from. Garage's own labels
 		(`volume`, `id`, `rpc_endpoint`) pass through untouched."""
-		text = self.garage.run(machine["ipv4_address"], self.scrape_script())
-
 		return parse_metrics(
-			text,
+			self.scrape(machine),
 			labels={
 				"cluster": self.cluster.name,
 				"region": self.cluster.region,
@@ -158,13 +159,17 @@ class Telemetry:
 			timestamp=timestamp,
 		)
 
-	def scrape_script(self) -> str:
-		"""Read the node's own admin port from the node itself, where it is not firewalled."""
-		return (
-			f"curl -sf --max-time {SCRAPE_TIMEOUT} "
-			f'-H "Authorization: Bearer {self.cluster.get_password("metrics_token")}" '
-			f"http://127.0.0.1:{self.cluster.admin_port}/metrics"
+	def scrape(self, machine: MachineRow) -> str:
+		"""Every node serves its own metrics on the admin port, reachable from Cargo."""
+		# Todo: Expose ports to Cargo Machine via atlas's firewall rules, when implemented.
+		response = requests.get(
+			f"http://{machine['ipv4_address']}:{self.cluster.admin_port}/metrics",
+			headers={"Authorization": f"Bearer {self.metrics_token}"},
+			timeout=SCRAPE_TIMEOUT,
 		)
+		response.raise_for_status()
+
+		return response.text
 
 	def send(self, info: MetricsInfo, samples: list[dict], machine: MachineRow) -> None:
 		"""Datum drops writes by design rather than buffering, so nothing is retried here:
