@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.object_storage.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	ObjectStorageCluster,
 )

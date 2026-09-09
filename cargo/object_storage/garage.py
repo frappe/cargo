@@ -11,9 +11,10 @@ from typing import TypedDict
 
 import frappe
 from frappe import _
+from frappe.utils.password import get_decrypted_password
 
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.garage_admin_client import GarageAdminClient, GarageError
-from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.metadata_bucket import MetadataBucketInfo
 from cargo.ssh import SshError, run_over_ssh
@@ -83,17 +84,18 @@ class Garage:
 
 		return sorted(machines, key=lambda machine: machine["role"] != GATEWAY)
 
-	@cached_property
-	def ssh_key(self) -> str:
-		return self.cluster.get_password("ssh_private_key")
+	def key_for(self, machine: MachineRow) -> str:
+		"""A machine is reached with the key it was built with. Password fields are not
+		columns, so this cannot come off the machine query."""
+		return get_decrypted_password("Machine", machine["name"], "ssh_private_key")
 
 	@cached_property
 	def admin(self) -> GarageAdminClient:
 		return GarageAdminClient.for_cluster(self.cluster)
 
-	def run(self, address: str, script: str, on_output: Callable[[str], None] | None = None) -> str:
+	def run(self, machine: MachineRow, script: str, on_output: Callable[[str], None] | None = None) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(address, script, self.ssh_key, on_output=on_output)
+		return run_over_ssh(machine["ipv4_address"], script, self.key_for(machine), on_output=on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -140,7 +142,7 @@ class Garage:
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> NodeIdentifier:
 		"""Only answers once the node has started, since Garage keys itself on first launch."""
-		return self.run(machine["ipv4_address"], "garage node id -q", on_output).strip().splitlines()[-1]
+		return self.run(machine, "garage node id -q", on_output).strip().splitlines()[-1]
 
 	def script(self, name: str, environment: dict[str, str]) -> str:
 		"""One of this service's scripts, with its arguments exported ahead of it."""
@@ -175,20 +177,14 @@ class Garage:
 
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
 		"""Where a node looks for the others after a reboot. Nothing restarts to read it."""
-		return self.run(
-			machine["ipv4_address"], self.script("set_peers.sh", {"BOOTSTRAP_PEERS": " ".join(peers)})
-		)
+		return self.run(machine, self.script("set_peers.sh", {"BOOTSTRAP_PEERS": " ".join(peers)}))
 
 	def setup_machine(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install Garage on one machine and fold it into whatever cluster already exists."""
 		if on_output:
 			on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
 
-		self.run(
-			machine["ipv4_address"],
-			self.script("install.sh", self.install_environment(machine)),
-			on_output,
-		)
+		self.run(machine, self.script("install.sh", self.install_environment(machine)), on_output)
 		identifier = self.node_identifier(machine, on_output)
 		self.admin.connect_nodes([identifier])
 		self.stage_role(machine, identifier)

@@ -25,9 +25,7 @@
   "machine_info_section",
   "machines",
   "section_break_access",
-  "ssh_public_key",
   "column_break_access",
-  "ssh_private_key",
   "section_break_garage",
   "garage_version",
   "garage_arch",
@@ -162,23 +160,8 @@
    "label": "Machine Access"
   },
   {
-   "description": "Generated for this cluster. It opens only these machines.",
-   "fieldname": "ssh_public_key",
-   "fieldtype": "Small Text",
-   "label": "SSH Public Key",
-   "read_only": 1,
-   "set_only_once": 1
-  },
-  {
    "fieldname": "column_break_access",
    "fieldtype": "Column Break"
-  },
-  {
-   "description": "Generated for this cluster. It opens only these machines.",
-   "fieldname": "ssh_private_key",
-   "fieldtype": "Password",
-   "label": "SSH Private Key",
-   "read_only": 1
   },
   {
    "collapsible": 1,

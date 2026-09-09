@@ -11,11 +11,11 @@ from frappe import _
 from frappe.utils import now_datetime
 
 from cargo.central_client import CentralClient
-from cargo.object_storage.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.garage import Garage
 from cargo.object_storage.machines import DEAD_STATES, MachineFleet
-from cargo.ssh import OutputLog, create_keypair
+from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -61,18 +61,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		rpc_secret: DF.Password | None
 		s3_port: DF.Int
 		setup_log: DF.Code | None
-		ssh_private_key: DF.Password | None
-		ssh_public_key: DF.SmallText | None
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
 		web_port: DF.Int
 	# end: auto-generated types
-
-	def before_insert(self) -> None:
-		"""One keypair per cluster, made here so nobody has to paste one in."""
-		if not self.ssh_public_key:
-			self.ssh_public_key, self.ssh_private_key = create_keypair(self.name or self.region)
 
 	@property
 	def region(self) -> str:

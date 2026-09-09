@@ -7,8 +7,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.garage_admin_client import GarageError
-from cargo.object_storage.client_models import GATEWAY, STORAGE
 from cargo.object_storage.health import live as live_module
 from cargo.object_storage.health.live import (
 	CRITICAL,
