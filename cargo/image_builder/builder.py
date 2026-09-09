@@ -1,14 +1,12 @@
-import shlex
 import subprocess
 import tempfile
 from collections.abc import Callable
-from pathlib import Path
 
 import frappe
 from frappe import _
 
 from cargo.atlas_client import AtlasClient
-from cargo.ssh import run_over_ssh
+from cargo.ssh import run_over_ssh, script
 
 BASE_IMAGE = "ubuntu-24.04"
 # A new kind is a new conf/<kind>/provision.sh and an entry here.
@@ -41,15 +39,6 @@ class Builder:
 		"""Take the build key and this machine's identity off the disk. Runs last."""
 		return run_over_ssh(address, WIPE_IDENTITY, private_key, timeout=PROVISION_TIMEOUT)
 
-	def provision_script(self, environment: dict[str, str]) -> str:
-		"""This kind's script, with the image's arguments exported ahead of it."""
-		exports = "\n".join(f"export {key}={shlex.quote(value)}" for key, value in environment.items())
-		script = Path(
-			frappe.get_app_path("cargo", "image_builder", "conf", self.kind, "provision.sh")
-		).read_text()
-
-		return f"{exports}\n{script}"
-
 	def run_provision_script_on_build_machine(
 		self,
 		address: str,
@@ -60,7 +49,7 @@ class Builder:
 		"""Run this kind's script on the machine."""
 		return run_over_ssh(
 			address,
-			self.provision_script(environment),
+			script("image_builder", "conf", self.kind, "provision.sh", environment=environment),
 			private_key,
 			timeout=PROVISION_TIMEOUT,
 			on_output=on_output,
