@@ -40,7 +40,7 @@ class ObjectStorageHealthSettings(Document):
 		for fieldname in ("disk_degraded_percent", "disk_critical_percent"):
 			if not 1 <= self.get(fieldname) <= 100:
 				frappe.throw(
-					_("{0} must be between 1 and 100.").format(self.meta.get_label(fieldname)),
+					_("{0} must be between 1 and 100.").format(_(self.meta.get_label(fieldname))),
 					frappe.ValidationError,
 				)
 
@@ -49,6 +49,6 @@ class ObjectStorageHealthSettings(Document):
 		for fieldname in ("node_offline_seconds", "admin_timeout_seconds", "history_hours"):
 			if self.get(fieldname) < 1:
 				frappe.throw(
-					_("{0} must be at least 1.").format(self.meta.get_label(fieldname)),
+					_("{0} must be at least 1.").format(_(self.meta.get_label(fieldname))),
 					frappe.ValidationError,
 				)
