@@ -18,7 +18,10 @@
   "storage_section",
   "disk_size_gb",
   "section_break_error",
-  "error"
+  "error",
+  "section_break_ssh",
+  "ssh_public_key",
+  "ssh_private_key"
  ],
  "fields": [
   {
@@ -123,6 +126,24 @@
    "label": "Disk Size (GB)",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "section_break_ssh",
+   "fieldtype": "Section Break",
+   "label": "SSH"
+  },
+  {
+   "fieldname": "ssh_public_key",
+   "fieldtype": "Small Text",
+   "label": "SSH Public Key",
+   "read_only": 1,
+   "description": "Handed to Atlas when the machine is built. Nothing can be reached with a key it was not created with."
+  },
+  {
+   "fieldname": "ssh_private_key",
+   "fieldtype": "Password",
+   "label": "SSH Private Key",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,

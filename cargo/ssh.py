@@ -1,4 +1,5 @@
 import os
+import shlex
 import stat
 import subprocess
 import tempfile
@@ -141,6 +142,17 @@ def get_live_output(doctype: str, name: str, fieldname: str) -> str:
 		frappe.throw(_("{0} has no field {1}.").format(doctype, fieldname))
 
 	return live_output(document, fieldname)
+
+
+def script(*path: str, environment: dict[str, str] | None = None) -> str:
+	"""One of the app's conf scripts, with its arguments exported ahead of it. `path` is
+	relative to the app, e.g. `("object_storage", "conf", "garage", "install.sh")`."""
+	body = Path(frappe.get_app_path("cargo", *path)).read_text()
+	exports = "\n".join(
+		f"export {key}={shlex.quote(str(value))}" for key, value in (environment or {}).items()
+	)
+
+	return f"{exports}\n{body}" if exports else body
 
 
 def run_over_ssh(

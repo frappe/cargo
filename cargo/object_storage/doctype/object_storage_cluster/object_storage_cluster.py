@@ -10,12 +10,13 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
+from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
+from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.central_client import CentralClient
-from cargo.object_storage.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema, Role
 from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.garage import Garage
-from cargo.object_storage.machines import DEAD_STATES, MachineFleet
-from cargo.ssh import OutputLog, create_keypair
+from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -61,18 +62,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		rpc_secret: DF.Password | None
 		s3_port: DF.Int
 		setup_log: DF.Code | None
-		ssh_private_key: DF.Password | None
-		ssh_public_key: DF.SmallText | None
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
 		web_port: DF.Int
 	# end: auto-generated types
-
-	def before_insert(self) -> None:
-		"""One keypair per cluster, made here so nobody has to paste one in."""
-		if not self.ssh_public_key:
-			self.ssh_public_key, self.ssh_private_key = create_keypair(self.name or self.region)
 
 	@property
 	def region(self) -> str:
@@ -96,10 +90,35 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""All machines in this cluster."""
 		return [frappe.get_doc("Machine", row.machine) for row in self.machines]
 
-	@cached_property
-	def fleet(self) -> MachineFleet:
-		"""The fleet of machines that belong to this cluster."""
-		return MachineFleet(self)
+	@property
+	def gateway_address(self) -> str:
+		"""Where this cluster answers: every S3 and admin call goes through the gateway."""
+		gateway = self.gateway_node
+		if not gateway:
+			frappe.throw(_("This cluster has no gateway to reach it at."))
+
+		if not gateway.ipv4_address:
+			frappe.throw(_("This cluster's gateway has not booted yet."))
+
+		return gateway.ipv4_address
+
+	def request_machine(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
+		"""Record one machine and ask Atlas to build it. Throws, rolling the record back."""
+		spec = NodeSpec(role=role, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+
+		return MachineDoc.request(
+			self,
+			spec,
+			base_image=self.base_image,
+			title=f"{self.name} object storage",
+			zone=self.region,
+			placement=PlacementGroupSchema(
+				specs=[spec],
+				strategy=self.strategy,
+				topology_key=self.topology_key,
+				partition_count=self.partition_count,
+			),
+		)
 
 	@cached_property
 	def garage(self) -> Garage:
@@ -111,12 +130,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Can add a gateway node to this cluster? Throws if not."""
 		can_add_gateway_node(self)
 
-		machine: Machine = self.fleet.request(
-			cpu=cpu,
-			ram_gb=ram_gb,
-			disk_gb=disk_gb,
-			role=GATEWAY,
-		)
+		machine: Machine = self.request_machine(cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb, role=GATEWAY)
 		self.append("machines", {"machine": machine.name, "role": GATEWAY})
 		self.save()
 
@@ -125,12 +139,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Add a storage node to this cluster."""
 		can_add_storage_node(self)
 
-		machine: Machine = self.fleet.request(
-			cpu=cpu,
-			ram_gb=ram_gb,
-			disk_gb=disk_gb,
-			role=STORAGE,
-		)
+		machine: Machine = self.request_machine(cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb, role=STORAGE)
 		self.append("machines", {"machine": machine.name, "role": STORAGE})
 		self.save()
 
@@ -257,7 +266,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		named = set(machines)
 		failed_terminations = []
 		for name in named:
-			if not self.fleet.terminate(frappe.get_doc("Machine", name)):
+			machine_doc: Machine = frappe.get_doc("Machine", name)
+			terminated = machine_doc.terminate()
+			if not terminated:
 				failed_terminations.append(name)
 
 		self.machines = [
@@ -269,24 +280,20 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.save()
 
 	def sync_machines(self) -> None:
-		"""Sync the machines in this cluster with the actual machines."""
-		machine_states = self.fleet.sync()
-
-		if not machine_states:
-			return
-
+		"""What this cluster's machines settling means for it. Their state is already
+		recorded; `sync_pending_machines` calls this once it changes."""
 		# A cluster being built has promised nothing yet!
 		if not self.is_live:
 			return
 
 		# Gateway machine dead?
-		if self.gateway_node and self.gateway_node.status in DEAD_STATES:
+		if self.gateway_node and self.gateway_node.status in DEAD_MACHINE_STATES:
 			self.mark_cluster_status("Failed", _("Gateway machine is dead."))
 			return
 
 		# Machines less than the replication factor are dead?
 		if (
-			len([node for node in self.storage_nodes if node.status not in DEAD_STATES])
+			len([node for node in self.storage_nodes if node.status not in DEAD_MACHINE_STATES])
 			< self.replication_factor
 		):
 			self.mark_cluster_status(
@@ -316,7 +323,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def central_endpoints(self) -> dict[str, str]:
 		"""Where Central reaches this cluster. Every call goes through the gateway, and
 		nothing terminates TLS in front of Garage."""
-		address = self.fleet.gateway_address
+		address = self.gateway_address
 
 		return {
 			"base_url": f"http://{address}:{self.admin_port}",

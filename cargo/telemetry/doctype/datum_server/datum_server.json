@@ -1,0 +1,209 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 0,
+ "creation": "2026-09-09 13:23:56.118338",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "host_section",
+  "base_image",
+  "machine",
+  "column_break_host",
+  "status",
+  "repository",
+  "version",
+  "clickhouse_section",
+  "clickhouse_host",
+  "clickhouse_port",
+  "default_password",
+  "column_break_clickhouse",
+  "clickhouse_password",
+  "insights_password",
+  "timeout_seconds",
+  "token_verification_section",
+  "oidc_issuer",
+  "testing_section",
+  "public_key",
+  "section_break_setup",
+  "setup_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "host_section",
+   "fieldtype": "Section Break",
+   "label": "Host"
+  },
+  {
+   "default": "ubuntu-22.04",
+   "fieldname": "base_image",
+   "fieldtype": "Data",
+   "label": "Base Image",
+   "reqd": 1,
+   "description": "What Atlas boots the machine from. install.sh expects a Debian or Ubuntu image: it installs with apt."
+  },
+  {
+   "fieldname": "machine",
+   "fieldtype": "Link",
+   "label": "Machine",
+   "options": "Machine",
+   "read_only": 1,
+   "in_list_view": 1,
+   "description": "The VM datum runs on, built by Atlas. Set when the node is requested."
+  },
+  {
+   "fieldname": "column_break_host",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSetting Up\nActive\nFailed",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Draft \u2014 no machine yet, or it is still booting.\nSetting Up \u2014 installing datum on the machine.\nActive \u2014 datum is running and answering.\nFailed \u2014 the machine died, or the last install did not finish. See the Setup Log."
+  },
+  {
+   "description": "DATUM_REPOSITORY. Cloned onto the host at install.",
+   "fieldname": "repository",
+   "fieldtype": "Data",
+   "label": "Repository",
+   "reqd": 1
+  },
+  {
+   "description": "DATUM_VERSION. A branch, tag or commit. A branch follows origin on every install; a commit is pinned.",
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "label": "Version",
+   "reqd": 1
+  },
+  {
+   "description": "Where ClickHouse is, and the admin password the migration needs. The `datum` and `insights` users are created by the migration; their passwords are generated here.",
+   "fieldname": "clickhouse_section",
+   "fieldtype": "Section Break",
+   "label": "ClickHouse"
+  },
+  {
+   "description": "DATUM_CLICKHOUSE_HOST",
+   "fieldname": "clickhouse_host",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Host",
+   "reqd": 1
+  },
+  {
+   "default": "8123",
+   "description": "DATUM_CLICKHOUSE_PORT. ClickHouse's HTTP port.",
+   "fieldname": "clickhouse_port",
+   "fieldtype": "Int",
+   "label": "Port",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_password",
+   "fieldtype": "Password",
+   "label": "ClickHouse Admin Password",
+   "description": "The `default` superuser, set by the install. Only the migration uses it, to create the other two users.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_clickhouse",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The `datum` user, which the API writes as. Generated here and created by the migration.",
+   "fieldname": "clickhouse_password",
+   "fieldtype": "Password",
+   "label": "Datum User Password",
+   "read_only": 1
+  },
+  {
+   "description": "The `insights` user, which Insights reads ClickHouse with directly. Datum never uses it.",
+   "fieldname": "insights_password",
+   "fieldtype": "Password",
+   "label": "Insights User Password",
+   "read_only": 1
+  },
+  {
+   "default": "30",
+   "description": "DATUM_TIMEOUT. Seconds, connect and execute.",
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout (Seconds)",
+   "non_negative": 1
+  },
+  {
+   "description": "How datum checks the tokens Central mints.",
+   "fieldname": "token_verification_section",
+   "fieldtype": "Section Break",
+   "label": "Token Verification"
+  },
+  {
+   "description": "DATUM_OIDC_ISSUER. Central's base URL. Datum reads {issuer}/.well-known/openid-configuration for the JWKS, so keys rotate without redeploying datum. This is how a real host authenticates.",
+   "fieldname": "oidc_issuer",
+   "fieldtype": "Data",
+   "label": "OIDC Issuer",
+   "options": "URL"
+  },
+  {
+   "collapsible": 1,
+   "description": "A pinned key, for working without a reachable issuer. Not how a deployed host runs.",
+   "fieldname": "testing_section",
+   "fieldtype": "Section Break",
+   "label": "Testing"
+  },
+  {
+   "description": "DATUM_JWT_PUBLIC_KEY_FILE. Written to disk and passed as a path. Testing only: it pins one key and does not follow a rotation. Leave empty and set an issuer instead.",
+   "fieldname": "public_key",
+   "fieldtype": "Code",
+   "label": "Public Key (PEM)"
+  },
+  {
+   "fieldname": "section_break_setup",
+   "fieldtype": "Section Break",
+   "label": "Setup",
+   "depends_on": "setup_log",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "setup_log",
+   "fieldtype": "Code",
+   "label": "Setup Log",
+   "read_only": 1,
+   "depends_on": "setup_log"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-09 15:43:20.144691",
+ "modified_by": "Administrator",
+ "module": "Telemetry",
+ "name": "Datum Server",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "DATUM-.####.",
+ "naming_rule": "Expression (old style)"
+}

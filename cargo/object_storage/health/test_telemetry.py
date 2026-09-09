@@ -7,7 +7,7 @@ import frappe
 import requests
 from frappe.tests import IntegrationTestCase
 
-from cargo.object_storage.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.health import telemetry as telemetry_module
 from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
 

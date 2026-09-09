@@ -9,7 +9,7 @@ import requests
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.object_storage.client_models import PlacementGroupSchema
+	from cargo.client_models import PlacementGroupSchema
 
 METHOD_PREFIX = "/api/method/atlas.atlas.api.service."
 
@@ -64,16 +64,17 @@ class AtlasClient:
 
 		return payload["message"] if isinstance(payload, dict) and "message" in payload else payload
 
-	def create_vms(
+	def create_vm(
 		self,
 		title: str,
 		*,
 		public_key: str,
 		base_image: str,
 		placement: PlacementGroupSchema | None = None,
-	) -> list[str]:
-		"""Ask Atlas for machines and return their VM ids. They are still booting and have no
-		address. ``placement`` is dropped when a service does not care where they land."""
+	) -> str:
+		"""Ask Atlas for one machine and return its VM id. It is still booting and has no
+		address. Atlas builds one per `NodeSpec.count`, so anything past the first is a
+		placement asking for more than a machine can be: refused rather than disowned."""
 		created = self.call(
 			"create_bare_vms",
 			title=title,
@@ -85,7 +86,7 @@ class AtlasClient:
 		if not vm_ids:
 			raise AtlasError(f"create_bare_vms returned no VM ids: {created!r}")
 
-		return list(vm_ids)
+		return vm_ids[0]
 
 	def create_snapshot(self, vm_id: str, title: str) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""

@@ -268,7 +268,7 @@ scheduler_events = {
 		"* * * * *": [
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
-			"cargo.object_storage.machines.sync_pending_machines",
+			"cargo.cargo.doctype.machine.machine.sync_pending_machines",
 			"cargo.image_builder.doctype.image_variant.image_variant.sync_build_machines",
 			# Machines die without telling anyone, so health is re-read on a clock. A minute
 			# is what sets alerting latency; the read is two calls to the gateway.
