@@ -11,7 +11,6 @@ from frappe.utils import now_datetime
 
 from cargo.atlas_client import DEAD_STATES, RUNNING_STATE, AtlasClient, AtlasNotFound
 from cargo.image_builder.builder import Builder
-from cargo.object_storage.metadata_bucket import MetadataBucket
 from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -45,8 +44,6 @@ class ImageVariant(WorkflowBuilder):
 		error: DF.LongText | None
 		frappe_version: DF.Literal["", "version-15", "version-16", "develop"]
 		image: DF.Link
-		object_key: DF.Data | None
-		object_storage_cluster: DF.Link | None
 		site: DF.Literal["", "Included", "Not Included"]
 		site_name: DF.Data | None
 		snapshot_id: DF.Data | None
@@ -54,7 +51,6 @@ class ImageVariant(WorkflowBuilder):
 		ssh_public_key: DF.SmallText | None
 		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Snapshotting", "Failed"]
 		temporary_vm_id: DF.Data | None
-		uploaded_at: DF.Datetime | None
 	# end: auto-generated types
 
 	"""One flavour of a release's image, and the snapshot it produced."""
@@ -164,7 +160,6 @@ class ImageVariant(WorkflowBuilder):
 		"""Bake a machine and photograph it"""
 		self.run_provision_script(address)
 		self.take_snapshot(vm_id)
-		self.record_snapshot_in_object_storage()
 
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def run_provision_script(self, address: str) -> None:
@@ -194,33 +189,6 @@ class ImageVariant(WorkflowBuilder):
 		self.snapshot_id = snapshot
 		self.built_at = now_datetime()
 		self.temporary_vm_id = None
-		self.save(ignore_permissions=True)
-
-	@task
-	def record_snapshot_in_object_storage(self) -> None:
-		"""Publish where this image lives, so a region can find it without asking Cargo"""
-		cluster = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
-		if not cluster:
-			return
-
-		key = f"images/{self.name}.json"
-		MetadataBucket.for_cluster(frappe.get_doc("Object Storage Cluster", cluster)).write(
-			key,
-			{
-				"variant": self.name,
-				"image": self.image,
-				"kind": self.image_details.kind,
-				"version": self.image_details.version,
-				"frappe_version": self.frappe_version,
-				"site": self.site,
-				"snapshot_id": self.snapshot_id,
-				"built_at": str(self.built_at),
-			},
-		)
-
-		self.object_storage_cluster = cluster
-		self.object_key = key
-		self.uploaded_at = now_datetime()
 		self.save(ignore_permissions=True)
 
 	def on_workflow_success(self, workflow) -> None:
