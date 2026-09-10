@@ -6,40 +6,29 @@
  "field_order": [
   "section_break_central",
   "region",
+  "region_id",
   "central_url",
-  "central_bootstrapping_token",
-  "central_access_token",
+  "cargo_url",
+  "central_webhook_secret",
   "column_break_atlas",
   "atlas_url",
-  "atlas_tenant_id",
-  "atlas_access_token"
+  "atlas_key",
+  "atlas_secret",
+  "atlas_tenant_id"
  ],
  "fields": [
   {
-   "description": "Central issues the secrets a deployment runs on.",
    "fieldname": "section_break_central",
    "fieldtype": "Section Break",
-   "label": "Central"
-  },
-  {
-   "description": "Which region this Cargo provisions for. Set by setup.sh.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "label": "Region",
-   "reqd": 1
+   "label": "Config"
   },
   {
    "fieldname": "central_url",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Central URL",
    "options": "URL",
    "reqd": 1
-  },
-  {
-   "description": "Minted by Central for calls to Central. Audience `central`, scope `cargo:central`.",
-   "fieldname": "central_access_token",
-   "fieldtype": "Password",
-   "label": "Central Access Token"
   },
   {
    "fieldname": "column_break_atlas",
@@ -53,32 +42,63 @@
    "reqd": 1
   },
   {
-   "description": "Minted by Central for calls to Atlas, which verifies it against Central's public keys. Audience `atlas`, scope `cargo:atlas`.",
-   "fieldname": "atlas_access_token",
-   "fieldtype": "Password",
-   "label": "Atlas Access Token"
-  },
-  {
-   "description": "Spent during install and cleared. Only set while enrolling.",
-   "fieldname": "central_bootstrapping_token",
-   "fieldtype": "Password",
-   "in_list_view": 1,
-   "label": "Central Bootstrapping Token",
-   "reqd": 0
-  },
-  {
    "description": "Which Atlas tenant this Cargo owns its machines as. Issued by Central with the tokens.",
    "fieldname": "atlas_tenant_id",
    "fieldtype": "Int",
    "label": "Atlas Tenant ID",
-   "non_negative": 1
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "cargo_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cargo URL",
+   "reqd": 1
+  },
+  {
+   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
+   "fieldname": "central_webhook_secret",
+   "fieldtype": "Password",
+   "in_list_view": 1,
+   "label": "Central Webhook Secret",
+   "reqd": 1
+  },
+  {
+   "description": "Atlas user secret \u2014\u00a0used for talking to atlas.",
+   "fieldname": "atlas_secret",
+   "fieldtype": "Password",
+   "label": "Atlas Secret",
+   "reqd": 1
+  },
+  {
+   "description": "Atlas user key \u2014\u00a0used for talking to atlas.",
+   "fieldname": "atlas_key",
+   "fieldtype": "Data",
+   "label": "Atlas Key",
+   "reqd": 1
+  },
+  {
+   "description": "Which region this Cargo provisions for.",
+   "fieldname": "region_id",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Region ID",
+   "reqd": 1
+  },
+  {
+   "description": "Region label",
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-31 23:24:46.632295",
+ "modified": "2026-09-10 17:32:09.953423",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

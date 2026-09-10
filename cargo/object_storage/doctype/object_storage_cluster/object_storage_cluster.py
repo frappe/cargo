@@ -19,8 +19,17 @@ from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
+if typing.TYPE_CHECKING:
+	from frappe.integrations.doctype.webhook.webhook import Webhook
+
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
+WEBHOOK_ENDPOINT = "/api/webhook/services/"
+WEBHOOK_SECRET_HEADER = "X-Cargo-Webhook-Secret"
+# The two states worth a call: the cluster may be used, or it may not.
+REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 
 if typing.TYPE_CHECKING:
@@ -105,6 +114,15 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		return gateway.address
 
+	@cached_property
+	def garage(self) -> Garage:
+		"""This cluster's Garage."""
+		return Garage(self)
+
+	def after_insert(self) -> None:
+		"""Ensure webhook for this cluster is configured"""
+		configure_storage_cluster_webhook(self)
+
 	def request_machine(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
 		"""Record one machine and ask Atlas to build it. Throws, rolling the record back."""
 		spec = NodeSpec(role=role, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
@@ -115,11 +133,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 			base_image=self.base_image,
 			zone=self.region,
 		)
-
-	@cached_property
-	def garage(self) -> Garage:
-		"""This cluster's Garage."""
-		return Garage(self)
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
@@ -164,7 +177,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		if self.status == "Active":
 			self.create_metadata_bucket_if_needed()
-			self.inform_central_of_cluster_health("Active")
 
 	@flow
 	def _setup(self) -> None:
@@ -297,27 +309,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 			)
 			return
 
-	def inform_central_of_cluster_health(self, health: typing.Literal["Active", "Failed"]) -> None:
-		"""Tell Central whether this region's cluster may be used. Todo: add health reporting system.
-
-		Joined nodes carry no storage role until a layout is applied, so a cluster is not
-		servable until then. Zero also means Garage could not be reached."""
-		can_serve = health == "Active" and self.garage.layout_version() > 0
-		endpoints = self.central_endpoints if can_serve else {}
-		try:
-			CentralClient.from_settings().register_storage_cluster(
-				region=self.region,
-				active=can_serve,
-				control_api_secret=self.get_password("admin_token"),
-				**endpoints,
-			)
-		except Exception:
-			frappe.log_error(
-				title=f"{self.name} could not inform Central it is {health}",
-				message=frappe.get_traceback(with_context=True),
-			)
-			frappe.throw(_("Failed to inform Central of this cluster's status. Please try again later."))
-
 	@property
 	def central_endpoints(self) -> dict[str, str]:
 		"""Where Central reaches this cluster. Every call goes through the gateway, and
@@ -368,10 +359,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Mark the cluster's status and reason."""
 		if status == "Active" and not self.activated_on:
 			self.activated_on = now_datetime()
-
-		if status == "Active" or status == "Failed":
-			# Inform on the two most critical states of the cluster.
-			self.inform_central_of_cluster_health(status)
 
 		self.status = status
 		self.error = reason
@@ -444,3 +431,39 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 				", ".join(serving)
 			)
 		)
+
+
+def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
+	"""Point a Frappe Webhook at Central so this cluster reports its own status changes."""
+	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+	if not settings.central_url:
+		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
+
+	secret = settings.get_password("central_webhook_secret", raise_exception=True)
+	name = f"object_storage_cluster-{cluster.name}"
+	webhook: Webhook = (
+		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
+	)
+	webhook.name = name
+	webhook.update(
+		{
+			"webhook_doctype": cluster.doctype,
+			"webhook_docevent": "on_update",
+			"request_url": settings.central_url.rstrip("/") + WEBHOOK_ENDPOINT,
+			"request_method": "POST",
+			"request_structure": "JSON",
+			"condition": f"doc.status in {REPORTED_STATUSES}",
+			"webhook_json": frappe.as_json(
+				{
+					"region": settings.region,
+					"region_id": settings.region_id,
+					"service": "storage",
+					"status": cluster.status,
+				}
+			),
+			"enabled": True,
+		}
+	)
+
+	webhook.append("webhook_headers", {"key": WEBHOOK_SECRET_HEADER, "value": secret})
+	webhook.save(ignore_permissions=True)

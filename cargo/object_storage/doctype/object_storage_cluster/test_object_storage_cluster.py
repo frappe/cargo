@@ -6,11 +6,16 @@ from typing import ClassVar
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import frappe
+from frappe.integrations.doctype.webhook.webhook import get_webhook_data, get_webhook_headers
 from frappe.tests import IntegrationTestCase
+from frappe.utils.password import set_encrypted_password
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+	WEBHOOK_ENDPOINT,
+	WEBHOOK_SECRET_HEADER,
 	ObjectStorageCluster,
+	configure_storage_cluster_webhook,
 )
 from cargo.object_storage.garage import Garage
 
@@ -453,3 +458,80 @@ class IntegrationTestClusterPeers(IntegrationTestCase):
 			self.cluster.record_cluster_peers()
 
 		record.assert_not_called()
+
+
+class IntegrationTestClusterWebhook(IntegrationTestCase):
+	"""A cluster reports its own status: inserting one points a webhook at Central."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.settings = frappe.get_doc("Cargo Settings")
+
+	def set_secret(self, secret: str) -> None:
+		"""Written straight to the password store: this site's Cargo Settings is half filled
+		in, so saving the whole thing would ask for every other field."""
+		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, "central_webhook_secret")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+	def webhook_of(self, cluster: ObjectStorageCluster):
+		return frappe.get_doc("Webhook", f"object_storage_cluster-{cluster.name}")
+
+	def insert_cluster(self) -> ObjectStorageCluster:
+		return frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+	def test_a_new_cluster_gets_a_webhook_pointed_at_central(self):
+		webhook = self.webhook_of(self.insert_cluster())
+
+		self.assertEqual(webhook.webhook_doctype, "Object Storage Cluster")
+		self.assertEqual(webhook.webhook_docevent, "on_update")
+		self.assertEqual(webhook.request_method, "POST")
+		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
+		self.assertTrue(webhook.request_url.startswith(self.settings.central_url))
+
+	def test_only_a_settled_cluster_is_reported(self):
+		webhook = self.webhook_of(self.insert_cluster())
+		condition = webhook.condition
+
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Active")}))
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Failed")}))
+		self.assertFalse(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Setting Up")}))
+
+	def test_the_report_names_the_region_and_the_cluster_state(self):
+		cluster = self.insert_cluster()
+		cluster.db_set("status", "Active")
+		cluster.reload()
+
+		report = get_webhook_data(cluster, self.webhook_of(cluster))
+
+		self.assertEqual(report["region"], self.settings.region)
+		self.assertEqual(report["region_id"], self.settings.region_id)
+		self.assertEqual(report["service"], "storage")
+		self.assertEqual(report["cluster"], cluster.name)
+		self.assertEqual(report["status"], "Active")
+
+	def test_a_webhook_with_no_secret_to_send_stays_off(self):
+		webhook = self.webhook_of(self.insert_cluster())
+
+		self.assertFalse(webhook.enabled)
+		self.assertEqual(webhook.webhook_headers, [])
+
+	def test_the_secret_central_knows_this_cargo_by_is_sent_with_every_report(self):
+		self.set_secret("shared-with-central")
+		cluster = self.insert_cluster()
+		webhook = self.webhook_of(cluster)
+
+		self.assertTrue(webhook.enabled)
+		headers = get_webhook_headers(cluster, webhook)
+
+		self.assertEqual(headers[WEBHOOK_SECRET_HEADER], "shared-with-central")
+
+	def test_reconfiguring_keeps_one_webhook_per_cluster(self):
+		cluster = self.insert_cluster()
+		self.set_secret("rotated")
+		configure_storage_cluster_webhook(cluster)
+
+		self.assertEqual(
+			frappe.db.count("Webhook", {"name": f"object_storage_cluster-{cluster.name}"}),
+			1,
+		)
+		self.assertEqual(self.webhook_of(cluster).webhook_headers[0].value, "rotated")

@@ -15,17 +15,13 @@ class CargoSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		atlas_access_token: DF.Password | None
+		atlas_key: DF.Data
+		atlas_secret: DF.Password
 		atlas_tenant_id: DF.Int
 		atlas_url: DF.Data
-		central_access_token: DF.Password | None
-		central_bootstrapping_token: DF.Password | None
+		cargo_url: DF.Data
 		central_url: DF.Data
+		central_webhook_secret: DF.Password
 		region: DF.Data
+		region_id: DF.Int
 	# end: auto-generated types
-
-	def before_insert(self) -> None:
-		"""The region is a constant, so it is set once and never changed."""
-		if not self.atlas_tenant_id:
-			# Since 0 is for privileged tenants, I think cargo is also semi privileged (also first spawn of atlas) will use 1.
-			self.atlas_tenant_id = 1
