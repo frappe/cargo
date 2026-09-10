@@ -24,6 +24,7 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 )
 from cargo.object_storage.garage.client import Client
 from cargo.object_storage.garage.setup import Setup
+from cargo.testing import use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -34,6 +35,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		# vm_id is unique across the table, so it cannot be a fixed string per role.
 		self.vm_ids: dict[str, str] = {}
@@ -108,6 +110,7 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 
 	def secrets(self) -> dict[str, str]:
@@ -141,6 +144,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -212,6 +216,7 @@ class IntegrationTestClusterPeers(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -270,6 +275,7 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.settings = frappe.get_doc("Cargo Settings")
 		# Set per test: a test that takes it away must not leave the next one without one.
 		self.set_secret("central-knows-this")

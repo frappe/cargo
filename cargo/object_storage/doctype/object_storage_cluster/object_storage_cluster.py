@@ -171,13 +171,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		# Here we will start a flow of triggers.
 		self._setup.run_as_workflow()
 
-	@frappe.whitelist()
-	def apply_layout(self) -> None:
-		"""Apply the layout to the cluster. This is idempotent and can be called at any time.
-
-		Central is told after: the cluster cannot hold an object until this lands."""
-		self.garage_setup.apply_staged_layout()
-
 	@flow
 	def _setup(self) -> None:
 		machines_to_setup = self.discover_machines_to_setup()
@@ -206,6 +199,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return
 
 		self.record_cluster_peers()
+		self.apply_layout()
 		self.verify_connected_nodes()
 
 	@task
@@ -246,6 +240,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 		for machine in garage.machines:
 			if machine["name"] in connected.machines:
 				garage.record_peers(machine, connected.peers)
+
+	@task
+	def apply_layout(self) -> None:
+		"""Give every node that joined its place. Part of setting up, not a step of its own:
+		a joined node carries no storage role until this lands, so a cluster without it
+		holds nothing."""
+		self.garage_setup.apply_staged_layout()
 
 	@task
 	def verify_connected_nodes(self) -> None:
