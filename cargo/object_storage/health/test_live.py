@@ -70,7 +70,7 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": 20,
 				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
-				"ipv4_address": "10.0.0.1",
+				"address": "10.0.0.1",
 				"status": "Running",
 			}
 		).insert()

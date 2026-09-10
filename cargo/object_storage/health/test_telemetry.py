@@ -112,7 +112,7 @@ class IntegrationTestTelemetry(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": 20,
 				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
-				"ipv4_address": ipv4,
+				"address": ipv4,
 				"status": "Running",
 			}
 		).insert()
