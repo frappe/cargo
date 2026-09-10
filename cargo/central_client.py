@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import typing
-from collections.abc import Sequence
 from typing import Any, Self
 
 import frappe
@@ -38,18 +37,6 @@ class CentralClient:
 			is_bootstrapping=is_bootstrapping,
 		)
 
-	def get_required_credentials(
-		self, region: str, vm_ids: list[str], required: Sequence[str]
-	) -> dict[str, str]:
-		"""Object storage: the secrets every node of one cluster boots with."""
-		tokens = self.call("garage_tokens", data={"region": region, "vm_ids": vm_ids})
-
-		missing = [name for name in required if not tokens.get(name)]
-		if missing:
-			raise CentralError(f"Central returned no {', '.join(missing)}")
-
-		return {name: tokens[name] for name in required}
-
 	def register_storage_cluster(
 		self,
 		region: str,
@@ -57,6 +44,7 @@ class CentralClient:
 		base_url: str = "",
 		s3_endpoint: str = "",
 		web_endpoint: str = "",
+		control_api_secret: str = "",
 	) -> dict[str, Any]:
 		"""Object storage: whether the cluster is running, and where to reach it.
 
@@ -70,6 +58,7 @@ class CentralClient:
 				"base_url": base_url,
 				"s3_endpoint": s3_endpoint,
 				"web_endpoint": web_endpoint,
+				"control_api_secret": control_api_secret,
 			},
 		)
 

@@ -14,7 +14,6 @@ from frappe.utils.password import get_decrypted_password
 from cargo.atlas_client import host_port
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.garage_admin_client import GarageAdminClient, GarageError
-from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.metadata_bucket import MetadataBucketInfo
 from cargo.ssh import SshError, run_over_ssh, script
 
@@ -61,12 +60,6 @@ class Garage:
 
 	def __init__(self, cluster: ObjectStorageCluster):
 		self.cluster = cluster
-		self.secrets = {
-			name: cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
-		}
-		missing = [name for name, value in self.secrets.items() if not value]
-		if missing:
-			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
 
 	@cached_property
 	def machines(self) -> list[MachineRow]:
@@ -163,9 +156,9 @@ class Garage:
 			"WEB_PORT": cluster.web_port,
 			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
-			"RPC_SECRET": self.secrets["rpc_secret"],
-			"ADMIN_TOKEN": self.secrets["admin_token"],
-			"METRICS_TOKEN": self.secrets["metrics_token"],
+			"RPC_SECRET": self.cluster.get_password("rpc_secret"),
+			"ADMIN_TOKEN": self.cluster.get_password("admin_token"),
+			"METRICS_TOKEN": self.cluster.get_password("metrics_token"),
 		}
 
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:

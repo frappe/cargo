@@ -14,7 +14,6 @@ from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.central_client import CentralClient
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
-from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
 from cargo.object_storage.garage import Garage
 from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
@@ -303,7 +302,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 		endpoints = self.central_endpoints if can_serve else {}
 		try:
 			CentralClient.from_settings().register_storage_cluster(
-				region=self.region, active=can_serve, **endpoints
+				region=self.region,
+				active=can_serve,
+				control_api_secret=self.get_password("admin_token"),
+				**endpoints,
 			)
 		except Exception:
 			frappe.log_error(
@@ -328,23 +330,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Mint this cluster's secrets if it has none. Setup calls it first: nothing can reach
 		a node without them, and Central answers the same secrets for a region every time."""
 		if not self.admin_token or not self.rpc_secret or not self.metrics_token:
-			machine_ids = [machine.vm_id for machine in self.all_nodes]
-			try:
-				tokens = CentralClient.from_settings().get_required_credentials(
-					region=self.region, vm_ids=machine_ids, required=REQUIRED_CREDENTIALS
-				)
-			except Exception:
-				frappe.log_error(
-					title=f"{self.name} could not mint credentials",
-					message=frappe.get_traceback(with_context=True),
-				)
-				frappe.throw(_("Failed to mint credentials for this cluster. Please try again later."))
-
 			self.update(
 				{
-					"admin_token": tokens["admin_token"],
-					"rpc_secret": tokens["rpc_secret"],
-					"metrics_token": tokens["metrics_token"],
+					"admin_token": frappe.generate_hash(length=64),
+					"rpc_secret": frappe.generate_hash(length=64),
+					"metrics_token": frappe.generate_hash(length=64),
 				}
 			)
 			self.save()
@@ -434,7 +424,8 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 
 	# Nothing can have joined yet: no gateway to join through, or no secrets to join with.
 	if not cluster.gateway_node or not all(
-		cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
+		cluster.get_password(name, raise_exception=False)
+		for name in ["admin_token", "rpc_secret", "metrics_token"]
 	):
 		return
 
