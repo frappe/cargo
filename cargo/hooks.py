@@ -176,7 +176,7 @@ after_install = "cargo.install.after_install"
 # Testing
 # -------
 
-# before_tests = "cargo.install.before_tests"
+before_tests = "cargo.install.before_tests"
 
 # Extend DocType Class
 # ------------------------------
