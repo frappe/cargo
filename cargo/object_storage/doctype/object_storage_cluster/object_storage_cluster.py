@@ -12,9 +12,8 @@ from frappe.utils import now_datetime
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.central_client import CentralClient
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
-from cargo.object_storage.garage import Garage
+from cargo.object_storage.garage.setup import Setup
 from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -63,9 +62,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		health: DF.Literal["Unknown", "Healthy", "Degraded", "Critical"]
 		k2v_port: DF.Int
 		machines: DF.Table[ObjectStorageNode]
-		metadata_bucket: DF.Data | None
-		metadata_bucket_access_key: DF.Data | None
-		metadata_bucket_secret_key: DF.Password | None
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
@@ -115,9 +111,17 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return gateway.address
 
 	@cached_property
-	def garage(self) -> Garage:
-		"""This cluster's Garage."""
-		return Garage(self)
+	def garage_setup(self) -> Setup:
+		"""This cluster's Garage setup client"""
+		return Setup(self)
+
+	def before_insert(self) -> None:
+		if all(self.get(name) for name in CLUSTER_SECRETS):
+			return
+
+		for name in CLUSTER_SECRETS:
+			if not self.get(name):
+				self.update({name: frappe.generate_hash(length=SECRET_LENGTH)})
 
 	def after_insert(self) -> None:
 		"""Ensure webhook for this cluster is configured"""
@@ -157,8 +161,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Set up what's not setup yet. THat's it idempotently called by the user whenever ready from desk."""
 		can_trigger_setup(self)
 
-		self.mint_credentials_if_needed()
-		registered_nodes = self.garage.healthy_nodes()
+		registered_nodes = self.garage_setup.healthy_nodes()
 		if len(registered_nodes) == len(self.all_nodes):
 			self.mark_cluster_status("Active", None)
 			return
@@ -173,10 +176,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Apply the layout to the cluster. This is idempotent and can be called at any time.
 
 		Central is told after: the cluster cannot hold an object until this lands."""
-		self.garage.apply_layout()
-
-		if self.status == "Active":
-			self.create_metadata_bucket_if_needed()
+		self.garage_setup.apply_staged_layout()
 
 	@flow
 	def _setup(self) -> None:
@@ -212,7 +212,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def discover_machines_to_setup(self) -> list[str]:
 		"""Gateway first: every other node reaches the cluster through its admin API, so one
 		set up before it has nothing to join."""
-		healthy_nodes = self.garage.healthy_nodes()
+		healthy_nodes = self.garage_setup.healthy_nodes()
 		machines_to_setup = [machine for machine in self.all_nodes if machine.name not in healthy_nodes]
 
 		return [
@@ -224,7 +224,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Install Garage on one machine and fold it into the cluster."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				garage = Garage(self)
+				garage = self.garage_setup
 				garage.setup_machine(garage.machine(machine.name), on_output=log.write)
 			except Exception:
 				frappe.log_error(
@@ -238,7 +238,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	@task
 	def record_cluster_peers(self) -> None:
 		"""Give every node that joined the same peers, now that they all exist."""
-		garage = Garage(self)
+		garage = self.garage_setup
 		connected = garage.get_connected_nodes()
 		if not connected.peers:
 			return
@@ -251,7 +251,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def verify_connected_nodes(self) -> None:
 		"""What actually joined, as Garage sees it. Health labels the rest; this only decides
 		whether the cluster came up at all."""
-		healthy_nodes = self.garage.healthy_nodes()
+		healthy_nodes = self.garage_setup.healthy_nodes()
 		joined_storage = [node for node in self.storage_nodes if node.name in healthy_nodes]
 
 		if len(joined_storage) < self.replication_factor:
@@ -308,47 +308,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 				"Failed", _("Not enough storage nodes are alive to satisfy the replication factor.")
 			)
 			return
-
-	@property
-	def central_endpoints(self) -> dict[str, str]:
-		"""Where Central reaches this cluster. Every call goes through the gateway, and
-		nothing terminates TLS in front of Garage."""
-		address = self.gateway_address
-
-		return {
-			"base_url": f"http://{address}:{self.admin_port}",
-			"s3_endpoint": f"http://{address}:{self.s3_port}",
-			"web_endpoint": f"http://{address}:{self.web_port}",
-		}
-
-	def mint_credentials_if_needed(self) -> None:
-		"""Mint this cluster's secrets if it has none. Setup calls it first: nothing can reach
-		a node without them, and every node of a cluster boots with the same ones."""
-		if all(self.get(name) for name in CLUSTER_SECRETS):
-			return
-
-		self.update({name: frappe.generate_hash(length=SECRET_LENGTH) for name in CLUSTER_SECRETS})
-		self.save()
-
-	def create_metadata_bucket_if_needed(self) -> None:
-		"""Cargo's own bucket on this cluster, and the key that reaches it.
-		THIS IS ONLY FOR INTERNAL/CARGO USAGE NOT FOR CUSTOMERS!"""
-		if (
-			self.metadata_bucket
-			and self.metadata_bucket_access_key
-			and self.garage.admin.bucket(self.metadata_bucket)
-		):
-			return
-
-		bucket = self.garage.create_metadata_bucket()
-		self.update(
-			{
-				"metadata_bucket": bucket["name"],
-				"metadata_bucket_access_key": bucket["access_key"],
-				"metadata_bucket_secret_key": bucket["secret_key"],
-			}
-		)
-		self.save()
 
 	@property
 	def is_live(self) -> bool:
@@ -415,7 +374,7 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 	):
 		return
 
-	joined = cluster.garage.healthy_nodes()
+	joined = cluster.garage_setup.healthy_nodes()
 	if cluster.is_live:
 		roles = {row.machine: row.role for row in cluster.machines}
 		if any(roles[name] == GATEWAY for name in named):
@@ -458,12 +417,13 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "storage",
-					"status": cluster.status,
+					"status": "{{ doc.status }}",
 				}
 			),
 			"enabled": True,
 		}
 	)
 
+	webhook.webhook_headers = []
 	webhook.append("webhook_headers", {"key": WEBHOOK_SECRET_HEADER, "value": secret})
 	webhook.save(ignore_permissions=True)

@@ -9,13 +9,13 @@ import frappe
 import requests
 
 from cargo.atlas_client import host_port
-from cargo.object_storage.garage import Garage
+from cargo.object_storage.garage.setup import Setup
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
-	from cargo.object_storage.garage import MachineRow
+	from cargo.object_storage.garage.setup import MachineRow
 
 INGEST_PATH = "/v1/ingest"
 SCRAPE_TIMEOUT = 15
@@ -120,7 +120,7 @@ class Telemetry:
 
 	def __init__(self, cluster: ObjectStorageCluster) -> None:
 		self.cluster = cluster
-		self.garage = Garage(self.cluster)
+		self.garage = Setup(self.cluster)
 
 	@cached_property
 	def metrics_token(self) -> str:

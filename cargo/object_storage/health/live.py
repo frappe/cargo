@@ -10,7 +10,7 @@ from pathlib import Path
 import frappe
 from frappe.utils.synchronization import filelock
 
-from cargo.garage_admin_client import GarageAdminClient, GarageError
+from cargo.object_storage.garage.client import Client, Error
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -44,7 +44,7 @@ class Reading:
 	error: str = ""
 
 
-class LiveHealth:
+class LiveHealth(Client):
 	"""Check live critical metrics of a cluster, by talking to the admin api
 	In case of any error, fire off webhooks to alert someone. This is a safety in case
 	the metrics/telemetry go down, also metrics and telemetry might be only used for postmortem
@@ -57,11 +57,10 @@ class LiveHealth:
 	"""
 
 	def __init__(self, cluster: ObjectStorageCluster) -> None:
-		self.cluster = cluster
+		super().__init__(cluster)
 		self.settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
-		self.admin = GarageAdminClient.for_cluster(self.cluster)
 		# Health runs every minute, so a hung gateway must not still be waiting on the next tick.
-		self.admin.timeout = self.settings.admin_timeout_seconds
+		self.timeout = self.settings.admin_timeout_seconds
 
 	def check(self) -> Finding:
 		"""The worst thing true about this cluster right now, and why."""
@@ -82,8 +81,8 @@ class LiveHealth:
 	def reading(self) -> Reading:
 		"""One read of the gateway, shared by every check and by the log line."""
 		try:
-			return Reading(health=self.admin.health(), nodes=self.admin.status().get("nodes") or [])
-		except GarageError as error:
+			return Reading(health=self.health(), nodes=self.status().get("nodes") or [])
+		except Error as error:
 			return Reading(health={}, nodes=[], error=str(error))
 
 	def findings(self) -> list[Finding]:

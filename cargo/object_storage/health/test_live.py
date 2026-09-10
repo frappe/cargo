@@ -2,13 +2,13 @@
 # See license.txt
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.garage_admin_client import GarageError
+from cargo.object_storage.garage.client import Client, Error
 from cargo.object_storage.health import live as live_module
 from cargo.object_storage.health.live import (
 	CRITICAL,
@@ -81,16 +81,18 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 
 	def health(self, health: dict | None = None, nodes: list[dict] | None = None, error: str = ""):
 		"""A LiveHealth whose gateway says what the test wants."""
-		patcher = patch.object(live_module, "GarageAdminClient")
-		client = patcher.start()
-		self.addCleanup(patcher.stop)
-
-		admin = client.for_cluster.return_value
-		if error:
-			admin.health.side_effect = GarageError(error)
-		else:
-			admin.health.return_value = health if health is not None else cluster_health()
-			admin.status.return_value = {"nodes": nodes if nodes is not None else [node(self.machine)]}
+		reads = {
+			"health": {"side_effect": Error(error)}
+			if error
+			else {"return_value": health or cluster_health()},
+			"status": {"side_effect": Error(error)}
+			if error
+			else {"return_value": {"nodes": nodes if nodes is not None else [node(self.machine)]}},
+		}
+		for endpoint, answer in reads.items():
+			patcher = patch.object(Client, endpoint, **answer)
+			setattr(self, f"gateway_{endpoint}", patcher.start())
+			self.addCleanup(patcher.stop)
 
 		return LiveHealth(self.cluster)
 
@@ -163,7 +165,7 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 		live = self.health()
 
 		self.assertEqual(live.check().severity, CRITICAL)
-		live.admin.health.assert_not_called()
+		self.gateway_health.assert_not_called()
 
 	def test_an_unchanged_verdict_is_not_rewritten(self):
 		self.health().record()
@@ -190,13 +192,16 @@ class IntegrationTestHealthHistory(IntegrationTestCase):
 		self.path.with_suffix(".tmp").unlink(missing_ok=True)
 
 	def record(self, error: str = "") -> None:
-		with patch.object(live_module, "GarageAdminClient") as client:
-			admin = client.for_cluster.return_value
-			if error:
-				admin.health.side_effect = GarageError(error)
-			else:
-				admin.health.return_value = cluster_health()
-				admin.status.return_value = {"nodes": [node("OSC-storage-0001")]}
+		reads = {
+			"health": {"side_effect": Error(error)} if error else {"return_value": cluster_health()},
+			"status": {"side_effect": Error(error)}
+			if error
+			else {"return_value": {"nodes": [node("OSC-storage-0001")]}},
+		}
+		with (
+			patch.object(Client, "health", **reads["health"]),
+			patch.object(Client, "status", **reads["status"]),
+		):
 			LiveHealth(self.cluster).record()
 
 	def lines(self) -> list[dict]:
