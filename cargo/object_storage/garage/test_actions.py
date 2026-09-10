@@ -88,17 +88,34 @@ class UnitTestBucketActions(UnitTestCase):
 		create_key.assert_not_called()
 
 	def test_removing_a_bucket_takes_its_key_with_it(self):
+		order = []
 		_, _, delete_key, delete_bucket = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
 			key={"return_value": KEY},
-			delete_key={"return_value": None},
-			delete_bucket={"return_value": None},
+			delete_key={"side_effect": lambda access_key_id: order.append("key")},
+			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
 		)
 
 		self.actions.remove_bucket(BUCKET)
 
 		delete_key.assert_called_once_with(KEY["accessKeyId"])
 		delete_bucket.assert_called_once_with(BUCKET_ID)
+		# The bucket first: a 409 must not leave it live with its key already revoked.
+		self.assertEqual(order, ["bucket", "key"])
+
+	def test_a_bucket_whose_delete_is_refused_keeps_its_key(self):
+		"""Garage answers 409 while objects remain, so the bucket stays reachable."""
+		_, _, delete_key, _ = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			key={"return_value": KEY},
+			delete_key={"return_value": None},
+			delete_bucket={"side_effect": Error("DeleteBucket answered 409: BucketNotEmpty")},
+		)
+
+		with self.assertRaises(Error):
+			self.actions.remove_bucket(BUCKET)
+
+		delete_key.assert_not_called()
 
 	def test_removing_a_bucket_that_is_already_gone_asks_nothing_further(self):
 		"""A delete that arrives twice is not a failure."""
@@ -153,12 +170,11 @@ class UnitTestBucketActions(UnitTestCase):
 
 	def test_a_bucket_no_key_could_be_made_for_is_taken_back_out(self):
 		"""Nobody was handed a way in, so leaving it would leave something unreachable."""
-		_, _, _, create_key, unname, delete_bucket = self.answers(
+		_, _, _, create_key, delete_bucket = self.answers(
 			create_bucket={"return_value": {"id": BUCKET_ID}},
 			add_bucket_alias={"return_value": {}},
 			bucket={"return_value": {"id": BUCKET_ID}},
 			create_key={"side_effect": Error("CreateKey answered 500: nope")},
-			remove_bucket_alias={"return_value": {}},
 			delete_bucket={"return_value": None},
 		)
 
@@ -166,7 +182,7 @@ class UnitTestBucketActions(UnitTestCase):
 			self.actions.provision_bucket(BUCKET)
 
 		create_key.assert_called_once()
-		unname.assert_called_once_with(BUCKET_ID, BUCKET)
+		# Garage drops the name with the bucket, so nothing unnames it first.
 		delete_bucket.assert_called_once_with(BUCKET_ID)
 
 	def test_a_provisioned_bucket_answers_with_its_key(self):

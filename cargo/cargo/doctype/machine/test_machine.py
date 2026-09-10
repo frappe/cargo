@@ -9,6 +9,7 @@ from frappe.tests import IntegrationTestCase
 from cargo.atlas_client import AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine
 from cargo.client_models import NodeSpec
+from cargo.testing import use_test_settings
 
 MESH_ADDRESS = "fdaa:1:0:7::3"
 
@@ -18,6 +19,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		self.machine = frappe.get_doc(
 			{

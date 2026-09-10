@@ -10,6 +10,7 @@ from frappe.tests import IntegrationTestCase
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.health import telemetry as telemetry_module
 from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
+from cargo.testing import use_test_settings
 
 METRICS = """\
 # HELP cluster_healthy Whether all storage nodes are connected
@@ -91,6 +92,7 @@ class IntegrationTestTelemetry(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		# The cluster refuses to save until it has been minted its credentials.
 		for field, value in (

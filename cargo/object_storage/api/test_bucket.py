@@ -15,6 +15,7 @@ from cargo.object_storage.api.bucket import (
 )
 from cargo.object_storage.garage.actions import Actions
 from cargo.object_storage.garage.models import BucketCredentials
+from cargo.testing import use_test_settings
 
 BUCKET = "team-alpha"
 CREDENTIALS = BucketCredentials(access_key="GK-access", secret_access_key="shh")
@@ -25,6 +26,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.region = frappe.db.get_single_value("Cargo Settings", "region")
 		# This site may already hold clusters; the region is meant to have one that serves.
 		for name in frappe.get_all("Object Storage Cluster", pluck="name"):

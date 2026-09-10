@@ -43,25 +43,3 @@ def record_bootstrapping_token() -> None:
 	settings.atlas_tenant_id = os.getenv("ATLAS_TENANT_ID")
 	settings.central_webhook_secret = os.getenv("CENTRAL_BOOTSTRAPPING_TOKEN")
 	settings.save(ignore_permissions=True)
-
-
-TEST_SETTINGS = {
-	"central_url": "http://central.test",
-	"atlas_url": "http://atlas.test",
-	"cargo_url": "http://cargo.test",
-	"region_id": 1,
-	"region": "test-region",
-	"atlas_key": "test-key",
-	"atlas_secret": "test-secret",
-	"atlas_tenant_id": 1,
-	"central_webhook_secret": "test-webhook-secret",
-}
-
-
-def before_tests() -> None:
-	"""A test site is never enrolled, so stand its Cargo Settings up: a cluster cannot be
-	inserted without them. Only what is missing, so a local site keeps what it points at."""
-	settings: CargoSettings = frappe.get_single("Cargo Settings")
-	settings.update({field: value for field, value in TEST_SETTINGS.items() if not settings.get(field)})
-	settings.save(ignore_permissions=True)
-	frappe.db.commit()

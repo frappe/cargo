@@ -19,6 +19,7 @@ from cargo.object_storage.health.live import (
 	history_file,
 	prune_history,
 )
+from cargo.testing import use_test_settings
 
 GB = 1024**3
 SETTINGS = "Object Storage Health Settings"
@@ -52,6 +53,7 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
 		self.cluster.reload()
@@ -181,6 +183,7 @@ class IntegrationTestHealthHistory(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
 		self.cluster.reload()
@@ -299,6 +302,7 @@ class IntegrationTestHealthSettings(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 
 	def saved(self, **changes) -> bool:
 		settings = frappe.get_single(SETTINGS)
