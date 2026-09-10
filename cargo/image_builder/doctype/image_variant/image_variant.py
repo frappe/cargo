@@ -150,9 +150,14 @@ class ImageVariant(WorkflowBuilder):
 		if state != RUNNING_STATE:
 			return
 
+		address = machine.get("wireguard_mesh_ipv6")
+		if not address:
+			self.mark("Failed", error="Atlas reported no mesh address for this build machine")
+			return
+
 		# One transaction, so `retry_workflows` can find a build whose job never started.
 		self.mark("Building")
-		self.run_build.run_as_workflow(address=client.address_of(machine), vm_id=self.temporary_vm_id)
+		self.run_build.run_as_workflow(address=address, vm_id=self.temporary_vm_id)
 
 	@flow
 	def run_build(self, address: str, vm_id: str) -> None:
