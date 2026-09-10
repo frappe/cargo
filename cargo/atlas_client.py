@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import typing
 from typing import Any, Self
 
@@ -9,9 +8,13 @@ import requests
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.client_models import PlacementGroupSchema
 
-METHOD_PREFIX = "/api/method/atlas.atlas.api.service."
+API_PREFIX = "/api/atlas"
+RUNNING_STATE = "running"
+DEAD_STATES = frozenset({"failed"})
+MIB_PER_GB = 1024
+# Reaches the mesh and the internet, without a public address of its own.
+EGRESS = "uplink"
 
 
 class AtlasError(RuntimeError):
@@ -19,13 +22,21 @@ class AtlasError(RuntimeError):
 	the workflow engine carries an exception back to the flow that raised it."""
 
 
-class AtlasClient:
-	"""Atlas's whitelisted service API. Services subclass this to add their own calls."""
+class AtlasNotFound(AtlasError):
+	"""Atlas has no such resource. A terminated machine reads as one."""
 
-	def __init__(self, url: str, token: str, timeout: float = 120) -> None:
+
+class AtlasClient:
+	"""Atlas's tenant API. Every route is scoped to the tenant in the header."""
+
+	def __init__(self, url: str, token: str, tenant_id: int, timeout: float = 120) -> None:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
-		self.headers = {"X-Cargo-Token": token}
+		self.tenant_id = tenant_id
+		self.headers = {
+			"X-Atlas-Central-Token": token,
+			"X-Tenant-ID": str(tenant_id),
+		}
 
 	@classmethod
 	def from_settings(cls) -> Self:
@@ -33,96 +44,110 @@ class AtlasClient:
 		Password field reads back as its mask."""
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
-		return cls(url=settings.atlas_url, token=settings.get_password("atlas_access_token"))
+		return cls(
+			url=settings.atlas_url,
+			token=settings.get_password("atlas_access_token"),
+			tenant_id=settings.atlas_tenant_id,
+		)
 
-	def call(self, endpoint: str, **params: Any) -> Any:
-		"""POST to a service method and return the unwrapped ``message``."""
+	def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+		"""One request against the tenant API. 204 and an empty body both return None."""
 		try:
-			response = requests.post(
-				f"{self.url}{METHOD_PREFIX}{endpoint}",
+			response = requests.request(
+				method,
+				f"{self.url}{API_PREFIX}{path}",
 				headers=self.headers,
-				json={key: value for key, value in params.items() if value is not None},
+				json=body,
 				timeout=self.timeout,
 			)
 		except requests.RequestException as exception:
-			raise AtlasError(f"{endpoint}: {exception}") from exception
+			raise AtlasError(f"{method} {path}: {exception}") from exception
 
 		try:
 			payload = response.json()
 		except ValueError:
 			payload = None
 
+		if response.status_code == 404:
+			raise AtlasNotFound(f"{method} {path}: {error_message(payload, response.text)}")
+
 		if not response.ok:
 			raise AtlasError(
-				f"{endpoint} answered {response.status_code}: {error_message(payload, response.text)}"
+				f"{method} {path} answered {response.status_code}: {error_message(payload, response.text)}"
 			)
 
-		if isinstance(payload, dict) and (payload.get("exc") or payload.get("exception")):
-			raise AtlasError(
-				f"{endpoint} answered {response.status_code}: {error_message(payload, response.text)}"
-			)
-
-		return payload["message"] if isinstance(payload, dict) and "message" in payload else payload
+		return payload
 
 	def create_vm(
 		self,
-		title: str,
 		*,
+		image_id: str,
+		vcpus: int,
+		memory_mib: int,
+		disk_mib: int,
 		public_key: str,
-		base_image: str,
-		placement: PlacementGroupSchema | None = None,
-	) -> str:
-		"""Ask Atlas for one machine and return its VM id. It is still booting and has no
-		address. Atlas builds one per `NodeSpec.count`, so anything past the first is a
-		placement asking for more than a machine can be: refused rather than disowned."""
+		hostname: str,
+		metadata: dict[str, str] | None = None,
+	) -> dict[str, Any]:
+		"""Ask Atlas for one machine and return the record it made."""
 		created = self.call(
-			"create_bare_vms",
-			title=title,
-			base_image=base_image,
-			ssh_public_key=public_key,
-			placement_group=placement.asdict() if placement else None,
+			"POST",
+			"/virtual-machines",
+			{
+				"image_id": image_id,
+				"vcpus": vcpus,
+				"memory_mib": memory_mib,
+				"disk_mib": disk_mib,
+				"ssh_keys": [public_key],
+				"hostname": hostname,
+				"metadata": metadata or {},
+				"egress": EGRESS,
+			},
 		)
-		vm_ids = created.get("vm_ids") if isinstance(created, dict) else created
-		if not vm_ids:
-			raise AtlasError(f"create_bare_vms returned no VM ids: {created!r}")
+		if not isinstance(created, dict) or not created.get("id"):
+			raise AtlasError(f"create_virtual_machine returned no id: {created!r}")
 
-		return vm_ids[0]
+		return created
+
+	def get_vm(self, vm_id: str) -> dict[str, Any]:
+		"""The VM as Atlas currently sees it, including `current_state`."""
+		return self.call("GET", f"/virtual-machines/{vm_id}")
+
+	def terminate_vm(self, vm_id: str) -> None:
+		"""Start termination. The VM route answers 404 once cleanup finishes."""
+		self.call("DELETE", f"/virtual-machines/{vm_id}")
 
 	def create_snapshot(self, vm_id: str, title: str) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""
-		created = self.call("create_snapshot", vm=vm_id, title=title)
-		snapshot = created.get("snapshot_id") if isinstance(created, dict) else created
-		if not snapshot:
+		created = self.call("POST", f"/virtual-machines/{vm_id}/actions/snapshot", {"title": title})
+		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_snapshot returned no id: {created!r}")
 
-		return str(snapshot)
+		return created["id"]
 
-	def get_snapshot(self, snapshot_id: str) -> dict[str, Any]:
-		"""The snapshot as Atlas currently sees it, to know when it is usable."""
-		return self.call("get_snapshot", snapshot=snapshot_id)
+	def get_snapshot(self, image_id: str) -> dict[str, Any]:
+		"""The image as Atlas currently sees it, to know when it is usable."""
+		return self.call("GET", f"/images/{image_id}")
 
-	def get_vm(self, vm_id: str) -> dict[str, Any]:
-		"""The VM as Atlas currently sees it."""
-		return self.call("get_virtual_machine", name=vm_id)
 
-	def terminate_vm(self, name: str) -> dict[str, Any] | None:
-		return self.call("terminate_vm", vm=name)
+def host_port(address: str, port: int | str) -> str:
+	"""``address:port``, with the brackets an IPv6 address needs to keep its colons."""
+	return f"[{address}]:{port}" if ":" in address else f"{address}:{port}"
 
 
 def error_message(payload: Any, fallback: str) -> str:
-	"""The readable message out of a Frappe error body."""
+	"""The readable message out of an Atlas or Frappe error body."""
 	if isinstance(payload, dict):
-		messages = payload.get("_server_messages")
-		if messages:
-			try:
-				parsed = json.loads(messages)
-				texts = [json.loads(m).get("message", m) if isinstance(m, str) else str(m) for m in parsed]
-				if texts:
-					return "; ".join(str(text) for text in texts)
-			except (ValueError, TypeError):
-				return str(messages)
+		error = payload.get("error")
+		if isinstance(error, dict) and error.get("message"):
+			fields = "; ".join(
+				f"{field.get('name')}: {field.get('message')}"
+				for field in error.get("fields") or []
+				if isinstance(field, dict)
+			)
+			return f"{error['message']} ({fields})" if fields else str(error["message"])
 
-		for key in ("exception", "exc_type", "message", "_error_message", "error"):
+		for key in ("exception", "exc_type", "message", "_error_message"):
 			if payload.get(key):
 				return str(payload[key])
 

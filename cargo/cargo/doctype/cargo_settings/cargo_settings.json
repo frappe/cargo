@@ -11,7 +11,6 @@
   "central_access_token",
   "column_break_atlas",
   "atlas_url",
-  "atlas_region_id",
   "atlas_tenant_id",
   "atlas_access_token"
  ],
@@ -72,13 +71,6 @@
    "fieldname": "atlas_tenant_id",
    "fieldtype": "Int",
    "label": "Atlas Tenant ID",
-   "non_negative": 1
-  },
-  {
-   "description": "Atlas's own region number. With the tenant, it fixes the mesh addresses this Cargo's machines answer on.",
-   "fieldname": "atlas_region_id",
-   "fieldtype": "Int",
-   "label": "Atlas Region ID",
    "non_negative": 1
   }
  ],
