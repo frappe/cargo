@@ -19,6 +19,10 @@ from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
+# Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
+SECRET_LENGTH = 64
+CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
+
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
 
@@ -328,16 +332,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	def mint_credentials_if_needed(self) -> None:
 		"""Mint this cluster's secrets if it has none. Setup calls it first: nothing can reach
-		a node without them, and Central answers the same secrets for a region every time."""
-		if not self.admin_token or not self.rpc_secret or not self.metrics_token:
-			self.update(
-				{
-					"admin_token": frappe.generate_hash(length=64),
-					"rpc_secret": frappe.generate_hash(length=64),
-					"metrics_token": frappe.generate_hash(length=64),
-				}
-			)
-			self.save()
+		a node without them, and every node of a cluster boots with the same ones."""
+		if all(self.get(name) for name in CLUSTER_SECRETS):
+			return
+
+		self.update({name: frappe.generate_hash(length=SECRET_LENGTH) for name in CLUSTER_SECRETS})
+		self.save()
 
 	def create_metadata_bucket_if_needed(self) -> None:
 		"""Cargo's own bucket on this cluster, and the key that reaches it.
@@ -424,8 +424,7 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 
 	# Nothing can have joined yet: no gateway to join through, or no secrets to join with.
 	if not cluster.gateway_node or not all(
-		cluster.get_password(name, raise_exception=False)
-		for name in ["admin_token", "rpc_secret", "metrics_token"]
+		cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS
 	):
 		return
 

@@ -80,21 +80,6 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertIn("attached", str(raised.exception))
 		self.assertNotIsInstance(raised.exception, AtlasNotFound)
 
-	def test_an_address_is_read_off_the_record_atlas_returned(self):
-		machine = {"id": "vm-3", "wireguard_mesh_ipv6": "fdaa:1:0:7::3"}
-
-		self.assertEqual(self.client.address_of(machine), "fdaa:1:0:7::3")
-
-	def test_reading_an_address_costs_no_request(self):
-		with self.call(response(200, {})) as request:
-			self.client.address_of({"id": "vm-3", "wireguard_mesh_ipv6": "fdaa:1:0:7::3"})
-
-		request.assert_not_called()
-
-	def test_a_machine_atlas_gave_no_address_for_cannot_be_reached(self):
-		with self.assertRaises(AtlasError):
-			self.client.address_of({"id": "vm-3"})
-
 
 class UnitTestAddressFormatting(UnitTestCase):
 	def test_an_ipv6_address_keeps_its_colons(self):

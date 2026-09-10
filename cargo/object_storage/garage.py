@@ -137,9 +137,23 @@ class Garage:
 		"""Only answers once the node has started, since Garage keys itself on first launch."""
 		return self.run(machine, "garage node id -q", on_output).strip().splitlines()[-1]
 
+	@property
+	def secrets(self) -> dict[str, str]:
+		"""The secrets a node boots with, named in the error when the cluster has none."""
+		from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+			CLUSTER_SECRETS,
+		)
+
+		found = {name: self.cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS}
+		missing = [name for name, value in found.items() if not value]
+		if missing:
+			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
+
+		return found
+
 	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
-		cluster = self.cluster
+		cluster, secrets = self.cluster, self.secrets
 
 		return {
 			"GARAGE_BINARY": cluster.garage_binary,
@@ -156,9 +170,9 @@ class Garage:
 			"WEB_PORT": cluster.web_port,
 			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
-			"RPC_SECRET": self.cluster.get_password("rpc_secret"),
-			"ADMIN_TOKEN": self.cluster.get_password("admin_token"),
-			"METRICS_TOKEN": self.cluster.get_password("metrics_token"),
+			"RPC_SECRET": secrets["rpc_secret"],
+			"ADMIN_TOKEN": secrets["admin_token"],
+			"METRICS_TOKEN": secrets["metrics_token"],
 		}
 
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:

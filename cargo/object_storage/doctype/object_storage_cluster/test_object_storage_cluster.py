@@ -93,7 +93,6 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		# Garage refuses a cluster with no secrets.
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -167,6 +166,55 @@ class IntegrationTestClusterReadiness(IntegrationTestCase):
 			self.cluster.inform_central_of_cluster_health("Active")
 
 		self.assertFalse(register.call_args.kwargs["active"])
+
+	def test_the_report_carries_the_token_central_calls_garage_with(self):
+		"""Central talks to Garage's admin API itself, so the report is how it gets the token."""
+		with self._garage(layout_version=1) as register:
+			self.cluster.inform_central_of_cluster_health("Active")
+
+		self.assertEqual(register.call_args.kwargs["control_api_secret"], "admin")
+
+
+class IntegrationTestClusterCredentials(IntegrationTestCase):
+	"""Cargo owns its cluster's secrets. Only the admin token ever leaves for Central."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+	def secrets(self) -> dict[str, str]:
+		return {
+			name: self.cluster.get_password(name) for name in ("rpc_secret", "admin_token", "metrics_token")
+		}
+
+	def test_minting_asks_central_for_nothing(self):
+		with patch(
+			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.CentralClient"
+		) as central:
+			self.cluster.mint_credentials_if_needed()
+
+		central.from_settings.assert_not_called()
+
+	def test_every_secret_is_its_own(self):
+		self.cluster.mint_credentials_if_needed()
+		minted = self.secrets()
+
+		self.assertEqual(len(set(minted.values())), 3)
+		self.assertTrue(all(minted.values()))
+
+	def test_a_node_cannot_be_installed_before_the_secrets_exist(self):
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.cluster.garage.secrets
+
+		self.assertIn("rpc_secret", str(raised.exception))
+
+	def test_minting_twice_keeps_the_first_set(self):
+		"""Every node of a cluster boots with the same secrets; re-minting would split it."""
+		self.cluster.mint_credentials_if_needed()
+		first = self.secrets()
+		self.cluster.mint_credentials_if_needed()
+
+		self.assertEqual(first, self.secrets())
 
 
 class IntegrationTestLiveClusterRelease(IntegrationTestCase):
