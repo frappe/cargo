@@ -1,7 +1,7 @@
 # Setting up a Cargo host
 
-Cargo runs on its own machine, one per region. This is how a bare VM becomes a Cargo host
-that Central trusts.
+Cargo runs on its own machine, one per region. This is how a bare VM becomes a production
+Cargo host that Central trusts.
 
 The host does the work. Central hands out a short-lived token, and the host spends it to
 collect the two tokens it runs on. **Central never calls Cargo** — not during setup, not
@@ -39,6 +39,8 @@ how Central knows which host is calling later without the host having to claim a
 ```bash
 PILOT_ADMIN_PASSWORD=... \
 SITE_PASSWORD=... \
+ADMIN_DOMAIN=pilot.blr.example.com \
+SITE=cargo.blr.example.com \
 CENTRAL_URL=https://central.example.com \
 ATLAS_URL=https://atlas.example.com \
 REGION=blr \
@@ -46,7 +48,9 @@ CENTRAL_BOOTSTRAPPING_TOKEN=... \
 ./setup.sh
 ```
 
-`setup.sh` refuses to start unless all six are set.
+`setup.sh` refuses to start unless all seven required variables are set. `SITE` is the only
+one with a usable default, and it is not one you want in production — see
+[Domains](#domains).
 
 `REGION` must name the same **Region** you picked in step 1. Nothing checks that during
 install, and a mismatch enrols cleanly — the host then fails every later call with *"This
@@ -66,15 +70,33 @@ The script then:
 1. Runs pilot's installer, which brings Python, Node, MariaDB, Redis and nginx. The machine
    can be completely bare. Pilot is pinned to a release (`v0.0.29-pre-alpha`) rather than
    `develop`, so two hosts built weeks apart get the same pilot.
-2. Creates a bench and a site.
+2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, and a site named `SITE`.
 3. Downloads the Cargo app.
 4. Exports `CENTRAL_URL`, `ATLAS_URL`, `REGION` and `CENTRAL_BOOTSTRAPPING_TOKEN`, then
    installs Cargo on the site.
+5. Deploys the bench to production: systemd units for the workload, nginx in front of them.
 
 Step 4 is where enrolment happens: Cargo's install hook reads those four variables.
 
-`PILOT_VERSION`, `BENCH`, `SITE`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's
-own branch and still defaults to `develop`.
+`PILOT_VERSION`, `BENCH`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's own
+branch and still defaults to `develop`.
+
+### Domains
+
+Production serves two things, on two domains:
+
+| | What it is |
+|---|---|
+| `ADMIN_DOMAIN` | pilot's admin panel for this machine, the one `PILOT_ADMIN_PASSWORD` logs in to |
+| `SITE` | the Cargo site itself, which is also the base URL the host reports to Central |
+
+Both are served over plain HTTP on **port 80**. The script passes no `--tls`, so pilot does
+not request certificates and nginx renders no HTTPS server block: HTTPS is expected to
+terminate on the proxy in front of this host.
+
+`SITE` defaults to `cargo.localhost`, which is fine for a throwaway box and wrong everywhere
+else — the site name is the domain nginx serves and the base URL Cargo sends to Central
+during enrolment. Set it to a real hostname before running.
 
 ## Step 4 — what the install hook does
 
