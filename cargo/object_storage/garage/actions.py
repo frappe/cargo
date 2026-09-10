@@ -36,8 +36,7 @@ class Actions(Client):
 		try:
 			self.add_bucket_alias(bucket_id, alias)
 		except Error as error:
-			# Unnamed, so nothing to unname: the bucket alone goes.
-			self.rollback_bucket(bucket_id)
+			self.delete_bucket(bucket_id)
 			if ALIAS_TAKEN in str(error):
 				frappe.throw(
 					_("The bucket name {0} is already taken. Pick another.").format(alias),
@@ -56,34 +55,22 @@ class Actions(Client):
 			try:
 				return self.issue_credentials(alias, bucket_id)
 			except Exception:
-				self.rollback_bucket(bucket_id, alias)
+				self.delete_bucket(bucket_id)
 				raise
 
-	def rollback_bucket(self, bucket_id: str, alias: str | None = None) -> None:
-		"""Take a half-made bucket back out. The name goes first, so a retry can use it even
-		if the bucket outlives this."""
-		if alias:
-			try:
-				self.remove_bucket_alias(bucket_id, alias)
-			except Error:
-				frappe.log_error(title=f"{alias} could not be unnamed", message=frappe.get_traceback())
-
-		self.delete_bucket(bucket_id)
-
 	def remove_bucket(self, alias: str) -> None:
-		"""Drop a bucket and its key. Garage refuses a non-empty bucket, which is what keeps
-		this from ever taking objects with it."""
+		"""Drop a bucket and its key. Garage answers 409 for a bucket that still holds
+		objects, which is what keeps this from ever taking them with it."""
 		with self.bucket_lock(alias):
 			bucket_id = self.bucket_id(alias)
 			if not bucket_id:
 				return
 
-			# The key first: one that outlives its bucket reaches nothing and is only left
-			# for someone to wonder about.
+			# The bucket first: a refused delete would otherwise leave it live with its key
+			# already gone, reachable by nobody. A key outliving its bucket opens nothing.
+			self.delete_bucket(bucket_id)
 			if key := self.key(self.key_name(alias)):
 				self.delete_key(key["accessKeyId"])
-
-			self.delete_bucket(bucket_id)
 
 	def issue_credentials(self, alias: str, bucket_id: str | None = None) -> BucketCredentials:
 		"""An S3 key for this bucket and nothing else, handed back once. Takes the bucket it

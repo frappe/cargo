@@ -98,9 +98,6 @@ class Client:
 	def add_bucket_alias(self, bucket_id: str, alias: str) -> dict[str, Any]:
 		return self.call("AddBucketAlias", "POST", json={"bucketId": bucket_id, "globalAlias": alias})
 
-	def remove_bucket_alias(self, bucket_id: str, alias: str) -> dict[str, Any]:
-		return self.call("RemoveBucketAlias", "POST", json={"bucketId": bucket_id, "globalAlias": alias})
-
 	def delete_bucket(self, bucket_id: str) -> None:
 		self.call("DeleteBucket", "POST", params={"id": bucket_id})
 
