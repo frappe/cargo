@@ -79,15 +79,12 @@ class Machine(Document):
 			}
 		).insert(ignore_permissions=True)
 
-		machine.assign(machine.build(spec, base_image))
-
+		machine.vm_id = machine.build(spec, base_image)
+		machine.record("Pending")
 		return machine
 
-	def build(self, spec: NodeSpec, base_image: str) -> dict[str, str]:
-		"""Ask Atlas to build this machine, and work out where it will answer.
-
-		Nothing here holds a public address: machines are reached over the WG mesh, whose
-		addresses Atlas derives rather than allocates, so one is known before it boots."""
+	def build(self, spec: NodeSpec, base_image: str) -> str:
+		"""Ask Atlas to build this machine, and return the id it goes by."""
 		from cargo.atlas_client import AtlasClient
 
 		client = AtlasClient.from_settings()
@@ -108,7 +105,7 @@ class Machine(Document):
 			)
 			frappe.throw(_("Atlas would not build this machine. See the Error Log."))
 
-		return {"vm_id": created["id"], "address": client.address_of(created)}
+		return created["id"]
 
 	def terminate(self) -> bool:
 		"""Tell Atlas to let this machine go. A refusal leaves it Broken rather than
@@ -129,16 +126,9 @@ class Machine(Document):
 
 		return True
 
-	def assign(self, built: dict[str, str]) -> MachineStatus:
-		"""Atlas built this machine: it has an id and an address now, and is booting."""
-		self.vm_id = built["vm_id"]
-		self.address = built["address"]
-
-		return self.record("Pending")
-
 	def sync(self, client: AtlasClient) -> MachineStatus:
-		"""Record this machine's state from Atlas. A machine Atlas no longer has is one
-		whose termination finished, so 404 is an answer rather than a failure."""
+		"""Record this machine's state and address from Atlas. A machine it no longer has is
+		one whose termination finished, so 404 is an answer rather than a failure."""
 		self.last_synced_at = now_datetime()
 
 		try:
@@ -154,6 +144,10 @@ class Machine(Document):
 
 		if state != RUNNING_STATE:
 			return self.record(self.status)
+
+		self.address = payload.get("wireguard_mesh_ipv6")
+		if not self.address:
+			return self.record("Broken", error="Atlas reported no mesh address")
 
 		return self.record("Running")
 
