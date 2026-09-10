@@ -1,12 +1,19 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+import base64
+import hashlib
+import hmac
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import frappe
-from frappe.integrations.doctype.webhook.webhook import get_webhook_data, get_webhook_headers
+from frappe.integrations.doctype.webhook.webhook import (
+	WEBHOOK_SECRET_HEADER,
+	get_webhook_data,
+	get_webhook_headers,
+)
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import (
 	delete_all_passwords_for,
@@ -18,7 +25,6 @@ from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	CLUSTER_SECRETS,
 	WEBHOOK_ENDPOINT,
-	WEBHOOK_SECRET_HEADER,
 	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
 )
@@ -329,25 +335,27 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			self.insert_cluster()
 
-	def test_the_secret_central_knows_this_cargo_by_is_sent_with_every_report(self):
+	def test_the_report_is_signed_with_the_secret_central_knows_this_cargo_by(self):
+		"""Signed, not sent: the secret itself never leaves Cargo."""
 		self.set_secret("shared-with-central")
 		cluster = self.insert_cluster()
 		webhook = self.webhook_of(cluster)
 
 		self.assertTrue(webhook.enabled)
-		headers = get_webhook_headers(cluster, webhook)
+		self.assertTrue(webhook.enable_security)
+		self.assertEqual(webhook.get_password("webhook_secret"), "shared-with-central")
 
-		self.assertEqual(headers[WEBHOOK_SECRET_HEADER], "shared-with-central")
+		data = get_webhook_data(cluster, webhook)
+		signature = base64.b64encode(
+			hmac.new(b"shared-with-central", frappe.as_json(data).encode(), hashlib.sha256).digest()
+		)
 
-	def test_reconfiguring_rotates_the_secret_rather_than_stacking_headers(self):
+		self.assertEqual(get_webhook_headers(cluster, webhook)[WEBHOOK_SECRET_HEADER], signature)
+
+	def test_reconfiguring_rotates_the_secret_and_keeps_one_webhook(self):
 		cluster = self.insert_cluster()
 		self.set_secret("rotated")
 		configure_storage_cluster_webhook(cluster)
 
-		self.assertEqual(
-			frappe.db.count("Webhook", {"name": f"object_storage_cluster-{cluster.name}"}),
-			1,
-		)
-		headers = self.webhook_of(cluster).webhook_headers
-		self.assertEqual(len(headers), 1)
-		self.assertEqual(headers[0].value, "rotated")
+		self.assertEqual(frappe.db.count("Webhook", {"name": f"object_storage_cluster-{cluster.name}"}), 1)
+		self.assertEqual(self.webhook_of(cluster).get_password("webhook_secret"), "rotated")

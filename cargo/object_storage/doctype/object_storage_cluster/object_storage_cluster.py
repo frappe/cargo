@@ -26,7 +26,6 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 WEBHOOK_ENDPOINT = "/api/webhook/services/"
-WEBHOOK_SECRET_HEADER = "X-Cargo-Webhook-Secret"
 # The two states worth a call: the cluster may be used, or it may not.
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
@@ -421,10 +420,9 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"status": "{{ doc.status }}",
 				}
 			),
+			"enable_security": True,
+			"webhook_secret": secret,
 			"enabled": True,
 		}
 	)
-
-	webhook.webhook_headers = []
-	webhook.append("webhook_headers", {"key": WEBHOOK_SECRET_HEADER, "value": secret})
 	webhook.save(ignore_permissions=True)
