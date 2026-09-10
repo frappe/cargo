@@ -39,7 +39,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": 20,
 				"vm_id": vm_id,
-				"ipv4_address": "10.0.0.1",
+				"address": "10.0.0.1",
 				"status": "Running",
 			}
 		).insert()

@@ -7,7 +7,6 @@ set -euo pipefail
 : "${BINARY_URL:?BINARY_URL is required}"
 : "${METADATA_DIR:?METADATA_DIR is required}"
 : "${DATA_DIR:?DATA_DIR is required}"
-# Already carries its port, and its brackets when it is an IPv6 address.
 : "${RPC_PUBLIC_ADDR:?RPC_PUBLIC_ADDR is required}"
 : "${RPC_SECRET:?RPC_SECRET is required}"
 : "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"

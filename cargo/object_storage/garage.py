@@ -154,8 +154,6 @@ class Garage:
 			"BINARY_URL": BINARY_URL.format(version=cluster.garage_version, arch=cluster.garage_arch),
 			"METADATA_DIR": cluster.metadata_dir,
 			"DATA_DIR": cluster.data_dir,
-			# Bracketed here rather than in the script: garage.toml wants one literal, and
-			# an IPv6 address without brackets reads as a host and port.
 			"RPC_PUBLIC_ADDR": host_port(machine["address"], cluster.rpc_port),
 			"REGION": cluster.region,
 			"BASE_DOMAIN": cluster.base_domain,
