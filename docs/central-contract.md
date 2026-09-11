@@ -54,9 +54,8 @@ X-Cargo-Access-Token: <the Cargo Instance's cargo_access_token>
 JSON in, JSON out, unwrapped from Frappe's `{"message": ...}`. Every call takes the same two
 fields: `name`, the bucket, and `region`.
 
-The token is a JWT Central signs and Cargo verifies against Central's JWKS at
-`/api/method/central.api.jwks.get_jwks` — Cargo holds no secret for this, only Central's
-public keys. Its audience is `central-<region id>-bucket`, minted once per Cargo Instance
+The token is a JWT Central signs and Cargo verifies against the key set at the host's
+configured `JWKS_URL` — Cargo holds no secret for this, only Central's public keys. Its audience is `central-<region id>-bucket`, minted once per Cargo Instance
 when the host registers. Cargo also accepts `atlas-<region id>-admin`, the audience Atlas
 checks, because a region's control plane is one trust tier. Both name the region, so a token
 lifted from another region's traffic opens nothing.

@@ -29,6 +29,7 @@ SITE_PASSWORD=... \
 ADMIN_DOMAIN=pilot.blr.example.com \
 SITE=cargo.blr.example.com \
 CENTRAL_URL=https://central.example.com \
+JWKS_URL=https://central.example.com/api/method/central.api.jwks.get_jwks \
 ATLAS_URL=https://atlas.example.com \
 CARGO_URL=https://cargo-blr.example.com \
 CENTRAL_WEBHOOK_SECRET=... \
@@ -46,6 +47,10 @@ install hook writes them straight onto it, so a missing one fails the install ra
 leaving a host that is half configured. `SITE` is the only one with a usable default, and it
 is not one you want in production — see [Domains](#domains).
 
+Both passwords are checked against pilot's own rule before anything is installed: at least
+eight characters, upper and lower case, a number and a symbol. Pilot would otherwise refuse
+a weak one when it creates the bench, which is after the whole system stack has been built.
+
 The two passwords are different things, and neither is the database password:
 
 | | What it is |
@@ -54,6 +59,7 @@ The two passwords are different things, and neither is the database password:
 | `SITE_PASSWORD` | The Frappe `Administrator` password for the Cargo site |
 | MariaDB root | You don't set it. Pilot generates one when it creates the bench. |
 | `CENTRAL_WEBHOOK_SECRET` | Signs the reports this host sends Central. See [Reporting to Central](#reporting-to-central). |
+| `JWKS_URL` | Where Central publishes the keys it signs with, so Cargo can check the tokens Central presents |
 | `REGION` / `REGION_ID` | The region's name and Atlas's numeric id for it |
 | `ATLAS_KEY` / `ATLAS_SECRET` / `ATLAS_TENANT_ID` | This host's Atlas credentials, and the tenant every Atlas call is scoped to |
 
@@ -62,18 +68,35 @@ region's Atlas Region ID. Nothing checks either during install. A mismatched `RE
 every later Central call with *"This Cargo token is not for region X"*; a mismatched
 `REGION_ID` fails every Atlas call with a 403. See [One host, one region](#one-host-one-region).
 
-The script then:
+The script runs as root and does everything else as a `frappe` user it creates first —
+pilot refuses to run as root, and the bench's files belong to whoever serves them. Then:
 
-1. Runs pilot's installer, which brings Python, Node, MariaDB, Redis and nginx. The machine
-   can be completely bare. Pilot is pinned to a release (`v0.0.29-pre-alpha`) rather than
-   `develop`, so two hosts built weeks apart get the same pilot.
-2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, and a site named `SITE`.
-3. Downloads the Cargo app.
-4. Exports the nine variables above, then installs Cargo on the site.
-5. Deploys the bench to production: systemd units for the workload, nginx in front of them.
+1. Runs pilot's installer twice. The root pass installs Python, Node, MariaDB, Redis and
+   nginx and grants the bench user what it needs; the second pass installs pilot as that
+   user. The machine can be completely bare. Pilot is pinned to a release
+   (`v0.0.29-pre-alpha`) rather than `develop`, so two hosts built weeks apart get the same
+   pilot.
+2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, then initialises it. Creating a
+   bench only writes its `bench.toml`; initialising is what builds the virtualenv, clones
+   the framework and configures Redis.
+3. Creates a site named `SITE` and downloads the Cargo app.
+4. Deploys the bench to production: systemd units for the workload, nginx in front of them.
+   This comes before Cargo is installed, because installing an app queues background work
+   and there is no Redis to queue it on until the workload is up.
+5. Exports the ten variables above and installs Cargo on the site, then restarts the
+   workload — the workers started before Cargo existed, so they carry none of its
+   scheduled jobs.
 
 `PILOT_VERSION`, `BENCH`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's own
 branch and still defaults to `develop`.
+
+### Proving it without a machine
+
+`tools/e2e/run.sh` runs all of the above against a throwaway Ubuntu container and checks
+what came out — the bench, the site, Cargo Settings, the systemd units and the site
+answering over nginx. The container runs systemd as PID 1, because that is what pilot
+deploys the bench with. It installs the working tree rather than the pushed branch, so it
+tests what you are about to ship. See `tools/e2e/README.md`.
 
 ### Domains
 
@@ -94,9 +117,15 @@ real hostname before running.
 
 ## Step 3 — what the install hook does
 
-`cargo/install.py` runs on `after_install` and writes all nine values onto **Cargo Settings**.
-That is the whole of it: no call goes out, and nothing has to be reachable for the install to
-finish.
+`cargo/install.py` runs on `after_install`, writes all nine values onto **Cargo Settings**,
+and marks Frappe's setup wizard done. No call goes out, and nothing has to be reachable for
+the install to finish.
+
+The wizard is completed rather than answered. Frappe holds every desk page at
+`/app/setup-wizard` until a person walks it, and a Cargo host has nobody to — the site serves
+one app and already took its configuration from the environment. Country, timezone and
+currency are left at their defaults; set them in **System Settings** if the host's logs and
+schedules need a local clock.
 
 ### Installing without configuring
 
@@ -130,12 +159,13 @@ Central's published keys and checks its audience is `atlas-<region id>-admin` �
 Bucket work runs the other way: Central asks Cargo to make, rotate and drop buckets, because
 Cargo owns the cluster's admin token and Central never sees it.
 
-Those calls carry `X-Cargo-Access-Token`, a JWT that Cargo verifies against Central's JWKS at
-`/api/method/central.api.jwks.get_jwks`. Cargo holds no secret for this — it needs only
-Central's public keys, which it fetches from `CENTRAL_URL`. A token is accepted when its
-audience names this region: `central-<region id>-bucket`, which Central mints per Cargo
-Instance, or `atlas-<region id>-admin`, the one Atlas checks. A token minted for another
-region opens nothing here.
+Those calls carry `X-Cargo-Access-Token`, a JWT that Cargo verifies against the key set at
+`JWKS_URL`. Cargo holds no secret for this — it needs only Central's public keys. The URL is
+given outright rather than built from `CENTRAL_URL`, so Central can publish its keys
+somewhere else without a Cargo release. A token is accepted when its audience names this
+region: `central-<region id>-bucket`, which Central mints per Cargo Instance, or
+`atlas-<region id>-admin`, the one Atlas checks. A token minted for another region opens
+nothing here.
 
 This is the one path that needs the host to be reachable from Central, at `CARGO_URL`.
 
