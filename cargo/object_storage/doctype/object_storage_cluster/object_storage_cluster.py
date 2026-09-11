@@ -26,11 +26,8 @@ if typing.TYPE_CHECKING:
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
-# A step that installs over SSH makes a few calls, each allowed SSH_TIMEOUT. The job must
-# outlast them, or the worker kills a step that SSH would still have let finish.
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
 WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook"
-# The two states worth a call: the cluster may be used, or it may not.
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 PROXY_SITE_NAMES = ("s3-svc", "s3-admin-svc")
