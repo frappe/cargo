@@ -19,6 +19,7 @@ REPO="${REPO:-https://github.com/frappe/cargo}"
 # that itself when it initialises the bench.
 PILOT_ADMIN_PASSWORD="${PILOT_ADMIN_PASSWORD:-}"   # pilot's own admin panel
 SITE_PASSWORD="${SITE_PASSWORD:-}"     # the site's Frappe Administrator
+WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-}" # the domain for Cargo eg "s3.<domain>" & "s3-admin.<domain>"
 # One per mandatory field of Cargo Settings, and nothing else: the install hook writes
 # these straight onto it, so anything missing here fails the install.
 CENTRAL_URL="${CENTRAL_URL:-}" # Central's URL for this host to call

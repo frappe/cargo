@@ -20,6 +20,7 @@ ENROLMENT_VARS = (
 	"PROXY_TOKEN",
 	"CENTRAL_WEBHOOK_SECRET",
 	"JWKS_URL",
+	"WILDCARD_DOMAIN",
 )
 
 
@@ -63,4 +64,5 @@ def record_upstreams() -> None:
 	settings.proxy_token = os.getenv("PROXY_TOKEN")
 	settings.central_webhook_secret = os.getenv("CENTRAL_WEBHOOK_SECRET")
 	settings.jwks_url = os.getenv("JWKS_URL")
+	settings.wildcard_domain = os.getenv("WILDCARD_DOMAIN")
 	settings.save(ignore_permissions=True)
