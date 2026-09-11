@@ -15,11 +15,6 @@ from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.garage.client import Client, Error
 from cargo.ssh import run_over_ssh, script
 
-if typing.TYPE_CHECKING:
-	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
-		ObjectStorageCluster,
-	)
-
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
 NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
