@@ -9,7 +9,6 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
-from frappe.utils.synchronization import LockTimeoutError, filelock
 
 from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
 from cargo.client_models import NodeSpec
@@ -20,8 +19,6 @@ if TYPE_CHECKING:
 
 MachineStatus = Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
 DEAD_MACHINE_STATES = ("Broken", "Terminated")
-# Long enough to outlast one Atlas round trip by whoever holds it.
-SYNC_LOCK_TIMEOUT = 30
 
 
 class Machine(Document):
@@ -129,33 +126,6 @@ class Machine(Document):
 
 		return True
 
-	@frappe.whitelist()
-	def sync_now(self) -> MachineStatus:
-		"""Ask Atlas now rather than wait for the scheduled sweep. The owner hears of a change
-		the same way it would from the sweep."""
-		from cargo.atlas_client import AtlasClient
-
-		if not self.vm_id:
-			frappe.throw(_("Atlas has not built this machine yet, so there is nothing to ask it."))
-
-		try:
-			moved = self.sync_exclusively(AtlasClient.from_settings())
-		except LockTimeoutError:
-			frappe.throw(_("This machine is already being synced. Try again in a moment."))
-
-		if moved:
-			notify_owner(self.reference_doctype, self.reference_name)
-
-		return self.status
-
-	def sync_exclusively(self, client: AtlasClient) -> bool:
-		"""Ensure sync is fired only when other callers are not already doing it."""
-		with filelock(f"machine-sync-{self.name}", timeout=SYNC_LOCK_TIMEOUT):
-			self.reload()
-			before = self.status
-
-			return self.sync(client) != before
-
 	def sync(self, client: AtlasClient) -> MachineStatus:
 		"""Record this machine's state and address from Atlas. A machine it no longer has is
 		one whose termination finished, so 404 is an answer rather than a failure."""
@@ -198,24 +168,12 @@ def sync_pending_machines() -> None:
 
 	for name in frappe.get_all("Machine", filters={"status": "Pending"}, pluck="name"):
 		machine: Machine = frappe.get_doc("Machine", name)
-		try:
-			moved = machine.sync_exclusively(client)
-		except LockTimeoutError:
-			# Someone is syncing it right now and will tell its owner; the next sweep retries.
-			continue
-
-		if moved:
+		if machine.sync(client) != "Pending":
 			settled.add((machine.reference_doctype, machine.reference_name))
 
 	# Only owners whose machines actually moved: the rest have nothing new to judge.
 	for doctype, name in settled:
-		notify_owner(doctype, name)
-
-
-def notify_owner(doctype: str, name: str) -> None:
-	"""Let a machine's owner react to its new state. Its failure is logged, not raised: the
-	machine's state is already recorded, and one owner's error must not undo it."""
-	try:
-		frappe.get_doc(doctype, name).sync_machines()
-	except Exception:
-		frappe.log_error(title=f"{name} could not take its machines' new state")
+		try:
+			frappe.get_doc(doctype, name).sync_machines()
+		except Exception:
+			frappe.log_error(title=f"{name} could not take its machines' new state")

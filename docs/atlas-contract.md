@@ -67,10 +67,6 @@ A machine that is `running` with no mesh address is marked **Broken** rather tha
 nothing about the address itself: it records the one Atlas reports, because a wrong address
 is worse than none.
 
-Every machine can also be synced on demand from its form in Desk with **Sync with Atlas**,
-rather than waiting for the minute-by-minute sweep. Its owner hears about a change the same
-way it would from the sweep.
-
 ### Dead states
 
 Cargo treats only `failed` as terminal. If Atlas can also report `unknown`, `stopped` or
