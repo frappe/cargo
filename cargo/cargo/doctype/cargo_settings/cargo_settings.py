@@ -28,3 +28,7 @@ class CargoSettings(Document):
 		region_id: DF.Int
 		wildcard_domain: DF.Data
 	# end: auto-generated types
+
+	def validate(self) -> None:
+		# Every consumer builds a domain from this, so it is canonicalised once, here.
+		self.wildcard_domain = (self.wildcard_domain or "").strip().strip(".").lower()
