@@ -12,13 +12,23 @@ from frappe.utils import now_datetime
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.central_client import CentralClient
-from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementGroupSchema, Role
-from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
-from cargo.object_storage.garage import Garage
+from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
+from cargo.object_storage.garage.setup import Setup
 from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
+
+if typing.TYPE_CHECKING:
+	from frappe.integrations.doctype.webhook.webhook import Webhook
+
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+
+# Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
+SECRET_LENGTH = 64
+WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook"
+# The two states worth a call: the cluster may be used, or it may not.
+REPORTED_STATUSES = ("Active", "Failed")
+CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -51,9 +61,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		health: DF.Literal["Unknown", "Healthy", "Degraded", "Critical"]
 		k2v_port: DF.Int
 		machines: DF.Table[ObjectStorageNode]
-		metadata_bucket: DF.Data | None
-		metadata_bucket_access_key: DF.Data | None
-		metadata_bucket_secret_key: DF.Password | None
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
 		partition_count: DF.Int
@@ -97,10 +104,27 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not gateway:
 			frappe.throw(_("This cluster has no gateway to reach it at."))
 
-		if not gateway.ipv4_address:
+		if not gateway.address:
 			frappe.throw(_("This cluster's gateway has not booted yet."))
 
-		return gateway.ipv4_address
+		return gateway.address
+
+	@cached_property
+	def garage_setup(self) -> Setup:
+		"""This cluster's Garage setup client"""
+		return Setup(self)
+
+	def before_insert(self) -> None:
+		if all(self.get(name) for name in CLUSTER_SECRETS):
+			return
+
+		for name in CLUSTER_SECRETS:
+			if not self.get(name):
+				self.update({name: frappe.generate_hash(length=SECRET_LENGTH)})
+
+	def after_insert(self) -> None:
+		"""Ensure webhook for this cluster is configured"""
+		configure_storage_cluster_webhook(self)
 
 	def request_machine(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
 		"""Record one machine and ask Atlas to build it. Throws, rolling the record back."""
@@ -110,20 +134,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 			self,
 			spec,
 			base_image=self.base_image,
-			title=f"{self.name} object storage",
 			zone=self.region,
-			placement=PlacementGroupSchema(
-				specs=[spec],
-				strategy=self.strategy,
-				topology_key=self.topology_key,
-				partition_count=self.partition_count,
-			),
 		)
-
-	@cached_property
-	def garage(self) -> Garage:
-		"""This cluster's Garage."""
-		return Garage(self)
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
@@ -148,8 +160,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Set up what's not setup yet. THat's it idempotently called by the user whenever ready from desk."""
 		can_trigger_setup(self)
 
-		self.mint_credentials_if_needed()
-		registered_nodes = self.garage.healthy_nodes()
+		registered_nodes = self.garage_setup.healthy_nodes()
 		if len(registered_nodes) == len(self.all_nodes):
 			self.mark_cluster_status("Active", None)
 			return
@@ -158,17 +169,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.mark_cluster_status("Setting Up", None)
 		# Here we will start a flow of triggers.
 		self._setup.run_as_workflow()
-
-	@frappe.whitelist()
-	def apply_layout(self) -> None:
-		"""Apply the layout to the cluster. This is idempotent and can be called at any time.
-
-		Central is told after: the cluster cannot hold an object until this lands."""
-		self.garage.apply_layout()
-
-		if self.status == "Active":
-			self.create_metadata_bucket_if_needed()
-			self.inform_central_of_cluster_health("Active")
 
 	@flow
 	def _setup(self) -> None:
@@ -198,13 +198,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 				return
 
 		self.record_cluster_peers()
+		self.apply_layout()
 		self.verify_connected_nodes()
 
 	@task
 	def discover_machines_to_setup(self) -> list[str]:
 		"""Gateway first: every other node reaches the cluster through its admin API, so one
 		set up before it has nothing to join."""
-		healthy_nodes = self.garage.healthy_nodes()
+		healthy_nodes = self.garage_setup.healthy_nodes()
 		machines_to_setup = [machine for machine in self.all_nodes if machine.name not in healthy_nodes]
 
 		return [
@@ -216,7 +217,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Install Garage on one machine and fold it into the cluster."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				garage = Garage(self)
+				garage = self.garage_setup
 				garage.setup_machine(garage.machine(machine.name), on_output=log.write)
 			except Exception:
 				frappe.log_error(
@@ -230,7 +231,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 	@task
 	def record_cluster_peers(self) -> None:
 		"""Give every node that joined the same peers, now that they all exist."""
-		garage = Garage(self)
+		garage = self.garage_setup
 		connected = garage.get_connected_nodes()
 		if not connected.peers:
 			return
@@ -240,10 +241,17 @@ class ObjectStorageCluster(WorkflowBuilder):
 				garage.record_peers(machine, connected.peers)
 
 	@task
+	def apply_layout(self) -> None:
+		"""Give every node that joined its place. Part of setting up, not a step of its own:
+		a joined node carries no storage role until this lands, so a cluster without it
+		holds nothing."""
+		self.garage_setup.apply_staged_layout()
+
+	@task
 	def verify_connected_nodes(self) -> None:
 		"""What actually joined, as Garage sees it. Health labels the rest; this only decides
 		whether the cluster came up at all."""
-		healthy_nodes = self.garage.healthy_nodes()
+		healthy_nodes = self.garage_setup.healthy_nodes()
 		joined_storage = [node for node in self.storage_nodes if node.name in healthy_nodes]
 
 		if len(joined_storage) < self.replication_factor:
@@ -301,81 +309,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 			)
 			return
 
-	def inform_central_of_cluster_health(self, health: typing.Literal["Active", "Failed"]) -> None:
-		"""Tell Central whether this region's cluster may be used. Todo: add health reporting system.
-
-		Joined nodes carry no storage role until a layout is applied, so a cluster is not
-		servable until then. Zero also means Garage could not be reached."""
-		can_serve = health == "Active" and self.garage.layout_version() > 0
-		endpoints = self.central_endpoints if can_serve else {}
-		try:
-			CentralClient.from_settings().register_storage_cluster(
-				region=self.region, active=can_serve, **endpoints
-			)
-		except Exception:
-			frappe.log_error(
-				title=f"{self.name} could not inform Central it is {health}",
-				message=frappe.get_traceback(with_context=True),
-			)
-			frappe.throw(_("Failed to inform Central of this cluster's status. Please try again later."))
-
-	@property
-	def central_endpoints(self) -> dict[str, str]:
-		"""Where Central reaches this cluster. Every call goes through the gateway, and
-		nothing terminates TLS in front of Garage."""
-		address = self.gateway_address
-
-		return {
-			"base_url": f"http://{address}:{self.admin_port}",
-			"s3_endpoint": f"http://{address}:{self.s3_port}",
-			"web_endpoint": f"http://{address}:{self.web_port}",
-		}
-
-	def mint_credentials_if_needed(self) -> None:
-		"""Mint this cluster's secrets if it has none. Setup calls it first: nothing can reach
-		a node without them, and Central answers the same secrets for a region every time."""
-		if not self.admin_token or not self.rpc_secret or not self.metrics_token:
-			machine_ids = [machine.vm_id for machine in self.all_nodes]
-			try:
-				tokens = CentralClient.from_settings().get_required_credentials(
-					region=self.region, vm_ids=machine_ids, required=REQUIRED_CREDENTIALS
-				)
-			except Exception:
-				frappe.log_error(
-					title=f"{self.name} could not mint credentials",
-					message=frappe.get_traceback(with_context=True),
-				)
-				frappe.throw(_("Failed to mint credentials for this cluster. Please try again later."))
-
-			self.update(
-				{
-					"admin_token": tokens["admin_token"],
-					"rpc_secret": tokens["rpc_secret"],
-					"metrics_token": tokens["metrics_token"],
-				}
-			)
-			self.save()
-
-	def create_metadata_bucket_if_needed(self) -> None:
-		"""Cargo's own bucket on this cluster, and the key that reaches it.
-		THIS IS ONLY FOR INTERNAL/CARGO USAGE NOT FOR CUSTOMERS!"""
-		if (
-			self.metadata_bucket
-			and self.metadata_bucket_access_key
-			and self.garage.admin.bucket(self.metadata_bucket)
-		):
-			return
-
-		bucket = self.garage.create_metadata_bucket()
-		self.update(
-			{
-				"metadata_bucket": bucket["name"],
-				"metadata_bucket_access_key": bucket["access_key"],
-				"metadata_bucket_secret_key": bucket["secret_key"],
-			}
-		)
-		self.save()
-
 	@property
 	def is_live(self) -> bool:
 		"""A cluster that has served once. Past that, losing a machine is a real failure."""
@@ -385,10 +318,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Mark the cluster's status and reason."""
 		if status == "Active" and not self.activated_on:
 			self.activated_on = now_datetime()
-
-		if status == "Active" or status == "Failed":
-			# Inform on the two most critical states of the cluster.
-			self.inform_central_of_cluster_health(status)
 
 		self.status = status
 		self.error = reason
@@ -441,11 +370,11 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 
 	# Nothing can have joined yet: no gateway to join through, or no secrets to join with.
 	if not cluster.gateway_node or not all(
-		cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
+		cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS
 	):
 		return
 
-	joined = cluster.garage.healthy_nodes()
+	joined = cluster.garage_setup.healthy_nodes()
 	if cluster.is_live:
 		roles = {row.machine: row.role for row in cluster.machines}
 		if any(roles[name] == GATEWAY for name in named):
@@ -461,3 +390,40 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 				", ".join(serving)
 			)
 		)
+
+
+def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
+	"""Point a Frappe Webhook at Central so this cluster reports its own status changes."""
+	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+	if not settings.central_url:
+		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
+
+	secret = settings.get_password("central_webhook_secret", raise_exception=True)
+	name = f"object_storage_cluster-{cluster.name}"
+	webhook: Webhook = (
+		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
+	)
+	webhook.name = name
+	webhook.update(
+		{
+			"webhook_doctype": cluster.doctype,
+			"webhook_docevent": "on_update",
+			"request_url": settings.central_url.rstrip("/") + WEBHOOK_ENDPOINT,
+			"request_method": "POST",
+			"request_structure": "JSON",
+			"condition": f"doc.status in {REPORTED_STATUSES}",
+			"webhook_json": frappe.as_json(
+				{
+					"region": settings.region,
+					"region_id": settings.region_id,
+					"service": "storage",
+					"status": "{{ doc.status }}",
+					"service_endpoint": "{{ doc.gateway_address }}",
+				}
+			),
+			"enable_security": True,
+			"webhook_secret": secret,
+			"enabled": True,
+		}
+	)
+	webhook.save(ignore_permissions=True)

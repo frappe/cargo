@@ -45,7 +45,7 @@ replication_factor = $REPLICATION_FACTOR
 consistency_mode   = "consistent"
 
 rpc_bind_addr   = "[::]:$RPC_PORT"
-rpc_public_addr = "$RPC_PUBLIC_ADDR:$RPC_PORT"
+rpc_public_addr = "$RPC_PUBLIC_ADDR"
 rpc_secret      = "$RPC_SECRET"
 
 # Left empty: nodes are peered over the admin API, and set_peers.sh fills this in for the

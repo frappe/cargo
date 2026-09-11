@@ -3,9 +3,9 @@
 Cargo runs on its own machine, one per region. This is how a bare VM becomes a production
 Cargo host that Central trusts.
 
-The host does the work. Central hands out a short-lived token, and the host spends it to
-collect the two tokens it runs on. **Central never calls Cargo** — not during setup, not
-after. That means a Cargo host does not have to be reachable from Central at all.
+The provisioner does the handing over. Everything the host needs to know is passed to it at
+install time, in the environment, and written straight onto **Cargo Settings**. The host
+asks nobody for its configuration afterwards.
 
 ## Before you start
 
@@ -15,26 +15,13 @@ Atlas for machines and you have to give it Atlas's URL.
 ## Step 1 — create the Cargo Instance in Central
 
 Create a **Cargo Instance** and set its **Region**. One Cargo per region. That is the only
-field you fill in; everything else on the form is written by the host when it enrols.
+field you fill in.
 
-The instance starts as **Draft**.
+The region also needs an **Atlas Region ID** on its **Region** record — Atlas's own numeric
+id, copied from that region's Atlas Settings. Central puts it in the audience of the token
+Cargo presents, so a token minted for one region is refused in another.
 
-## Step 2 — issue a bootstrapping token
-
-Press **Issue Bootstrapping Token** on that instance. Central shows you one line:
-
-```
-CENTRAL_BOOTSTRAPPING_TOKEN=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
-```
-
-Copy it now. It is shown once, and it **expires in 30 minutes**, so issue it when you are
-ready to run the install, not the day before. If it expires, press the button again — a new
-token replaces the old one.
-
-The token is a JWT signed by Central. Its audience is this Cargo Instance's name, which is
-how Central knows which host is calling later without the host having to claim an identity.
-
-## Step 3 — run the script on the new machine
+## Step 2 — run the script on the new machine
 
 ```bash
 PILOT_ADMIN_PASSWORD=... \
@@ -42,20 +29,27 @@ SITE_PASSWORD=... \
 ADMIN_DOMAIN=pilot.blr.example.com \
 SITE=cargo.blr.example.com \
 CENTRAL_URL=https://central.example.com \
+JWKS_URL=https://central.example.com/api/method/central.api.jwks.get_jwks \
 ATLAS_URL=https://atlas.example.com \
+CARGO_URL=https://cargo-blr.example.com \
+CENTRAL_WEBHOOK_SECRET=... \
 REGION=blr \
-CENTRAL_BOOTSTRAPPING_TOKEN=... \
+REGION_ID=3 \
+ATLAS_KEY=... \
+ATLAS_SECRET=... \
+ATLAS_TENANT_ID=7 \
 ./setup.sh
 ```
 
-`setup.sh` refuses to start unless all seven required variables are set. `SITE` is the only
-one with a usable default, and it is not one you want in production — see
-[Domains](#domains).
+`setup.sh` refuses to start unless every one of them is set, and names the ones that are
+missing. There is one variable per mandatory field of Cargo Settings and nothing else: the
+install hook writes them straight onto it, so a missing one fails the install rather than
+leaving a host that is half configured. `SITE` is the only one with a usable default, and it
+is not one you want in production — see [Domains](#domains).
 
-`REGION` must name the same **Region** you picked in step 1. Nothing checks that during
-install, and a mismatch enrols cleanly — the host then fails every later call with *"This
-Cargo token is not for region X"*, because Central goes by the region on the Cargo Instance,
-not by what the host was told. See [One host, one region](#one-host-one-region).
+Both passwords are checked against pilot's own rule before anything is installed: at least
+eight characters, upper and lower case, a number and a symbol. Pilot would otherwise refuse
+a weak one when it creates the bench, which is after the whole system stack has been built.
 
 The two passwords are different things, and neither is the database password:
 
@@ -64,22 +58,45 @@ The two passwords are different things, and neither is the database password:
 | `PILOT_ADMIN_PASSWORD` | Logs in to pilot's own admin panel on this machine |
 | `SITE_PASSWORD` | The Frappe `Administrator` password for the Cargo site |
 | MariaDB root | You don't set it. Pilot generates one when it creates the bench. |
+| `CENTRAL_WEBHOOK_SECRET` | Signs the reports this host sends Central. See [Reporting to Central](#reporting-to-central). |
+| `JWKS_URL` | Where Central publishes the keys it signs with, so Cargo can check the tokens Central presents |
+| `REGION` / `REGION_ID` | The region's name and Atlas's numeric id for it |
+| `ATLAS_KEY` / `ATLAS_SECRET` / `ATLAS_TENANT_ID` | This host's Atlas credentials, and the tenant every Atlas call is scoped to |
 
-The script then:
+`REGION` must name the same **Region** you picked in step 1, and `REGION_ID` must match that
+region's Atlas Region ID. Nothing checks either during install. A mismatched `REGION` fails
+every later Central call with *"This Cargo token is not for region X"*; a mismatched
+`REGION_ID` fails every Atlas call with a 403. See [One host, one region](#one-host-one-region).
 
-1. Runs pilot's installer, which brings Python, Node, MariaDB, Redis and nginx. The machine
-   can be completely bare. Pilot is pinned to a release (`v0.0.29-pre-alpha`) rather than
-   `develop`, so two hosts built weeks apart get the same pilot.
-2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, and a site named `SITE`.
-3. Downloads the Cargo app.
-4. Exports `CENTRAL_URL`, `ATLAS_URL`, `REGION` and `CENTRAL_BOOTSTRAPPING_TOKEN`, then
-   installs Cargo on the site.
-5. Deploys the bench to production: systemd units for the workload, nginx in front of them.
+The script runs as root and does everything else as a `frappe` user it creates first —
+pilot refuses to run as root, and the bench's files belong to whoever serves them. Then:
 
-Step 4 is where enrolment happens: Cargo's install hook reads those four variables.
+1. Runs pilot's installer twice. The root pass installs Python, Node, MariaDB, Redis and
+   nginx and grants the bench user what it needs; the second pass installs pilot as that
+   user. The machine can be completely bare. Pilot is pinned to a release
+   (`v0.0.29-pre-alpha`) rather than `develop`, so two hosts built weeks apart get the same
+   pilot.
+2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, then initialises it. Creating a
+   bench only writes its `bench.toml`; initialising is what builds the virtualenv, clones
+   the framework and configures Redis.
+3. Creates a site named `SITE` and downloads the Cargo app.
+4. Deploys the bench to production: systemd units for the workload, nginx in front of them.
+   This comes before Cargo is installed, because installing an app queues background work
+   and there is no Redis to queue it on until the workload is up.
+5. Exports the ten variables above and installs Cargo on the site, then restarts the
+   workload — the workers started before Cargo existed, so they carry none of its
+   scheduled jobs.
 
 `PILOT_VERSION`, `BENCH`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's own
 branch and still defaults to `develop`.
+
+### Proving it without a machine
+
+`tools/e2e/run.sh` runs all of the above against a throwaway Ubuntu container and checks
+what came out — the bench, the site, Cargo Settings, the systemd units and the site
+answering over nginx. The container runs systemd as PID 1, because that is what pilot
+deploys the bench with. It installs the working tree rather than the pushed branch, so it
+tests what you are about to ship. See `tools/e2e/README.md`.
 
 ### Domains
 
@@ -88,123 +105,93 @@ Production serves two things, on two domains:
 | | What it is |
 |---|---|
 | `ADMIN_DOMAIN` | pilot's admin panel for this machine, the one `PILOT_ADMIN_PASSWORD` logs in to |
-| `SITE` | the Cargo site itself, which is also the base URL the host reports to Central |
+| `SITE` | the Cargo site itself, the host that answers at `CARGO_URL` |
 
 Both are served over plain HTTP on **port 80**. The script passes no `--tls`, so pilot does
 not request certificates and nginx renders no HTTPS server block: HTTPS is expected to
 terminate on the proxy in front of this host.
 
 `SITE` defaults to `cargo.localhost`, which is fine for a throwaway box and wrong everywhere
-else — the site name is the domain nginx serves and the base URL Cargo sends to Central
-during enrolment. Set it to a real hostname before running.
+else — the site name is the domain nginx serves, and `CARGO_URL` has to reach it. Set it to a
+real hostname before running.
 
-## Step 4 — what the install hook does
+## Step 3 — what the install hook does
 
-`cargo/install.py` runs on `after_install`:
+`cargo/install.py` runs on `after_install`, writes all nine values onto **Cargo Settings**,
+and marks Frappe's setup wizard done. No call goes out, and nothing has to be reachable for
+the install to finish.
 
-1. Saves `CENTRAL_URL`, `ATLAS_URL`, `REGION` and the bootstrapping token into **Cargo
-   Settings**.
-2. Calls Central, presenting the bootstrapping token, and sends its own base URL
-   (`frappe.utils.get_url()`) so Central knows where this host lives.
-3. Saves the two access tokens Central returns.
-4. Clears the bootstrapping token — it has been spent.
+The wizard is completed rather than answered. Frappe holds every desk page at
+`/app/setup-wizard` until a person walks it, and a Cargo host has nobody to — the site serves
+one app and already took its configuration from the environment. Country, timezone and
+currency are left at their defaults; set them in **System Settings** if the host's logs and
+schedules need a local clock.
 
-Central, on its side, saves the same two tokens, records the base URL, sets the instance to
-**Registered** with a timestamp, and clears its copy of the bootstrapping token.
+### Installing without configuring
 
-If any of that fails, the install fails, and you start again with a fresh token. Nothing is
-half-written on either side: a host without both access tokens can do nothing, and an
-instance that is still **Draft** never got them.
+With `CI` set in the environment, the hook returns immediately. That is CI, where the app is
+installed with nothing to point it at.
 
-### Installing without enrolling
+Otherwise a missing variable fails the install, naming the ones it did not get. A
+half-supplied set is a typo, not an intention.
 
-If **none** of the four variables are set, the hook does nothing and the install succeeds.
-That is CI, and a local dev site.
+## Reporting to Central
 
-If **some** of them are set, the install fails loudly. A half-supplied set is a typo, not an
-intention.
+Cargo tells Central when a cluster becomes usable or fails. It does this with a **Webhook**,
+made against the cluster when the cluster is created and firing on `Active` and `Failed`.
 
-## The one-time token
+Frappe signs the body with `CENTRAL_WEBHOOK_SECRET` and sends the signature as
+`X-Frappe-Webhook-Signature` — an HMAC-SHA256 of the JSON body, base64 encoded. The secret
+itself never leaves the host, and the signature covers the payload, so Central can tell a
+tampered report from a genuine one.
 
-The bootstrapping token can only be spent once. Central stores the token it issued, and on
-enrolment compares the presented token against the stored one; a successful enrolment clears
-it and moves the instance to **Registered**. So a replay — the same token used a second
-time — is rejected with a 401.
+Central verifies it against the same secret, which the provisioner gave to both sides.
 
-That's the point: a token leaked from a shell history or a log can't be used to collect a
-second set of credentials for a host that already enrolled.
+## Talking to Atlas
 
-**Two replays at once are refused too.** Comparing the presented token against the stored one
-is not enough on its own: if two requests carrying the same token arrive together, both can
-read it as unspent before either clears it, and both walk away with valid credentials for the
-same host. So Central locks the Cargo Instance row before reading the token and holds it
-until the request commits. The second request waits, then sees **Registered** rather than
-**Draft**, and is refused. Whichever request loses the race gets a 401; the winner enrols
-normally.
+Every Atlas call carries two headers: `X-Atlas-Central-Token`, a JWT signed by Central, and
+`X-Tenant-ID`, the tenant this host provisions into. Atlas verifies the token against
+Central's published keys and checks its audience is `atlas-<region id>-admin` — which is why
+`REGION_ID` has to be right.
 
-## The two tokens the host runs on
+## Central calling Cargo
 
-Cargo talks to two upstreams, so Central mints two tokens:
+Bucket work runs the other way: Central asks Cargo to make, rotate and drop buckets, because
+Cargo owns the cluster's admin token and Central never sees it.
 
-| Token | Used for | Audience | Scope | Instance |
-|---|---|---|---|---|
-| `central_access_token` | calls to Central | `central` | `cargo:central` | this Cargo Instance |
-| `atlas_access_token` | calls to Atlas | `atlas` | `cargo:atlas` | this Cargo Instance |
+Those calls carry `X-Cargo-Access-Token`, a JWT that Cargo verifies against the key set at
+`JWKS_URL`. Cargo holds no secret for this — it needs only Central's public keys. The URL is
+given outright rather than built from `CENTRAL_URL`, so Central can publish its keys
+somewhere else without a Cargo release. A token is accepted when its audience names this
+region: `central-<region id>-bucket`, which Central mints per Cargo Instance, or
+`atlas-<region id>-admin`, the one Atlas checks. A token minted for another region opens
+nothing here.
 
-Both are signed by Central. Central checks its own signature; Atlas checks it against
-Central's published public keys.
+This is the one path that needs the host to be reachable from Central, at `CARGO_URL`.
 
-They are separate on purpose. If Cargo carried one token, a copy captured from an Atlas
-request could be turned around and used to ask Central for cluster secrets. With two, the
-scope check rejects the Atlas token at Central and the other way round.
-
-Both ride an `X-Cargo-Token` header, not `Authorization`. That is not a style choice: Frappe
-treats `Authorization` as OAuth or an API key and rejects anything else with a 401 before
-the request reaches the endpoint. The bootstrapping token rides
-`X-Cargo-Bootstrapping-Token` for the same reason.
-
-Both also carry an `instance` claim naming the Cargo Instance they were minted for. The
-audience says which upstream a token is for; the instance says which host is holding it.
-Central requires that claim, so a token minted before hosts were named is refused outright
-rather than being read as belonging to every host.
-
-These tokens are long-lived — a year. Cargo is infrastructure, not a session.
+Tokens ride their own headers rather than `Authorization`: Frappe treats `Authorization` as
+OAuth or an API key and rejects anything else with a 401 before the request reaches the
+endpoint.
 
 ## One host, one region
 
 A Cargo host may only act on the region its own Cargo Instance names. Every call that takes a
-`region` is checked against the region on the instance in the token, and a mismatch is
-refused before the endpoint runs.
+`region` is checked against it, in both directions — Central refuses a Cargo host asking
+about another region, and Cargo refuses a caller naming a region that is not its own.
 
 Without that check a valid token is a valid token: any Cargo host could name any region and
-Central would answer for it — handing over another cluster's `rpc_secret` and admin token,
-repointing its endpoints at a machine of the caller's choosing, or marking it down. The token
-proves *a* Cargo host is calling; the instance claim is what proves *which* one.
-
-This is also why the host never sends its own identity. Central creates the Cargo Instance,
-so Central already knows the name and puts it in the token; a host that could state its own
-identity could state someone else's.
+Central would answer for it — repointing another cluster's endpoints at a machine of the
+caller's choosing, or marking it down. The token proves *a* Cargo host is calling; the
+instance claim is what proves *which* one.
 
 A host whose instance is set to **Disabled** is refused the same way, on every call. That is
 how you take a host out of service without deleting anything.
 
-## Re-enrolling a host
-
-Press **Re-issue Bootstrapping Token** on the instance and run the enrolment again. Fresh
-tokens overwrite the old pair, so the previous tokens stop working. That is how you cut off
-a host you no longer trust.
-
-Re-issuing puts the instance back to **Draft**, which lets it enrol once more. The token it
-was holding before is refused from that moment: the row stores only the newest one, and the
-old one no longer matches.
-
 ## What Central knows and doesn't
 
-Central stores each Cargo's region, base URL, and the tokens it issued. The base URL is a
-record of where the host said it was — Central does not call it. All traffic runs the other
-way: Cargo asks Central for cluster secrets, and tells Central when a cluster is up or has
-failed.
+Central stores each Cargo's region and base URL, and the region's storage endpoints once a
+cluster reports itself up. Cargo keeps the cluster's own secrets — the Garage `rpc_secret`,
+admin token and metrics token are minted on the host and never sent.
 
-So if a Cargo host is down, provisioning new clusters stops, but everything already running
-is unaffected: benches talk to their services directly, and Central talks to those services
-directly too.
+So if a Cargo host is down, provisioning new clusters and issuing new buckets stops, but
+everything already running is unaffected: benches speak S3 to the gateway directly.

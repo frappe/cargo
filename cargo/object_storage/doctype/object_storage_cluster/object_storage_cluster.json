@@ -7,9 +7,6 @@
  "field_order": [
   "section_break_cluster",
   "base_image",
-  "metadata_bucket",
-  "metadata_bucket_access_key",
-  "metadata_bucket_secret_key",
   "column_break_cluster",
   "status",
   "health",
@@ -304,25 +301,6 @@
    "fieldname": "metrics_token",
    "fieldtype": "Password",
    "label": "Metrics Token",
-   "read_only": 1
-  },
-  {
-   "description": "Name of the metadata bucket for the region",
-   "fieldname": "metadata_bucket",
-   "fieldtype": "Data",
-   "label": "Metadata Bucket",
-   "read_only": 1
-  },
-  {
-   "fieldname": "metadata_bucket_access_key",
-   "fieldtype": "Data",
-   "label": "Metadata Bucket Access Key",
-   "read_only": 1
-  },
-  {
-   "fieldname": "metadata_bucket_secret_key",
-   "fieldtype": "Password",
-   "label": "Metadata Bucket Secret Key",
    "read_only": 1
   },
   {

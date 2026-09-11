@@ -1,18 +1,36 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+import base64
+import hashlib
+import hmac
 from contextlib import contextmanager
-from typing import ClassVar
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import frappe
+from frappe.integrations.doctype.webhook.webhook import (
+	WEBHOOK_SECRET_HEADER,
+	get_webhook_data,
+	get_webhook_headers,
+)
 from frappe.tests import IntegrationTestCase
+from frappe.utils.password import (
+	delete_all_passwords_for,
+	remove_encrypted_password,
+	set_encrypted_password,
+)
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+	CLUSTER_SECRETS,
+	WEBHOOK_ENDPOINT,
 	ObjectStorageCluster,
+	configure_storage_cluster_webhook,
 )
-from cargo.object_storage.garage import Garage
+from cargo.object_storage.garage.client import Client
+from cargo.object_storage.garage.setup import Setup
+from cargo.testing import use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -23,6 +41,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		# vm_id is unique across the table, so it cannot be a fixed string per role.
 		self.vm_ids: dict[str, str] = {}
@@ -39,7 +58,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": 20,
 				"vm_id": vm_id,
-				"ipv4_address": "10.0.0.1",
+				"address": "10.0.0.1",
 				"status": "Running",
 			}
 		).insert()
@@ -49,11 +68,15 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 
 		return machine.name
 
+	def _nothing_joined(self):
+		"""Garage was never installed here, so nothing answers its address."""
+		return patch.object(Setup, "healthy_nodes", return_value=set())
+
 	def machine_names(self) -> set[str]:
 		return {row.machine for row in frappe.get_doc("Object Storage Cluster", self.cluster.name).machines}
 
 	def test_releasing_terminates_only_the_named_machines(self):
-		with patch("cargo.atlas_client.AtlasClient") as atlas:
+		with patch("cargo.atlas_client.AtlasClient") as atlas, self._nothing_joined():
 			self.cluster.release_machines([self.storage])
 
 		atlas.from_settings.return_value.terminate_vm.assert_called_once_with(self.vm_ids[self.storage])
@@ -61,7 +84,7 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage, "status"), "Terminated")
 
 	def test_the_machine_row_outlives_the_release(self):
-		with patch("cargo.atlas_client.AtlasClient"):
+		with patch("cargo.atlas_client.AtlasClient"), self._nothing_joined():
 			self.cluster.release_machines([self.storage])
 
 		self.assertTrue(frappe.db.exists("Machine", self.storage))
@@ -88,85 +111,38 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 		self.assertEqual(self.machine_names(), {self.gateway, self.storage})
 
 
-class IntegrationTestClusterReadiness(IntegrationTestCase):
-	"""What Central is told, and when. Joining is not serving: the layout has to land first."""
+class IntegrationTestClusterCredentials(IntegrationTestCase):
+	"""Cargo mints its cluster's secrets itself, on the way in, and asks nobody for them."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
-		# Garage refuses a cluster with no secrets.
-		self.cluster = frappe.get_doc(
-			{
-				"doctype": "Object Storage Cluster",
-				"rpc_secret": "rpc",
-				"admin_token": "admin",
-				"metrics_token": "metrics",
-			}
-		).insert()
-		self.cluster.db_set("status", "Active")
+		use_test_settings()
+		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+	def secrets(self) -> dict[str, str]:
+		return {name: self.cluster.get_password(name) for name in CLUSTER_SECRETS}
+
+	def test_a_cluster_is_born_with_its_secrets(self):
+		minted = self.secrets()
+
+		self.assertEqual(len(set(minted.values())), len(CLUSTER_SECRETS))
+		self.assertTrue(all(minted.values()))
+
+	def test_saving_again_keeps_the_first_set(self):
+		"""Every node of a cluster boots with the same secrets; re-minting would split it."""
+		first = self.secrets()
+		self.cluster.save()
+
+		self.assertEqual(first, self.secrets())
+
+	def test_a_node_cannot_be_installed_before_the_secrets_exist(self):
+		delete_all_passwords_for("Object Storage Cluster", self.cluster.name)
 		self.cluster.reload()
 
-	@contextmanager
-	def _garage(self, layout_version: int):
-		endpoints = {
-			"base_url": "http://10.0.0.5:3903",
-			"s3_endpoint": "http://10.0.0.5:3900",
-			"web_endpoint": "http://10.0.0.5:3902",
-		}
-		with (
-			patch.object(Garage, "layout_version", return_value=layout_version),
-			# Applying the layout also makes the metadata bucket; that is its own test.
-			patch.object(ObjectStorageCluster, "create_metadata_bucket_if_needed"),
-			patch.object(
-				ObjectStorageCluster, "central_endpoints", new_callable=PropertyMock, return_value=endpoints
-			),
-			patch(
-				"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.CentralClient"
-			) as central,
-		):
-			yield central.from_settings.return_value.register_storage_cluster
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.cluster.garage_setup.secrets
 
-	def test_joined_but_unapplied_is_not_handed_out(self):
-		with self._garage(layout_version=0) as register:
-			self.cluster.inform_central_of_cluster_health("Active")
-
-		self.assertFalse(register.call_args.kwargs["active"])
-		self.assertNotIn("s3_endpoint", register.call_args.kwargs)
-
-	def test_an_applied_layout_makes_it_servable(self):
-		with self._garage(layout_version=3) as register:
-			self.cluster.inform_central_of_cluster_health("Active")
-
-		self.assertTrue(register.call_args.kwargs["active"])
-		self.assertEqual(register.call_args.kwargs["s3_endpoint"], "http://10.0.0.5:3900")
-
-	def test_applying_the_layout_tells_central(self):
-		with self._garage(layout_version=1) as register, patch.object(Garage, "apply_layout"):
-			self.cluster.apply_layout()
-
-		self.assertTrue(register.call_args.kwargs["active"])
-
-	def test_applying_the_layout_on_a_failed_cluster_says_nothing(self):
-		self.cluster.db_set("status", "Failed")
-		self.cluster.reload()
-
-		with self._garage(layout_version=1) as register, patch.object(Garage, "apply_layout"):
-			self.cluster.apply_layout()
-
-		register.assert_not_called()
-
-	def test_a_failed_cluster_is_withdrawn_without_asking_garage(self):
-		with self._garage(layout_version=9) as register:
-			self.cluster.inform_central_of_cluster_health("Failed")
-
-		self.assertFalse(register.call_args.kwargs["active"])
-		self.assertNotIn("base_url", register.call_args.kwargs)
-
-	def test_an_unreachable_garage_reads_as_not_serving(self):
-		"""layout_version() swallows GarageError and returns 0."""
-		with self._garage(layout_version=0) as register:
-			self.cluster.inform_central_of_cluster_health("Active")
-
-		self.assertFalse(register.call_args.kwargs["active"])
+		self.assertIn("rpc_secret", str(raised.exception))
 
 
 class IntegrationTestLiveClusterRelease(IntegrationTestCase):
@@ -174,6 +150,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -193,7 +170,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 	@contextmanager
 	def _joined(self, names: list[str]):
-		with patch.object(Garage, "healthy_nodes", return_value=set(names)):
+		with patch.object(Setup, "healthy_nodes", return_value=set(names)):
 			yield
 
 	def test_the_gateway_cannot_be_released(self):
@@ -223,7 +200,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[2], "status"), "Terminated")
 
 	def test_a_silent_garage_refuses_the_whole_thing(self):
-		"""healthy_nodes() returns an empty set on GarageError, which must not read as
+		"""healthy_nodes() returns an empty set on Error, which must not read as
 		"nothing is serving" on a cluster that has served."""
 		with self._joined([]), self.assertRaises(frappe.ValidationError):
 			self.cluster.release_machines([self.storage[0]])
@@ -240,114 +217,12 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Terminated")
 
 
-class IntegrationTestMetadataBucket(IntegrationTestCase):
-	"""Cargo's own bucket on the cluster, made when the cluster can hold one."""
-
-	BUCKET: ClassVar[dict] = {"name": "osc-metadata", "access_key": "GK-access", "secret_key": "shh"}
-
-	def setUp(self):
-		frappe.set_user("Administrator")
-		self.cluster = frappe.get_doc(
-			{
-				"doctype": "Object Storage Cluster",
-				"rpc_secret": "rpc",
-				"admin_token": "admin",
-				"metrics_token": "metrics",
-			}
-		).insert()
-
-	@contextmanager
-	def _garage(self, bucket_exists: bool = False):
-		"""What Garage answers for GetBucketInfo, and a stub for making the bucket.
-
-		`admin` is patched rather than the client's method: building the real one needs a
-		booted gateway to address."""
-		admin = MagicMock()
-		admin.bucket.return_value = {"id": "b1"} if bucket_exists else None
-		with (
-			patch.object(Garage, "admin", new_callable=PropertyMock, return_value=admin),
-			patch.object(Garage, "create_metadata_bucket", return_value=dict(self.BUCKET)) as create,
-		):
-			create.admin = admin
-			yield create
-
-	def _record_bucket(self) -> None:
-		self.cluster.db_set(
-			{"metadata_bucket": self.BUCKET["name"], "metadata_bucket_access_key": self.BUCKET["access_key"]}
-		)
-		self.cluster.reload()
-
-	@contextmanager
-	def _applying(self):
-		with (
-			patch.object(Garage, "apply_layout"),
-			patch.object(ObjectStorageCluster, "inform_central_of_cluster_health"),
-		):
-			yield
-
-	def test_applying_the_layout_creates_the_bucket_and_keeps_its_secret(self):
-		"""Applying is when the cluster can hold an object, so it is when the bucket is made."""
-		self.cluster.db_set("status", "Active")
-		self.cluster.reload()
-
-		with self._garage(bucket_exists=False), self._applying():
-			self.cluster.apply_layout()
-
-		cluster = frappe.get_doc("Object Storage Cluster", self.cluster.name)
-		self.assertEqual(cluster.metadata_bucket, self.BUCKET["name"])
-		self.assertEqual(cluster.metadata_bucket_access_key, self.BUCKET["access_key"])
-		self.assertEqual(cluster.get_password("metadata_bucket_secret_key"), self.BUCKET["secret_key"])
-
-	def test_a_bucket_garage_still_has_is_left_alone(self):
-		self._record_bucket()
-
-		with self._garage(bucket_exists=True) as create:
-			self.cluster.create_metadata_bucket_if_needed()
-
-		create.assert_not_called()
-
-	def test_a_bucket_garage_no_longer_has_is_made_again(self):
-		"""The row can outlive the bucket -- dropped at Garage, or the cluster rebuilt
-		under it. Uploads would fail on a name Cargo still believes in."""
-		self._record_bucket()
-
-		with self._garage(bucket_exists=False) as create:
-			self.cluster.create_metadata_bucket_if_needed()
-
-		create.assert_called_once()
-
-	def test_garage_is_not_asked_before_anything_was_recorded(self):
-		"""Nothing to check against, and the answer would not change the outcome."""
-		with self._garage(bucket_exists=False) as create:
-			self.cluster.create_metadata_bucket_if_needed()
-
-		create.admin.bucket.assert_not_called()
-		create.assert_called_once()
-
-	def test_a_cluster_that_is_not_active_gets_no_bucket(self):
-		"""A layout can be applied to a cluster that failed; it still serves nothing."""
-		self.cluster.db_set("status", "Failed")
-		self.cluster.reload()
-
-		with self._garage() as create, self._applying():
-			self.cluster.apply_layout()
-
-		create.assert_not_called()
-		self.assertIsNone(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "metadata_bucket"))
-
-	def test_activating_alone_makes_no_bucket(self):
-		"""Nodes joining is not enough: without a layout they carry no storage role."""
-		with self._garage() as create, patch.object(ObjectStorageCluster, "inform_central_of_cluster_health"):
-			self.cluster.mark_cluster_status("Active", None)
-
-		create.assert_not_called()
-
-
 class IntegrationTestClusterPeers(IntegrationTestCase):
 	"""Recording peers: one read of Garage, and only the machines that joined are written to."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -362,27 +237,21 @@ class IntegrationTestClusterPeers(IntegrationTestCase):
 
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
-	def _admin(self, joined: list[str]) -> MagicMock:
+	@contextmanager
+	def _garage(self, joined: list[str]):
 		"""Garage answering that `joined` are up, each tagged with its machine name."""
-		admin = MagicMock()
-		admin.status.return_value = {
+		nodes = {
 			"nodes": [
 				{"id": f"node{index}", "addr": "10.0.0.1:3901", "isUp": True, "role": {"tags": [name]}}
 				for index, name in enumerate(joined)
 			]
 		}
-		admin.layout.return_value = {"stagedRoleChanges": []}
-
-		return admin
-
-	@contextmanager
-	def _garage(self, joined: list[str]):
-		admin = self._admin(joined)
 		with (
-			patch.object(Garage, "admin", new_callable=PropertyMock, return_value=admin),
-			patch.object(Garage, "record_peers") as record,
+			patch.object(Client, "status", return_value=nodes) as status,
+			patch.object(Client, "layout", return_value={"stagedRoleChanges": []}) as layout,
+			patch.object(Setup, "record_peers") as record,
 		):
-			yield admin, record
+			yield SimpleNamespace(status=status, layout=layout), record
 
 	def test_peers_are_read_once_and_written_to_joined_machines(self):
 		with self._garage([self.gateway, self.storage]) as (admin, record):
@@ -405,3 +274,91 @@ class IntegrationTestClusterPeers(IntegrationTestCase):
 			self.cluster.record_cluster_peers()
 
 		record.assert_not_called()
+
+
+class IntegrationTestClusterWebhook(IntegrationTestCase):
+	"""A cluster reports its own status: inserting one points a webhook at Central."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		self.settings = frappe.get_doc("Cargo Settings")
+		# Set per test: a test that takes it away must not leave the next one without one.
+		self.set_secret("central-knows-this")
+
+	def set_secret(self, secret: str) -> None:
+		"""Written straight to the password store: this site's Cargo Settings is half filled
+		in, so saving the whole thing would ask for every other field."""
+		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, "central_webhook_secret")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+	def webhook_of(self, cluster: ObjectStorageCluster):
+		return frappe.get_doc("Webhook", f"object_storage_cluster-{cluster.name}")
+
+	def insert_cluster(self) -> ObjectStorageCluster:
+		return frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+	def test_a_new_cluster_gets_a_webhook_pointed_at_central(self):
+		webhook = self.webhook_of(self.insert_cluster())
+
+		self.assertEqual(webhook.webhook_doctype, "Object Storage Cluster")
+		self.assertEqual(webhook.webhook_docevent, "on_update")
+		self.assertEqual(webhook.request_method, "POST")
+		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
+		self.assertTrue(webhook.request_url.startswith(self.settings.central_url))
+
+	def test_only_a_settled_cluster_is_reported(self):
+		webhook = self.webhook_of(self.insert_cluster())
+		condition = webhook.condition
+
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Active")}))
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Failed")}))
+		self.assertFalse(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Setting Up")}))
+
+	def test_the_report_names_the_region_and_the_cluster_state(self):
+		cluster = self.insert_cluster()
+		cluster.db_set("status", "Active")
+		cluster.reload()
+
+		report = get_webhook_data(cluster, self.webhook_of(cluster))
+
+		self.assertEqual(report["region"], self.settings.region)
+		self.assertEqual(report["region_id"], self.settings.region_id)
+		self.assertEqual(report["service"], "storage")
+		self.assertEqual(report["status"], "Active")
+
+	def test_a_cargo_with_no_webhook_secret_makes_no_cluster(self):
+		"""Nothing may post to Central unauthenticated, so the cluster does not get made."""
+		remove_encrypted_password("Cargo Settings", "Cargo Settings", "central_webhook_secret")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		with self.assertRaises(frappe.ValidationError):
+			self.insert_cluster()
+
+	def test_the_report_is_signed_with_the_secret_central_knows_this_cargo_by(self):
+		"""Signed, not sent: the secret itself never leaves Cargo."""
+		self.set_secret("shared-with-central")
+		cluster = self.insert_cluster()
+		webhook = self.webhook_of(cluster)
+
+		self.assertTrue(webhook.enabled)
+		self.assertTrue(webhook.enable_security)
+		self.assertEqual(webhook.get_password("webhook_secret"), "shared-with-central")
+
+		data = get_webhook_data(cluster, webhook)
+		signature = base64.b64encode(
+			hmac.new(b"shared-with-central", frappe.as_json(data).encode(), hashlib.sha256).digest()
+		)
+
+		# Frappe hands the signature back as bytes on some versions and str on others.
+		header = get_webhook_headers(cluster, webhook)[WEBHOOK_SECRET_HEADER]
+
+		self.assertEqual(frappe.as_unicode(header), signature.decode())
+
+	def test_reconfiguring_rotates_the_secret_and_keeps_one_webhook(self):
+		cluster = self.insert_cluster()
+		self.set_secret("rotated")
+		configure_storage_cluster_webhook(cluster)
+
+		self.assertEqual(frappe.db.count("Webhook", {"name": f"object_storage_cluster-{cluster.name}"}), 1)
+		self.assertEqual(self.webhook_of(cluster).get_password("webhook_secret"), "rotated")

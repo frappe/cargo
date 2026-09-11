@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,11 +10,10 @@ import frappe
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
+from cargo.atlas_client import host_port
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.garage_admin_client import GarageAdminClient, GarageError
-from cargo.object_storage.credentials import REQUIRED_CREDENTIALS
-from cargo.object_storage.metadata_bucket import MetadataBucketInfo
-from cargo.ssh import SshError, run_over_ssh, script
+from cargo.object_storage.garage.client import Client, Error
+from cargo.ssh import run_over_ssh, script
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -24,8 +22,6 @@ if typing.TYPE_CHECKING:
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
-#: Lowercase alphanumerics, dots and hyphens, 3-63 characters, alphanumeric at both ends.
-BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
 GIGABYTE = 1000**3
 #: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
@@ -39,7 +35,7 @@ class MachineRow(TypedDict):
 	name: MachineName
 	role: str
 	zone: str
-	ipv4_address: str
+	address: str
 	disk_size_gb: int
 
 
@@ -51,21 +47,8 @@ class ConnectedNodes:
 	machines: set[MachineName]
 
 
-class SetupError(SshError):
-	"""A node failed to set up."""
-
-
-class Garage:
-	"""One cluster's Garage: setting its machines up, and asking it what it sees."""
-
-	def __init__(self, cluster: ObjectStorageCluster):
-		self.cluster = cluster
-		self.secrets = {
-			name: cluster.get_password(name, raise_exception=False) for name in REQUIRED_CREDENTIALS
-		}
-		missing = [name for name, value in self.secrets.items() if not value]
-		if missing:
-			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
+class Setup(Client):
+	"""Setting a cluster's machines up, and asking Garage what it sees."""
 
 	@cached_property
 	def machines(self) -> list[MachineRow]:
@@ -77,7 +60,7 @@ class Garage:
 				"reference_name": self.cluster.name,
 				"status": "Running",
 			},
-			fields=["name", "role", "zone", "ipv4_address", "disk_size_gb"],
+			fields=["name", "role", "zone", "address", "disk_size_gb"],
 			order_by="creation",
 		)
 
@@ -88,29 +71,25 @@ class Garage:
 		columns, so this cannot come off the machine query."""
 		return get_decrypted_password("Machine", machine["name"], "ssh_private_key")
 
-	@cached_property
-	def admin(self) -> GarageAdminClient:
-		return GarageAdminClient.for_cluster(self.cluster)
-
 	def run(self, machine: MachineRow, script: str, on_output: Callable[[str], None] | None = None) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(machine["ipv4_address"], script, self.key_for(machine), on_output=on_output)
+		return run_over_ssh(machine["address"], script, self.key_for(machine), on_output=on_output)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
 		try:
-			return self.admin.layout().get("version", 0)
-		except GarageError:
+			return self.layout().get("version", 0)
+		except Error:
 			return 0
 
 	def get_connected_nodes(self) -> ConnectedNodes:
 		"""The nodes Garage can reach, as it addresses them, and whose machines they are."""
 		try:
-			nodes = self.admin.status().get("nodes") or []
+			nodes = self.status().get("nodes") or []
 			# A node is joined once it is up and tagged, whether or not the layout carrying
 			# that tag has been applied: applying is a separate step.
-			staged = self.admin.layout().get("stagedRoleChanges") or []
-		except GarageError:
+			staged = self.layout().get("stagedRoleChanges") or []
+		except Error:
 			return ConnectedNodes(peers=[], machines=set())
 
 		staged_tags = {change["id"]: change.get("tags") or [] for change in staged}
@@ -143,9 +122,23 @@ class Garage:
 		"""Only answers once the node has started, since Garage keys itself on first launch."""
 		return self.run(machine, "garage node id -q", on_output).strip().splitlines()[-1]
 
+	@property
+	def secrets(self) -> dict[str, str]:
+		"""The secrets a node boots with, named in the error when the cluster has none."""
+		from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+			CLUSTER_SECRETS,
+		)
+
+		found = {name: self.cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS}
+		missing = [name for name, value in found.items() if not value]
+		if missing:
+			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
+
+		return found
+
 	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
-		cluster = self.cluster
+		cluster, secrets = self.cluster, self.secrets
 
 		return {
 			"GARAGE_BINARY": cluster.garage_binary,
@@ -153,7 +146,7 @@ class Garage:
 			"BINARY_URL": BINARY_URL.format(version=cluster.garage_version, arch=cluster.garage_arch),
 			"METADATA_DIR": cluster.metadata_dir,
 			"DATA_DIR": cluster.data_dir,
-			"RPC_PUBLIC_ADDR": machine["ipv4_address"],
+			"RPC_PUBLIC_ADDR": host_port(machine["address"], cluster.rpc_port),
 			"REGION": cluster.region,
 			"BASE_DOMAIN": cluster.base_domain,
 			"REPLICATION_FACTOR": cluster.replication_factor,
@@ -162,9 +155,9 @@ class Garage:
 			"WEB_PORT": cluster.web_port,
 			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
-			"RPC_SECRET": self.secrets["rpc_secret"],
-			"ADMIN_TOKEN": self.secrets["admin_token"],
-			"METRICS_TOKEN": self.secrets["metrics_token"],
+			"RPC_SECRET": secrets["rpc_secret"],
+			"ADMIN_TOKEN": secrets["admin_token"],
+			"METRICS_TOKEN": secrets["metrics_token"],
 		}
 
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
@@ -177,7 +170,7 @@ class Garage:
 	def setup_machine(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install Garage on one machine and fold it into whatever cluster already exists."""
 		if on_output:
-			on_output(f"\n=== {machine['name']} ({machine['ipv4_address']}) ===\n")
+			on_output(f"\n=== {machine['name']} ({machine['address']}) ===\n")
 
 		self.run(
 			machine,
@@ -185,7 +178,7 @@ class Garage:
 			on_output,
 		)
 		identifier = self.node_identifier(machine, on_output)
-		self.admin.connect_nodes([identifier])
+		self.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
@@ -199,32 +192,13 @@ class Garage:
 			# Per machine: Garage weights a node by its own disk, so the disks may differ.
 			role["capacity"] = machine["disk_size_gb"] * GIGABYTE
 
-		return self.admin.assign_roles([role])
+		return self.assign_roles([role])
 
-	def apply_layout(self) -> dict:
+	def apply_staged_layout(self) -> dict:
 		"""One version for everything staged. Garage refuses a layout that cannot hold a full
 		copy, so a gateway and its storage nodes have to land together."""
-		layout = self.admin.layout()
+		layout = self.layout()
 		if not layout.get("stagedRoleChanges"):
 			return layout
 
-		return self.admin.apply_layout(layout.get("version", 0) + 1)
-
-	def create_metadata_bucket(self) -> MetadataBucketInfo:
-		"""Create the metadata bucket and a key that can read and write it, idempotently."""
-		bucket_name = f"{self.cluster.name}-metadata".casefold()
-		if not BUCKET_NAME.fullmatch(bucket_name):
-			frappe.throw(_(f"{bucket_name} is not a legal S3 bucket name."))
-
-		key_name = f"{bucket_name}-key"
-
-		bucket = self.admin.bucket(bucket_name) or self.admin.create_bucket(bucket_name)
-		key = self.admin.key(key_name) or self.admin.create_key(key_name)
-		if not key.get("secretAccessKey"):
-			raise SetupError(f"Garage returned no secret for {key_name}.")
-
-		self.admin.allow_bucket_key(bucket["id"], key["accessKeyId"])
-
-		return MetadataBucketInfo(
-			name=bucket_name, access_key=key["accessKeyId"], secret_key=key["secretAccessKey"]
-		)
+		return self.apply_layout(layout.get("version", 0) + 1)

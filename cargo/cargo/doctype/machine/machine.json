@@ -12,8 +12,7 @@
   "zone",
   "column_break_state",
   "status",
-  "ipv4_address",
-  "server",
+  "address",
   "last_synced_at",
   "storage_section",
   "disk_size_gb",
@@ -85,16 +84,11 @@
    "read_only": 1
   },
   {
-   "fieldname": "ipv4_address",
+   "description": "Where this machine answers on the WG mesh. Derived by Atlas, not allocated.",
+   "fieldname": "address",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "IPv4 Address",
-   "read_only": 1
-  },
-  {
-   "fieldname": "server",
-   "fieldtype": "Data",
-   "label": "Server",
+   "label": "Address",
    "read_only": 1
   },
   {
@@ -133,11 +127,11 @@
    "label": "SSH"
   },
   {
+   "description": "Handed to Atlas when the machine is built. Nothing can be reached with a key it was not created with.",
    "fieldname": "ssh_public_key",
    "fieldtype": "Small Text",
    "label": "SSH Public Key",
-   "read_only": 1,
-   "description": "Handed to Atlas when the machine is built. Nothing can be reached with a key it was not created with."
+   "read_only": 1
   },
   {
    "fieldname": "ssh_private_key",

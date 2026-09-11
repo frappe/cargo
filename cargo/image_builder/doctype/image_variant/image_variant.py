@@ -9,16 +9,14 @@ from typing import TypedDict
 import frappe
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import AtlasClient
+from cargo.atlas_client import DEAD_STATES, RUNNING_STATE, AtlasClient, AtlasNotFound
 from cargo.image_builder.builder import Builder
-from cargo.object_storage.metadata_bucket import MetadataBucket
 from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
-DEAD_STATES = {"Failed", "Error", "Terminated", "Archived", "Broken"}
 SITE_DOMAIN = "frappe.cloud"
 NAME_LENGTH = 8
 PASSWORD_LENGTH = 24
@@ -46,8 +44,6 @@ class ImageVariant(WorkflowBuilder):
 		error: DF.LongText | None
 		frappe_version: DF.Literal["", "version-15", "version-16", "develop"]
 		image: DF.Link
-		object_key: DF.Data | None
-		object_storage_cluster: DF.Link | None
 		site: DF.Literal["", "Included", "Not Included"]
 		site_name: DF.Data | None
 		snapshot_id: DF.Data | None
@@ -55,7 +51,6 @@ class ImageVariant(WorkflowBuilder):
 		ssh_public_key: DF.SmallText | None
 		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Snapshotting", "Failed"]
 		temporary_vm_id: DF.Data | None
-		uploaded_at: DF.Datetime | None
 	# end: auto-generated types
 
 	"""One flavour of a release's image, and the snapshot it produced."""
@@ -136,26 +131,35 @@ class ImageVariant(WorkflowBuilder):
 
 	def sync_build_vm(self) -> None:
 		"""Move the variant on once its machine is up. Scheduled, one machine at a time."""
-		machine = AtlasClient.from_settings().get_vm(self.temporary_vm_id)
-		status = machine.get("status")
-
-		if status in DEAD_STATES:
-			self.mark("Failed", error=f"Atlas reported {status}")
+		client = AtlasClient.from_settings()
+		try:
+			machine = client.get_vm(self.temporary_vm_id)
+		except AtlasNotFound:
+			self.mark("Failed", error="Atlas no longer has this build machine")
 			return
 
-		if status != "Running" or not machine.get("ipv4_address"):
+		state = machine.get("current_state")
+		if state in DEAD_STATES:
+			self.mark("Failed", error=f"Atlas reported {state}")
+			return
+
+		if state != RUNNING_STATE:
+			return
+
+		address = machine.get("wireguard_mesh_ipv6")
+		if not address:
+			self.mark("Failed", error="Atlas reported no mesh address for this build machine")
 			return
 
 		# One transaction, so `retry_workflows` can find a build whose job never started.
 		self.mark("Building")
-		self.run_build.run_as_workflow(address=machine["ipv4_address"], vm_id=self.temporary_vm_id)
+		self.run_build.run_as_workflow(address=address, vm_id=self.temporary_vm_id)
 
 	@flow
 	def run_build(self, address: str, vm_id: str) -> None:
 		"""Bake a machine and photograph it"""
 		self.run_provision_script(address)
 		self.take_snapshot(vm_id)
-		self.record_snapshot_in_object_storage()
 
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def run_provision_script(self, address: str) -> None:
@@ -185,33 +189,6 @@ class ImageVariant(WorkflowBuilder):
 		self.snapshot_id = snapshot
 		self.built_at = now_datetime()
 		self.temporary_vm_id = None
-		self.save(ignore_permissions=True)
-
-	@task
-	def record_snapshot_in_object_storage(self) -> None:
-		"""Publish where this image lives, so a region can find it without asking Cargo"""
-		cluster = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
-		if not cluster:
-			return
-
-		key = f"images/{self.name}.json"
-		MetadataBucket.for_cluster(frappe.get_doc("Object Storage Cluster", cluster)).write(
-			key,
-			{
-				"variant": self.name,
-				"image": self.image,
-				"kind": self.image_details.kind,
-				"version": self.image_details.version,
-				"frappe_version": self.frappe_version,
-				"site": self.site,
-				"snapshot_id": self.snapshot_id,
-				"built_at": str(self.built_at),
-			},
-		)
-
-		self.object_storage_cluster = cluster
-		self.object_key = key
-		self.uploaded_at = now_datetime()
 		self.save(ignore_permissions=True)
 
 	def on_workflow_success(self, workflow) -> None:

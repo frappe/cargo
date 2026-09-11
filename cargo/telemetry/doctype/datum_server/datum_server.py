@@ -97,7 +97,6 @@ class DatumServer(Document):
 			self,
 			NodeSpec(role=TELEMETRY, cpu=cint(cpu), ram_gb=cint(ram_gb), disk_gb=cint(disk_gb)),
 			base_image=self.base_image,
-			title=f"{self.name} telemetry",
 		)
 		self.machine = machine.name
 		self.save()
@@ -141,7 +140,7 @@ class DatumServer(Document):
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
 				run_over_ssh(
-					machine.ipv4_address,
+					machine.address,
 					script(*CONF, environment=self.install_environment()),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,

@@ -1,115 +1,112 @@
 # What Cargo and Central say to each other
 
-Every call runs one way: **Cargo calls Central.** Central never calls Cargo. Cargo's side is
-`cargo/central_client.py`. Central's side is `central/api/cargo.py`.
+Two conversations, each one way.
 
-## How the calls work
+**Cargo → Central** is one webhook, and nothing else: a cluster reports whether it can be
+used. Cargo holds no Central credential and calls no Central endpoint.
 
-```
-POST {central_url}/api/method/central.api.cargo.<name>
-X-Cargo-Token: <central_access_token>
-```
+**Central → Cargo** is bucket work: make a bucket, drop it, rotate or revoke its key. Cargo
+owns the cluster's admin token, so Central asks rather than acts.
 
-JSON in, JSON out, unwrapped from Frappe's `{"message": ...}`.
+Cargo's side is `cargo/object_storage/api/bucket.py` and the webhook built in
+`cargo/object_storage/doctype/object_storage_cluster/object_storage_cluster.py`. Central's
+side is `central/api/cargo_webhooks.py` and `central/integrations/cargo_client.py`.
 
-The token is signed by Central, so Central just verifies its own signature — nothing is
-shared between the two. It has to travel in `X-Cargo-Token` rather than `Authorization`,
-because Frappe rejects an unrecognised `Authorization` header with a 401 before the endpoint
-is reached.
+## Cargo reporting in
 
-The token's scope must be `cargo:central`. Cargo's Atlas token is signed by the same key, so
-the scope check is what stops it being replayed here.
-
-The token also names the Cargo Instance it was minted for. Every call below that takes a
-`region` must name that instance's own region — anything else is refused before the endpoint
-runs, so a valid host cannot ask about a cluster that is not its own. Details in
-[bootstrapping.md](bootstrapping.md#one-host-one-region).
-
-There is one endpoint that does not take this token: `request_control_credentials`, which is
-how a host gets it in the first place. See [bootstrapping.md](bootstrapping.md).
-
-## Enrolling — `request_control_credentials`
+A **Frappe Webhook**, created against the cluster when the cluster is created, firing
+`on_update` when `doc.status in ("Active", "Failed")` — the two states worth a call.
 
 ```
-X-Cargo-Bootstrapping-Token: <one-time token>
+POST {central_url}/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook
+X-Frappe-Webhook-Signature: <base64 HMAC-SHA256 of the body>
 ```
 
 | Send | What it is |
 |---|---|
-| `base_url` | Where this host is served, so Central has a record of it |
+| `region` | Which cluster this is. Central identifies a cluster by its region |
+| `region_id` | Atlas's numeric id for that region |
+| `service` | `storage` |
+| `status` | `Active` once the cluster can hold an object, `Failed` when it never will |
+| `service_endpoint` | The cluster's gateway, where benches speak S3 |
 
-Returns `central_access_token` and `atlas_access_token`, both naming the Cargo Instance the
-bootstrapping token was minted for. The bootstrapping token is spent by this call and cannot
-be used again, including by a second request arriving at the same moment. Full walkthrough in
-[bootstrapping.md](bootstrapping.md).
+Frappe signs the body with the shared `CENTRAL_WEBHOOK_SECRET` rather than sending it, so the
+secret never leaves the host and the signature covers the payload. Central looks the region's
+Cargo Instance up to find which secret to check — the region in the body selects a secret, it
+is never trusted on its own — and every rejection is the same 403, with the real reason in
+the Error Log.
 
-## Asking for cluster secrets — `garage_tokens`
+Central creates the region's `Service Backend` on the first report, fills in
+`service_endpoint`, sets `is_active` from the status, and marks the Cargo Instance
+**Registered**. Registration is what mints the instance's access token, so a region that has
+never reported has nothing for Central to call it with.
 
-| Send | What it is |
-|---|---|
-| `region` | Which cluster this is. Central identifies a cluster by its region, and it must be the caller's own |
-| `vm_ids` | The machines that will run it |
+`Active` is not "the nodes joined". It is "this cluster can hold an object", which needs an
+applied layout as well — before that Garage answers but its nodes carry no storage role.
 
-Returns all three:
+## Central calling Cargo
+
+```
+POST {cargo_url}/api/method/cargo.object_storage.api.bucket.<name>
+X-Cargo-Access-Token: <the Cargo Instance's cargo_access_token>
+```
+
+JSON in, JSON out, unwrapped from Frappe's `{"message": ...}`. Every call takes the same two
+fields: `name`, the bucket, and `region`.
+
+The token is a JWT Central signs and Cargo verifies against the key set at the host's
+configured `JWKS_URL` — Cargo holds no secret for this, only Central's public keys. Its audience is `central-<region id>-bucket`, minted once per Cargo Instance
+when the host registers. Cargo also accepts `atlas-<region id>-admin`, the audience Atlas
+checks, because a region's control plane is one trust tier. Both name the region, so a token
+lifted from another region's traffic opens nothing.
+
+It travels in `X-Cargo-Access-Token` rather than `Authorization`, because Frappe rejects an
+unrecognised `Authorization` header with a 401 before the endpoint is reached.
+
+A Cargo host serves one region. A call naming another is refused, and so is one arriving
+while the region has no single serving cluster — with two, nothing says which one a bucket
+belongs on, and guessing is worse than refusing.
+
+### `create_bucket`
+
+The bucket and the one key that opens it:
 
 ```json
 {
-  "rpc_secret": "...",
-  "admin_token": "...",
-  "metrics_token": "..."
+  "name": "acme-backups",
+  "region": "blr",
+  "credentials": {"access_key": "GK31c2...", "secret_access_key": "b892c0..."}
 }
 ```
 
-If any is missing, Cargo refuses the whole reply rather than starting a half-configured
-cluster.
+The secret is handed back here and nowhere else — Cargo keeps no copy. Central stores it on
+the `Service Credential` and hands the endpoint out from the `Service Backend` beside it.
 
-**The same answer every time for a region.** Every machine in a cluster boots with the
-identical three secrets — that is what makes them one cluster rather than three lone nodes.
-If a retry got fresh values you would get machines that cannot recognise each other, and it
-would look like a network fault rather than a secrets fault. Central generates them once,
-per field, and stores them on a `Service Backend` row for the region.
+Either both the bucket and its key exist, or neither does: a bucket nobody holds a key to is
+unreachable and invisible, so a failure to issue the key takes the bucket with it. A name
+already taken is refused before anything is made.
 
-That row starts inactive with no endpoint: Central knows the cluster's secrets before it
-knows where the cluster is.
+### `delete_bucket`
 
-Which secrets get asked for is the *service's* choice, not Central's. Object storage wants
-these three (`cargo/object_storage/credentials.py`); print and email will want their own.
+Drops the bucket and its key, and frees the name with them. Garage refuses a bucket that
+still holds objects with a 409, which is what stops this ever taking data with it.
 
-## Reporting status — `register_cluster`
+### `rotate_credentials`
 
-| Send | What it is |
-|---|---|
-| `region` | The cluster |
-| `active` | Whether Central may use it |
-| `base_url` | Garage's admin API, where Central manages buckets and keys |
-| `s3_endpoint` | Where benches read and write objects |
-| `web_endpoint` | Where buckets are served as static sites |
+A new key for the bucket, and the end of the one it replaces. Returns the same `credentials`
+shape as `create_bucket`, once. The new key is minted before the old one goes, so a rotation
+that fails halfway leaves the bucket reachable rather than shut.
 
-Every endpoint is built from the cluster's gateway address — every S3 and admin call goes
-through the gateway — and none of them is behind TLS.
+### `revoke_credentials`
 
-Central fills the three endpoints in on the `Service Backend` row and marks it active. Until
-this lands the backend has secrets but no address, so Central skips it and no bucket can be
-created against it.
-
-`active` is not "the nodes joined". It is "this cluster can hold an object", which needs an
-applied layout as well — before that Garage answers but its nodes carry no storage role. So a
-cluster reports active twice over its life: never on setup alone, and then once the layout is
-applied.
-
-A cluster reporting `active: false` sends no endpoints: it has none to offer while it is
-down, and the ones Central holds are the last known good. **Its secrets are kept**, so a
-retry reuses them and the nodes still recognise each other.
+Takes the bucket's key out of service. The bucket and its objects stay, so this is how a
+credential is withdrawn without destroying anything.
 
 ## Who holds which key
 
-Cargo keeps the powerful token. Central gets a limited one.
+Cargo keeps the powerful token. Central never sees one.
 
-Once a cluster is running, Cargo asks Garage for a second admin token scoped to only the
-bucket and key operations Central actually performs — `CreateBucket`, `AddBucketAlias`,
-`GetBucketInfo`, `DeleteBucket`, `CreateKey`, `AllowBucketKey`, `DeleteKey`, `GetKeyInfo`.
-The cluster's real admin token, which can do anything including changing the layout, never
-leaves Cargo.
-
-Checked against Garage v2.3.0: asking for a token with a limited `scope` works. Not wired up
-yet — it belongs with the configuration step.
+The cluster's `rpc_secret`, admin token and metrics token are minted on the host and stay
+there. Central's reach is exactly the four calls above — it cannot change a layout, read a
+node, or touch an object. Object traffic never goes near either of them: a bench speaks S3 to
+the gateway directly, so a Cargo host being down stops new buckets, not existing ones.

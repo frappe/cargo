@@ -9,6 +9,10 @@ from cargo.atlas_client import AtlasClient
 from cargo.ssh import run_over_ssh, script
 
 BASE_IMAGE = "ubuntu-24.04"
+# A build machine is rented for one bake, so it is sized for the bake and nothing else.
+BUILD_VCPUS = 2
+BUILD_MEMORY_MIB = 4096
+BUILD_DISK_MIB = 30 * 1024
 # A new kind is a new conf/<kind>/provision.sh and an entry here.
 KINDS = ("pilot",)
 PROVISION_TIMEOUT = 3600
@@ -57,7 +61,14 @@ class Builder:
 
 	def provision_build_machine(self, public_key: str) -> str:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
-		return self.client.create_vm(self.atlas_name, public_key=public_key, base_image=BASE_IMAGE)
+		return self.client.create_vm(
+			image_id=BASE_IMAGE,
+			vcpus=BUILD_VCPUS,
+			memory_mib=BUILD_MEMORY_MIB,
+			disk_mib=BUILD_DISK_MIB,
+			public_key=public_key,
+			hostname=self.atlas_name,
+		)["id"]
 
 	def snapshot_build_machine(self, vm_id: str) -> str:
 		"""Photograph the baked machine. This is the image."""

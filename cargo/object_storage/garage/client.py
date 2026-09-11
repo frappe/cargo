@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import typing
-from typing import Any, Self
+from functools import cached_property
+from typing import Any
 
 import requests
 
@@ -14,26 +15,28 @@ API_PREFIX = "/v2/"
 READ_WRITE = {"read": True, "write": True, "owner": False}
 
 
-class GarageError(RuntimeError):
+class Error(RuntimeError):
 	"""A Garage Admin API call failed. One argument, so it survives a pickle round trip:
 	that is how the workflow engine carries an exception back to the flow that raised it."""
 
 
-class GarageAdminClient:
-	"""Garage's Admin API v2. Object storage itself goes to the S3 endpoint, not here."""
+class Client:
+	"""Garage's Admin API v2, for one cluster. Setting it up, judging its health and working
+	its buckets all subclass this. Object traffic goes to the S3 endpoint, not here."""
 
-	def __init__(self, base_url: str, admin_token: str, timeout: float = 30) -> None:
-		self.url = base_url.rstrip("/")
-		self.timeout = timeout
-		self.headers = {"Authorization": f"Bearer {admin_token}"}
+	timeout: float = 30
 
-	@classmethod
-	def for_cluster(cls, cluster: ObjectStorageCluster) -> Self:
+	def __init__(self, cluster: ObjectStorageCluster) -> None:
+		self.cluster = cluster
+
+	@cached_property
+	def url(self) -> str:
 		"""Every node serves the same API, so the gateway answers for the cluster."""
-		return cls(
-			f"http://{cluster.fleet.gateway_address}:{cluster.admin_port}",
-			cluster.get_password("admin_token"),
-		)
+		return f"http://{self.cluster.gateway_address}:{self.cluster.admin_port}"
+
+	@cached_property
+	def headers(self) -> dict[str, str]:
+		return {"Authorization": f"Bearer {self.cluster.get_password('admin_token')}"}
 
 	def call(self, endpoint: str, method: str = "GET", **kwargs: Any) -> Any:
 		try:
@@ -45,13 +48,13 @@ class GarageAdminClient:
 				**kwargs,
 			)
 		except requests.RequestException as exception:
-			raise GarageError(f"{endpoint}: {exception}") from exception
+			raise Error(f"{endpoint}: {exception}") from exception
 
 		if response.status_code == 404:
 			return None
 
 		if not response.ok:
-			raise GarageError(f"{endpoint} answered {response.status_code}: {response.text[:500]}")
+			raise Error(f"{endpoint} answered {response.status_code}: {response.text[:500]}")
 
 		return response.json() if response.content else None
 
@@ -81,15 +84,22 @@ class GarageAdminClient:
 			if not result.get("success")
 		]
 		if refused:
-			raise GarageError(f"ConnectClusterNodes: {', '.join(refused)}")
+			raise Error(f"ConnectClusterNodes: {', '.join(refused)}")
 
 		return connected
 
 	def bucket(self, alias: str) -> dict[str, Any] | None:
 		return self.call("GetBucketInfo", params={"globalAlias": alias})
 
-	def create_bucket(self, alias: str) -> dict[str, Any]:
-		return self.call("CreateBucket", "POST", json={"globalAlias": alias})
+	def create_bucket(self, alias: str | None = None) -> dict[str, Any]:
+		"""A bucket, named now or left unnamed for `add_bucket_alias` to name later."""
+		return self.call("CreateBucket", "POST", json={"globalAlias": alias} if alias else {})
+
+	def add_bucket_alias(self, bucket_id: str, alias: str) -> dict[str, Any]:
+		return self.call("AddBucketAlias", "POST", json={"bucketId": bucket_id, "globalAlias": alias})
+
+	def delete_bucket(self, bucket_id: str) -> None:
+		self.call("DeleteBucket", "POST", params={"id": bucket_id})
 
 	def key(self, name: str) -> dict[str, Any] | None:
 		"""The key by exact name, secret included. `search` is a prefix match, so the name
@@ -107,3 +117,6 @@ class GarageAdminClient:
 			"POST",
 			json={"bucketId": bucket_id, "accessKeyId": access_key_id, "permissions": READ_WRITE},
 		)
+
+	def delete_key(self, access_key_id: str) -> None:
+		self.call("DeleteKey", "POST", params={"id": access_key_id})
