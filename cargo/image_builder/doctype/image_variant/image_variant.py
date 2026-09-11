@@ -146,7 +146,7 @@ class ImageVariant(WorkflowBuilder):
 		if state != RUNNING_STATE:
 			return
 
-		address = machine.get("wireguard_mesh_ipv6")
+		address = machine.get("network", {}).get("mesh_ipv6")
 		if not address:
 			self.mark("Failed", error="Atlas reported no mesh address for this build machine")
 			return
