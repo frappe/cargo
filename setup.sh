@@ -22,6 +22,7 @@ SITE_PASSWORD="${SITE_PASSWORD:-}"     # the site's Frappe Administrator
 # One per mandatory field of Cargo Settings, and nothing else: the install hook writes
 # these straight onto it, so anything missing here fails the install.
 CENTRAL_URL="${CENTRAL_URL:-}" # Central's URL for this host to call
+JWKS_URL="${JWKS_URL:-}" # JWKS endpoint
 ATLAS_URL="${ATLAS_URL:-}" # Atlas's URL for this host to call
 CARGO_URL="${CARGO_URL:-}" # where this host answers
 CENTRAL_WEBHOOK_SECRET="${CENTRAL_WEBHOOK_SECRET:-}" # signs the reports this host sends Central
@@ -39,12 +40,30 @@ if [ -z "$PILOT_ADMIN_PASSWORD" ] || [ -z "$SITE_PASSWORD" ]; then
 	exit 1
 fi
 
+# Pilot's own rule, checked here rather than by `pilot new` -- which runs after the whole
+# system stack is built, so a weak password otherwise costs ten minutes to find out about.
+weak_password() {
+	case "${#1}" in 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7) echo "at least 8 characters"; return ;; esac
+	case "$1" in *[a-z]*) ;; *) echo "a lower case letter"; return ;; esac
+	case "$1" in *[A-Z]*) ;; *) echo "an upper case letter"; return ;; esac
+	case "$1" in *[0-9]*) ;; *) echo "a number"; return ;; esac
+	case "$1" in *[!A-Za-z0-9]*) ;; *) echo "a symbol"; return ;; esac
+}
+
+for name in PILOT_ADMIN_PASSWORD SITE_PASSWORD; do
+	if missing_part=$(weak_password "${!name}") && [ -n "$missing_part" ]; then
+		echo "$name needs $missing_part." >&2
+		echo "Pilot wants at least 8 characters, upper and lower case, a number and a symbol." >&2
+		exit 1
+	fi
+done
+
 if [ -z "$ADMIN_DOMAIN" ]; then
 	echo "Set ADMIN_DOMAIN before running: production needs a domain for pilot's admin panel." >&2
 	exit 1
 fi
 
-ENROLMENT_VARS="CENTRAL_URL ATLAS_URL CARGO_URL CENTRAL_WEBHOOK_SECRET REGION REGION_ID \
+ENROLMENT_VARS="CENTRAL_URL JWKS_URL ATLAS_URL CARGO_URL CENTRAL_WEBHOOK_SECRET REGION REGION_ID \
 	ATLAS_KEY ATLAS_SECRET ATLAS_TENANT_ID"
 
 missing=""
@@ -58,6 +77,8 @@ if [ -n "$missing" ]; then
 	exit 1
 fi
 
+# This script is run as root. Everything pilot does runs as the bench user instead:
+# it refuses to run as root, and the bench's files must belong to whoever serves them.
 if ! id -u "$BENCH_USER" > /dev/null 2>&1; then
 	groupadd -g "$BENCH_GID" "$BENCH_USER" 2> /dev/null || groupadd "$BENCH_USER"
 	useradd -m -s /bin/bash -u "$BENCH_UID" -g "$BENCH_USER" "$BENCH_USER" 2> /dev/null ||
@@ -84,17 +105,26 @@ for name in $ENROLMENT_VARS; do
 	enrolment="$enrolment $name=$(printf '%q' "${!name}")"
 done
 
-# Twice: the first pass lays down the system stack as root, the second installs pilot for
-# the bench user.
-curl -fsSL "$INSTALLER" | bash
+# Twice: the root pass lays down the system stack and grants the bench user what it
+# needs -- lingering, nginx and sudoers -- then stops. The second pass installs pilot
+# for that user, needing no privileges.
+curl -fsSL "$INSTALLER" | bash -s -- --user "$BENCH_USER"
 as_bench_user "curl -fsSL $q_installer | bash"
 
+# `new` only writes bench.toml. `init` is what builds the bench: virtualenv, framework,
+# Node and Redis. Without it there is nothing for a site to be created in.
 as_bench_user "pilot --yes new $q_bench --database mariadb --admin-password $q_admin_password"
+as_bench_user "pilot --yes -b $q_bench init"
 as_bench_user "pilot --yes -b $q_bench new-site $q_site --admin-password $q_site_password"
-as_bench_user "pilot --yes -b $q_bench get-app $q_repo $q_branch --install-dependencies"
+as_bench_user "pilot --yes -b $q_bench get-app $q_repo --branch $q_branch --install-dependencies"
+
+# Production before the app: it brings up Redis and the workload, which installing Cargo
+# needs -- Frappe queues work as part of finishing a site's setup.
+as_bench_user "pilot --yes -b $q_bench setup production --admin-domain $q_admin_domain"
 
 # `su -` starts a login shell, so the enrolment variables are exported inside it rather
 # than out here.
 as_bench_user "$enrolment pilot --yes -b $q_bench install-app $q_site cargo"
 
-as_bench_user "pilot --yes -b $q_bench setup production --admin-domain $q_admin_domain"
+# The workers started before Cargo existed, so they carry none of its scheduled jobs.
+as_bench_user "pilot --yes -b $q_bench restart"
