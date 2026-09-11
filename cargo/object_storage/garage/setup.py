@@ -22,6 +22,10 @@ if typing.TYPE_CHECKING:
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
+NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
+# Who may say where a request came from. The proxy reaches the gateway over the mesh, and a
+# unique-local address cannot arrive from the internet, so no client can forge the header.
+TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 GIGABYTE = 1000**3
 #: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
@@ -136,6 +140,15 @@ class Setup(Client):
 
 		return found
 
+	@cached_property
+	def wildcard_domain(self) -> str:
+		"""The domain the gateway's subdomains hang off."""
+		domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain")
+		if not domain:
+			frappe.throw(_("Set a Wildcard Domain in Cargo Settings before setting up a gateway."))
+
+		return domain
+
 	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
 		cluster, secrets = self.cluster, self.secrets
@@ -148,12 +161,9 @@ class Setup(Client):
 			"DATA_DIR": cluster.data_dir,
 			"RPC_PUBLIC_ADDR": host_port(machine["address"], cluster.rpc_port),
 			"REGION": cluster.region,
-			"BASE_DOMAIN": cluster.base_domain,
 			"REPLICATION_FACTOR": cluster.replication_factor,
 			"RPC_PORT": cluster.rpc_port,
 			"S3_PORT": cluster.s3_port,
-			"WEB_PORT": cluster.web_port,
-			"K2V_PORT": cluster.k2v_port,
 			"ADMIN_PORT": cluster.admin_port,
 			"RPC_SECRET": secrets["rpc_secret"],
 			"ADMIN_TOKEN": secrets["admin_token"],
@@ -181,6 +191,9 @@ class Setup(Client):
 		self.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
 
+		if machine["role"] == GATEWAY:
+			self.setup_nginx_on_machine(machine, on_output)
+
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
 		"""Write this machine into the next layout. Nothing takes effect until it is applied."""
 		role = {
@@ -193,6 +206,21 @@ class Setup(Client):
 			role["capacity"] = machine["disk_size_gb"] * GIGABYTE
 
 		return self.assign_roles([role])
+
+	def setup_nginx_on_machine(
+		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
+	) -> None:
+		"""Put nginx on the gateway's port 80 routing to s3 and admin api."""
+		self.run(machine, script(*NGINX_CONF, environment=self.nginx_environment()), on_output)
+
+	def nginx_environment(self) -> dict[str, str]:
+		"""What the gateway needs to route its two subdomains."""
+		return {
+			"WILDCARD_DOMAIN": self.wildcard_domain,
+			"S3_PORT": self.cluster.s3_port,
+			"ADMIN_PORT": self.cluster.admin_port,
+			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
+		}
 
 	def apply_staged_layout(self) -> dict:
 		"""One version for everything staged. Garage refuses a layout that cannot hold a full
