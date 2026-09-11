@@ -19,7 +19,6 @@ REPO="${REPO:-https://github.com/frappe/cargo}"
 # that itself when it initialises the bench.
 PILOT_ADMIN_PASSWORD="${PILOT_ADMIN_PASSWORD:-}"   # pilot's own admin panel
 SITE_PASSWORD="${SITE_PASSWORD:-}"     # the site's Frappe Administrator
-WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-}" # the domain for Cargo eg "s3.<domain>" & "s3-admin.<domain>"
 # One per mandatory field of Cargo Settings, and nothing else: the install hook writes
 # these straight onto it, so anything missing here fails the install.
 CENTRAL_URL="${CENTRAL_URL:-}" # Central's URL for this host to call
@@ -33,6 +32,7 @@ ATLAS_TOKEN="${ATLAS_TOKEN:-}"
 ATLAS_TENANT_ID="${ATLAS_TENANT_ID:-}" # the tenant every Atlas call of this host is scoped to
 PROXY_URL="${PROXY_URL:-}" # Proxy control API URL for this region
 PROXY_TOKEN="${PROXY_TOKEN:-}" # restricted token for the Proxy control API
+WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-}" # the gateway answers at s3-svc.<domain> and s3-admin-svc.<domain>
 BENCH_USER="${BENCH_USER:-frappe}" # pilot refuses to run as root, so the bench gets its own user
 BENCH_UID="${BENCH_UID:-1001}"
 BENCH_GID="${BENCH_GID:-1001}"

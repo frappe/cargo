@@ -34,6 +34,7 @@ class UnitTestInstallSettings(UnitTestCase):
 	def test_enrolment_uses_bearer_tokens_and_proxy_configuration(self) -> None:
 		self.assertIn("ATLAS_TOKEN", ENROLMENT_VARS)
 		self.assertIn("PROXY_TOKEN", ENROLMENT_VARS)
+		self.assertIn("WILDCARD_DOMAIN", ENROLMENT_VARS)
 		self.assertNotIn("ATLAS_KEY", ENROLMENT_VARS)
 		self.assertNotIn("ATLAS_SECRET", ENROLMENT_VARS)
 
@@ -49,6 +50,7 @@ class UnitTestInstallSettings(UnitTestCase):
 			"ATLAS_TENANT_ID": "0",
 			"PROXY_URL": "https://proxy.example.com",
 			"PROXY_TOKEN": "proxy-token",
+			"WILDCARD_DOMAIN": "example.com",
 			"CENTRAL_WEBHOOK_SECRET": "not-configured",
 			"JWKS_URL": "https://atlas.example.com/api/atlas/jwks.json",
 		}
@@ -62,4 +64,5 @@ class UnitTestInstallSettings(UnitTestCase):
 		self.assertEqual(settings.atlas_tenant_id, "0")
 		self.assertEqual(settings.proxy_url, "https://proxy.example.com")
 		self.assertEqual(settings.proxy_token, "proxy-token")
+		self.assertEqual(settings.wildcard_domain, "example.com")
 		settings.save.assert_called_once_with(ignore_permissions=True)

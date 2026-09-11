@@ -14,6 +14,7 @@ from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
 from cargo.object_storage.garage.setup import Setup
+from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -29,6 +30,7 @@ WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluste
 # The two states worth a call: the cluster may be used, or it may not.
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
+PROXY_SITE_NAMES = ("s3-svc", "s3-admin-svc")
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -111,6 +113,18 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""This cluster's Garage setup client"""
 		return Setup(self)
 
+	@property
+	def proxy_domains(self) -> tuple[str, ...]:
+		wildcard_domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
+		if not wildcard_domain:
+			frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
+
+		return tuple(f"{site_name}.{wildcard_domain}" for site_name in PROXY_SITE_NAMES)
+
+	def validate(self) -> None:
+		if self.status == "Active":
+			ensure_no_other_active_cluster(self)
+
 	def before_insert(self) -> None:
 		if all(self.get(name) for name in CLUSTER_SECRETS):
 			return
@@ -157,8 +171,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Set up what's not setup yet. THat's it idempotently called by the user whenever ready from desk."""
 		can_trigger_setup(self)
 
-		# Always the whole flow, even with every node joined: gateway routing is re-applied on
-		# each run, and a cluster is only Active once that has succeeded.
+		# Always the whole flow, even with every node joined: gateway routing and proxy routes
+		# are re-applied on each run, and a cluster is only Active once both have succeeded.
 		self.clear_logs()
 		self.mark_cluster_status("Setting Up", None)
 		# Here we will start a flow of triggers.
@@ -194,6 +208,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.record_cluster_peers()
 		self.apply_layout()
 
+		# nginx before the proxy: the proxy only gets routes to a gateway ready to take them.
 		if not self.configure_gateway_routing():
 			self.mark_cluster_status(
 				"Failed",
@@ -203,7 +218,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 			)
 			return
 
-		self.verify_connected_nodes()
+		if not self.verify_connected_nodes():
+			return
+		if not self.publish_proxy_routes():
+			return
+
+		self.mark_cluster_status("Active", None)
 
 	@task
 	def discover_machines_to_setup(self) -> list[str]:
@@ -269,7 +289,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.garage_setup.apply_staged_layout()
 
 	@task
-	def verify_connected_nodes(self) -> None:
+	def verify_connected_nodes(self) -> bool:
 		"""What actually joined, as Garage sees it. Health labels the rest; this only decides
 		whether the cluster came up at all."""
 		healthy_nodes = self.garage_setup.healthy_nodes()
@@ -282,10 +302,22 @@ class ObjectStorageCluster(WorkflowBuilder):
 					len(joined_storage), self.replication_factor
 				),
 			)
-			return
+			return False
 
-		# Short of a node but able to serve: Active, and health reports it as degraded.
-		self.mark_cluster_status("Active", None)
+		return True
+
+	@task
+	def publish_proxy_routes(self) -> bool:
+		"""Publish the regional S3 routes to this cluster's gateway."""
+		try:
+			client = ProxyClient.from_settings()
+			for domain in self.proxy_domains:
+				client.map_domain(domain, self.gateway_address)
+		except (ProxyError, frappe.ValidationError) as error:
+			self.mark_cluster_status("Failed", _(f"Proxy route setup failed: {error}"))
+			return False
+
+		return True
 
 	@frappe.whitelist()
 	def reveal_admin_token(self) -> str:
@@ -369,6 +401,8 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""If less than required amount of machines are ready to setup, throw."""
+	ensure_no_other_active_cluster(cluster)
+
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
@@ -379,6 +413,16 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 				cluster.replication_factor, num_running_storage_nodes
 			)
 		)
+
+
+def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:
+	# Check-then-act: an operator activates a cluster by hand, so two at once is not a real race.
+	active_cluster = frappe.db.exists(
+		"Object Storage Cluster",
+		{"status": "Active", "name": ("!=", cluster.name)},
+	)
+	if active_cluster:
+		frappe.throw(_("Object Storage Cluster {0} is already Active.").format(active_cluster))
 
 
 def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> None:

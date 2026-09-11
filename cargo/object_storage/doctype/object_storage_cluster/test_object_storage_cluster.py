@@ -6,7 +6,7 @@ import hashlib
 import hmac
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import frappe
 from frappe.integrations.doctype.webhook.webhook import (
@@ -30,6 +30,7 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 )
 from cargo.object_storage.garage.client import Client
 from cargo.object_storage.garage.setup import Setup
+from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.testing import use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
@@ -155,12 +156,63 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 			self.cluster.reveal_admin_token()
 
 
+class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+		self.vm_ids: dict[str, str] = {}
+		self.gateway = self.add_machine(GATEWAY)
+		frappe.db.set_value("Machine", self.gateway, "address", "fdaa:1::10")
+
+	add_machine = IntegrationTestObjectStorageCluster.add_machine
+
+	def test_the_two_service_domains_map_to_the_gateway(self):
+		client = MagicMock()
+		with patch.object(ProxyClient, "from_settings", return_value=client):
+			published = self.cluster.publish_proxy_routes()
+
+		self.assertTrue(published)
+		self.assertEqual(
+			client.map_domain.call_args_list,
+			[
+				call("s3-svc.example.test", "fdaa:1::10"),
+				call("s3-admin-svc.example.test", "fdaa:1::10"),
+			],
+		)
+
+	def test_a_proxy_failure_marks_the_cluster_failed(self):
+		client = MagicMock()
+		client.map_domain.side_effect = ProxyError("proxy unavailable")
+		with (
+			patch.object(ProxyClient, "from_settings", return_value=client),
+			patch.object(self.cluster, "mark_cluster_status") as mark_status,
+		):
+			published = self.cluster.publish_proxy_routes()
+
+		self.assertFalse(published)
+		mark_status.assert_called_once_with("Failed", "Proxy route setup failed: proxy unavailable")
+
+	def test_a_second_active_cluster_is_refused(self):
+		self.cluster.db_set("status", "Active")
+		other_cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+		other_cluster.status = "Active"
+
+		with self.assertRaisesRegex(frappe.ValidationError, self.cluster.name):
+			other_cluster.save()
+
+
 class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 	"""A cluster that has served holds data, so releasing a node can cost a copy."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
+		# Every test here activates a cluster, and the suite does not roll back between
+		# tests. Only one cluster may be Active, so stand the earlier ones down.
+		for name in frappe.get_all("Object Storage Cluster", filters={"status": "Active"}, pluck="name"):
+			frappe.db.set_value("Object Storage Cluster", name, "status", "Draft")
+
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",
@@ -381,7 +433,13 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
+		# Only one cluster may be Active and these drive one there, without a rollback between
+		# tests: stand the others down first, and this one down after.
+		for name in frappe.get_all("Object Storage Cluster", filters={"status": "Active"}, pluck="name"):
+			frappe.db.set_value("Object Storage Cluster", name, "status", "Draft")
+
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster", "replication_factor": 1}).insert()
+		self.addCleanup(frappe.db.set_value, "Object Storage Cluster", self.cluster.name, "status", "Draft")
 		self.vm_ids: dict[str, str] = {}
 		self.gateway = self.add_machine(GATEWAY)
 		self.storage = self.add_machine(STORAGE)
@@ -399,6 +457,7 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 			patch.object(Setup, "get_connected_nodes"),
 			patch.object(Setup, "apply_staged_layout"),
 			patch.object(Setup, "setup_nginx_on_machine", **(nginx or {})) as routed,
+			patch.object(ObjectStorageCluster, "publish_proxy_routes", return_value=True) as self.published,
 		):
 			yield routed
 
@@ -421,6 +480,18 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 		self.assertEqual(self.cluster.status, "Failed")
 		self.assertIn("nginx", self.cluster.error)
 		self.assertIn("set up again", self.cluster.error)
+
+	def test_the_proxy_gets_no_routes_to_a_gateway_that_cannot_take_them(self):
+		with self.everything_joined(nginx={"side_effect": RuntimeError("nginx -t failed")}):
+			self.run_flow()
+
+		self.published.assert_not_called()
+
+	def test_routes_are_published_once_the_gateway_is_ready(self):
+		with self.everything_joined():
+			self.run_flow()
+
+		self.published.assert_called_once()
 
 	def test_setting_up_again_retries_routing_even_with_every_node_joined(self):
 		"""Garage joined before nginx ran, so no node is left to install: routing must be

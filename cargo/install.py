@@ -18,9 +18,9 @@ ENROLMENT_VARS = (
 	"ATLAS_TENANT_ID",
 	"PROXY_URL",
 	"PROXY_TOKEN",
+	"WILDCARD_DOMAIN",
 	"CENTRAL_WEBHOOK_SECRET",
 	"JWKS_URL",
-	"WILDCARD_DOMAIN",
 )
 
 
@@ -62,7 +62,7 @@ def record_upstreams() -> None:
 	settings.atlas_tenant_id = os.getenv("ATLAS_TENANT_ID")
 	settings.proxy_url = os.getenv("PROXY_URL")
 	settings.proxy_token = os.getenv("PROXY_TOKEN")
+	settings.wildcard_domain = os.getenv("WILDCARD_DOMAIN")
 	settings.central_webhook_secret = os.getenv("CENTRAL_WEBHOOK_SECRET")
 	settings.jwks_url = os.getenv("JWKS_URL")
-	settings.wildcard_domain = os.getenv("WILDCARD_DOMAIN")
 	settings.save(ignore_permissions=True)

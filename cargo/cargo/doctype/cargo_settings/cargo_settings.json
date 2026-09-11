@@ -112,6 +112,7 @@
    "reqd": 1
   },
   {
+   "description": "Regional wildcard domain used for public service routes.",
    "fieldname": "wildcard_domain",
    "fieldtype": "Data",
    "label": "Wildcard Domain",
@@ -122,7 +123,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-11 17:48:18.834703",
+ "modified": "2026-09-11 13:42:38.961545",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

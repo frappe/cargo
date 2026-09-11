@@ -7,7 +7,7 @@ SETTINGS = {
 	"cargo_url": "http://cargo.test",
 	"jwks_url": "http://atlas.test/api/atlas/jwks.json",
 	"proxy_url": "http://proxy.test",
-	"wildcard_domain": "par-1.cargo.test",
+	"wildcard_domain": "example.test",
 	"region_id": 1,
 	"region": "test-region",
 	"atlas_tenant_id": 0,
