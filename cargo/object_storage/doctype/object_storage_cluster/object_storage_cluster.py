@@ -15,7 +15,7 @@ from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
 from cargo.object_storage.garage.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
-from cargo.ssh import OutputLog
+from cargo.ssh import SSH_TIMEOUT, OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -26,6 +26,9 @@ if typing.TYPE_CHECKING:
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
+# A step that installs over SSH makes a few calls, each allowed SSH_TIMEOUT. The job must
+# outlast them, or the worker kills a step that SSH would still have let finish.
+MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
 WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook"
 # The two states worth a call: the cluster may be used, or it may not.
 REPORTED_STATUSES = ("Active", "Failed")
@@ -236,7 +239,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			machine.name for machine in sorted(machines_to_setup, key=lambda machine: machine.role != GATEWAY)
 		]
 
-	@task
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
 	def start_setup_on_machine(self, machine: Machine) -> bool:
 		"""Install Garage on one machine and fold it into the cluster."""
 		with OutputLog(self, "setup_log", append=True) as log:
@@ -252,7 +255,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		return True
 
-	@task
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
 	def configure_gateway_routing(self) -> bool:
 		"""nginx on the gateway's port 80, in front of Garage. A step of its own, run on every
 		setup, so setting up again is also how a failed one is retried."""
