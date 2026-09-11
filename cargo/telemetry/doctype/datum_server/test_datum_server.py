@@ -2,9 +2,12 @@
 # See license.txt
 
 import frappe
+from frappe.integrations.doctype.webhook.webhook import get_webhook_data
 from frappe.tests import IntegrationTestCase
+from frappe.utils.password import remove_encrypted_password
 
-from cargo.telemetry.doctype.datum_server.datum_server import PUBLIC_KEY_FILE
+from cargo.telemetry.doctype.datum_server.datum_server import PUBLIC_KEY_FILE, WEBHOOK_ENDPOINT
+from cargo.testing import SETTINGS, use_test_settings
 
 PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
 
@@ -14,6 +17,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		use_test_settings()
 
 	def server(self, **changes):
 		doc = frappe.new_doc("Datum Server")
@@ -29,6 +33,9 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		return doc
 
 	def saved(self, **changes) -> bool:
+		"""Each attempt is rolled back, which takes the test settings with it, so every
+		attempt lays them down again rather than leaning on whatever the site has committed."""
+		use_test_settings()
 		try:
 			self.server(**changes).save()
 			return True
@@ -170,3 +177,59 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
 		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DATUM_DEFAULT_PASSWORD"])
+
+
+class IntegrationTestTelemetryWebhook(IntegrationTestCase):
+	"""Central hands pilots this host's URL, so it has to hear when the host settles."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		self.addCleanup(frappe.db.rollback)
+
+	def insert_server(self):
+		return frappe.get_doc(
+			{
+				"doctype": "Datum Server",
+				"clickhouse_host": "clickhouse.internal",
+				"repository": "https://github.com/frappe/datum",
+				"version": "develop",
+				"public_key": PEM,
+			}
+		).insert()
+
+	def webhook_of(self, server):
+		return frappe.get_doc("Webhook", f"datum_server-{server.name}")
+
+	def test_a_new_host_gets_a_webhook_pointed_at_central(self):
+		webhook = self.webhook_of(self.insert_server())
+
+		self.assertEqual(webhook.webhook_doctype, "Datum Server")
+		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
+		self.assertTrue(webhook.enable_security)
+
+	def test_only_a_settled_host_is_reported(self):
+		condition = self.webhook_of(self.insert_server()).condition
+
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Active")}))
+		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Failed")}))
+		self.assertFalse(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Setting Up")}))
+
+	def test_the_report_names_the_region_as_telemetry(self):
+		server = self.insert_server()
+		server.db_set("status", "Active")
+		server.reload()
+
+		report = get_webhook_data(server, self.webhook_of(server))
+
+		self.assertEqual(report["region"], SETTINGS["region"])
+		self.assertEqual(report["service"], "telemetry")
+		self.assertEqual(report["status"], "Active")
+
+	def test_a_cargo_with_no_webhook_secret_makes_no_host(self):
+		"""Nothing may post to Central unauthenticated, so the host does not get made."""
+		remove_encrypted_password("Cargo Settings", "Cargo Settings", "central_webhook_secret")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		with self.assertRaises(frappe.ValidationError):
+			self.insert_server()

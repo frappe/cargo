@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 
+from cargo.atlas_client import host_port
+
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
@@ -31,8 +33,9 @@ class Client:
 
 	@cached_property
 	def url(self) -> str:
-		"""Every node serves the same API, so the gateway answers for the cluster."""
-		return f"http://{self.cluster.gateway_address}:{self.cluster.admin_port}"
+		"""Every node serves the same API, so the gateway answers for the cluster. Over the
+		mesh: the admin API is never put behind the public proxy."""
+		return f"http://{host_port(self.cluster.gateway_address, self.cluster.admin_port)}"
 
 	@cached_property
 	def headers(self) -> dict[str, str]:

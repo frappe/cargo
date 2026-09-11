@@ -1,6 +1,10 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+from __future__ import annotations
+
+import typing
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -10,6 +14,11 @@ from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.ssh import OutputLog, run_over_ssh, script
 
+if typing.TYPE_CHECKING:
+	from frappe.integrations.doctype.webhook.webhook import Webhook
+
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+
 CONF = ("telemetry", "conf", "install.sh")
 SETUP_TIMEOUT = 30 * 60
 PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
@@ -17,6 +26,8 @@ PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 DATUM_USER = "datum"
 MAX_PORT = 65535
 SECRET_LENGTH = 32
+WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
+REPORTED_STATUSES = ("Active", "Failed")
 
 
 class DatumServer(Document):
@@ -84,6 +95,11 @@ class DatumServer(Document):
 
 		if not self.default_password:
 			self.default_password = frappe.generate_hash(length=SECRET_LENGTH)
+
+	def after_insert(self) -> None:
+		"""Central hands pilots this host's URL to ship metrics and logs to, so it has to hear
+		when the host comes up or goes down."""
+		configure_telemetry_webhook(self)
 
 	@frappe.whitelist()
 	def create_telemetry_node(self, cpu: int, ram_gb: int, disk_gb: int) -> str:
@@ -181,3 +197,42 @@ class DatumServer(Document):
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
 		}
+
+
+def configure_telemetry_webhook(server: DatumServer) -> None:
+	"""Point a Frappe Webhook at Central so this host reports its own status changes."""
+	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+	if not settings.central_url:
+		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
+
+	secret = settings.get_password("central_webhook_secret", raise_exception=True)
+	name = f"datum_server-{server.name}"
+	webhook: Webhook = (
+		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
+	)
+	webhook.name = name
+	# TODO: Once the proxy is laid out, this host's public URL (a domain) becomes its
+	# service_endpoint -- the URL pilots ship metrics and logs to.
+	webhook.update(
+		{
+			"webhook_doctype": server.doctype,
+			"webhook_docevent": "on_update",
+			"request_url": settings.central_url.rstrip("/") + WEBHOOK_ENDPOINT,
+			"request_method": "POST",
+			"request_structure": "JSON",
+			"condition": f"doc.status in {REPORTED_STATUSES}",
+			"webhook_json": frappe.as_json(
+				{
+					"region": settings.region,
+					"region_id": settings.region_id,
+					"service": "telemetry",
+					"status": "{{ doc.status }}",
+					"service_endpoint": "<TBD>",
+				}
+			),
+			"enable_security": True,
+			"webhook_secret": secret,
+			"enabled": True,
+		}
+	)
+	webhook.save(ignore_permissions=True)
