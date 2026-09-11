@@ -26,4 +26,9 @@ class CargoSettings(Document):
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
+		wildcard_domain: DF.Data
 	# end: auto-generated types
+
+	def validate(self) -> None:
+		# Every consumer builds a domain from this, so it is canonicalised once, here.
+		self.wildcard_domain = (self.wildcard_domain or "").strip().strip(".").lower()

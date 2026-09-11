@@ -16,7 +16,8 @@
   "atlas_token",
   "atlas_tenant_id",
   "proxy_url",
-  "proxy_token"
+  "proxy_token",
+  "wildcard_domain"
  ],
  "fields": [
   {
@@ -108,6 +109,13 @@
    "fieldname": "proxy_token",
    "fieldtype": "Password",
    "label": "Proxy Token",
+   "reqd": 1
+  },
+  {
+   "description": "Regional wildcard domain used for public service routes.",
+   "fieldname": "wildcard_domain",
+   "fieldtype": "Data",
+   "label": "Wildcard Domain",
    "reqd": 1
   }
  ],
