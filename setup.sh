@@ -1,14 +1,18 @@
 #!/bin/bash
-# Bring up a Cargo host from a bare Ubuntu machine.
+# Bring up a production Cargo host from a bare Ubuntu machine.
 #
 # Pilot's installer brings its own MariaDB, Redis and nginx, so nothing is expected to be
 # on the machine beforehand. Everything below the passwords is what the app is installed
 # with: the provisioner knows all of it, and Cargo Settings has no other way to learn it.
+#
+# The bench is deployed to production behind nginx on port 80, without TLS: HTTPS is
+# terminated by the proxy in front of this host.
 set -euo pipefail
 
 PILOT_VERSION="${PILOT_VERSION:-v0.0.29-pre-alpha}"
 BENCH="${BENCH:-cargo}"
 SITE="${SITE:-cargo.localhost}"
+ADMIN_DOMAIN="${ADMIN_DOMAIN:-}"
 BRANCH="${BRANCH:-develop}"
 REPO="${REPO:-https://github.com/frappe/cargo}"
 # Two different passwords. MariaDB's root password is not one of them: pilot generates
@@ -32,6 +36,11 @@ BENCH_GID="${BENCH_GID:-1001}"
 
 if [ -z "$PILOT_ADMIN_PASSWORD" ] || [ -z "$SITE_PASSWORD" ]; then
 	echo "Set PILOT_ADMIN_PASSWORD and SITE_PASSWORD before running." >&2
+	exit 1
+fi
+
+if [ -z "$ADMIN_DOMAIN" ]; then
+	echo "Set ADMIN_DOMAIN before running: production needs a domain for pilot's admin panel." >&2
 	exit 1
 fi
 
@@ -68,17 +77,15 @@ q_repo=$(printf '%q' "$REPO")
 q_branch=$(printf '%q' "$BRANCH")
 q_admin_password=$(printf '%q' "$PILOT_ADMIN_PASSWORD")
 q_site_password=$(printf '%q' "$SITE_PASSWORD")
+q_admin_domain=$(printf '%q' "$ADMIN_DOMAIN")
 # The install hook reads these, so they are quoted once and exported into that one command.
 enrolment=""
 for name in $ENROLMENT_VARS; do
 	enrolment="$enrolment $name=$(printf '%q' "${!name}")"
 done
 
-# Installs Python, Node, MariaDB, Redis and nginx, then pilot itself. Pinned to a release
-# rather than develop, so two hosts built a week apart get the same pilot.
-#
-# Twice, as the image build does: pilot refuses to install as root, so the first pass lays
-# down the system stack and the second installs pilot itself for the bench user.
+# Twice: the first pass lays down the system stack as root, the second installs pilot for
+# the bench user.
 curl -fsSL "$INSTALLER" | bash
 as_bench_user "curl -fsSL $q_installer | bash"
 
@@ -89,3 +96,5 @@ as_bench_user "pilot --yes -b $q_bench get-app $q_repo $q_branch --install-depen
 # `su -` starts a login shell, so the enrolment variables are exported inside it rather
 # than out here.
 as_bench_user "$enrolment pilot --yes -b $q_bench install-app $q_site cargo"
+
+as_bench_user "pilot --yes -b $q_bench setup production --admin-domain $q_admin_domain"

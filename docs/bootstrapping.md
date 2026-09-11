@@ -1,7 +1,7 @@
 # Setting up a Cargo host
 
-Cargo runs on its own machine, one per region. This is how a bare VM becomes a Cargo host
-that Central trusts.
+Cargo runs on its own machine, one per region. This is how a bare VM becomes a production
+Cargo host that Central trusts.
 
 The provisioner does the handing over. Everything the host needs to know is passed to it at
 install time, in the environment, and written straight onto **Cargo Settings**. The host
@@ -26,6 +26,8 @@ Cargo presents, so a token minted for one region is refused in another.
 ```bash
 PILOT_ADMIN_PASSWORD=... \
 SITE_PASSWORD=... \
+ADMIN_DOMAIN=pilot.blr.example.com \
+SITE=cargo.blr.example.com \
 CENTRAL_URL=https://central.example.com \
 ATLAS_URL=https://atlas.example.com \
 CARGO_URL=https://cargo-blr.example.com \
@@ -41,7 +43,10 @@ ATLAS_TENANT_ID=7 \
 `setup.sh` refuses to start unless every one of them is set, and names the ones that are
 missing. There is one variable per mandatory field of Cargo Settings and nothing else: the
 install hook writes them straight onto it, so a missing one fails the install rather than
-leaving a host that is half configured.
+leaving a host that is half configured. `SITE` is the only one with a usable default, and it
+is not one you want in production — see [Domains](#domains).
+
+The two passwords are different things, and neither is the database password:
 
 | | What it is |
 |---|---|
@@ -62,12 +67,30 @@ The script then:
 1. Runs pilot's installer, which brings Python, Node, MariaDB, Redis and nginx. The machine
    can be completely bare. Pilot is pinned to a release (`v0.0.29-pre-alpha`) rather than
    `develop`, so two hosts built weeks apart get the same pilot.
-2. Creates a bench and a site.
+2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, and a site named `SITE`.
 3. Downloads the Cargo app.
 4. Exports the nine variables above, then installs Cargo on the site.
+5. Deploys the bench to production: systemd units for the workload, nginx in front of them.
 
-`PILOT_VERSION`, `BENCH`, `SITE`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's
-own branch and still defaults to `develop`.
+`PILOT_VERSION`, `BENCH`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's own
+branch and still defaults to `develop`.
+
+### Domains
+
+Production serves two things, on two domains:
+
+| | What it is |
+|---|---|
+| `ADMIN_DOMAIN` | pilot's admin panel for this machine, the one `PILOT_ADMIN_PASSWORD` logs in to |
+| `SITE` | the Cargo site itself, the host that answers at `CARGO_URL` |
+
+Both are served over plain HTTP on **port 80**. The script passes no `--tls`, so pilot does
+not request certificates and nginx renders no HTTPS server block: HTTPS is expected to
+terminate on the proxy in front of this host.
+
+`SITE` defaults to `cargo.localhost`, which is fine for a throwaway box and wrong everywhere
+else — the site name is the domain nginx serves, and `CARGO_URL` has to reach it. Set it to a
+real hostname before running.
 
 ## Step 3 — what the install hook does
 
