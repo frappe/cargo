@@ -6,12 +6,11 @@ import pickle
 from frappe.tests import UnitTestCase
 
 from cargo.atlas_client import AtlasError
-from cargo.central_client import CentralError
 from cargo.object_storage.garage.client import Error
 from cargo.ssh import SshError
 
 #: Every error a task can raise. The workflow engine pickles them to carry them back.
-ERRORS = (AtlasError, CentralError, Error, SshError)
+ERRORS = (AtlasError, Error, SshError)
 
 
 class UnitTestErrors(UnitTestCase):

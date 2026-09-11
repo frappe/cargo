@@ -1,138 +1,112 @@
 # What Cargo needs from Atlas
 
-**Draft. Not agreed with the Atlas team yet.**
-
 Cargo asks Atlas for machines. That's all — never buckets, tenants, or services. The code
-that makes these calls is `cargo/atlas_client.py`, so if this changes, that
-breaks.
+that makes these calls is `cargo/atlas_client.py`, so if this changes, that breaks.
 
 ## How the calls work
 
-Every call is a POST to:
+Atlas's tenant API, REST rather than Frappe method calls:
 
 ```
-{atlas_url}/api/method/atlas.atlas.api.service.<name>
+{atlas_url}/api/atlas/<resource>
 ```
 
-JSON in, JSON out. The answer comes wrapped as `{"message": ...}` and Cargo unwraps it.
+JSON in, JSON out. The body **is** the resource — Atlas unwraps its own `ApiResult`, so there
+is no `{"message": ...}` envelope to dig through.
 
-**Watch out:** Frappe can return HTTP 200 with an error inside the body (`exc` or
-`_server_messages`). Checking the status code alone isn't enough, so Cargo checks both.
+Errors come back as `{"error": {"code", "message", "fields"}}`, and Cargo reads the message
+and the per-field ones out of it. A 404 is its own thing (`AtlasNotFound`), because a machine
+Atlas no longer has is an answer rather than a failure.
 
 ### Logging in
 
 ```
-X-Cargo-Token: <atlas_access_token>
+Authorization: token <atlas_key>:<atlas_secret>
+X-Tenant-ID: <atlas_tenant_id>
 ```
 
-Central signs the token with its private key. Atlas checks it against Central's public keys
-at `{central_url}/api/method/central.api.jwks.get_jwks`. Nothing is shared between Cargo and
-Atlas, and Central can revoke everything by rotating its key.
+Frappe's own token authentication, which is what Atlas offers service callers. The
+provisioner puts the pair in Cargo Settings; the user behind it needs the **Atlas Admin**
+role, and every route is scoped to the tenant in the header.
 
-The header is `X-Cargo-Token`, not `Authorization`: Frappe rejects an unrecognised
-`Authorization` header with a 401 before the endpoint is reached. The token's scope is
-`cargo:atlas`, and it is a different token from the one Cargo presents to Central.
+## Making a machine — `POST /virtual-machines`
 
-> **Not built yet.** Atlas currently uses `token <key>:<secret>` for service callers. We
-> agreed on bearer tokens, but nothing has changed on the Atlas side.
-
-## Making machines — `create_bare_vms`
-
-Cargo asks for a whole cluster in one call, or for a single machine.
+One machine per call. Cargo asks for them one at a time and tracks each as its own
+**Machine**.
 
 | Send | What it is |
 |---|---|
-| `title` | A label for the group |
-| `base_image` | e.g. `ubuntu-22.04`, `ubuntu-24.04` |
-| `placement_group` | The machines wanted, below. **Omitted entirely when Cargo does not care where the machine lands** — an image build wants one machine, anywhere |
-| `ssh_public_key` | Put on every machine as root's key. Cargo keeps the private half |
+| `image_id` | What to boot, e.g. `ubuntu-24.04`, or a snapshot Cargo made earlier |
+| `vcpus` | Cores |
+| `memory_mib` | Memory. Cargo works in GB and multiplies by 1024 |
+| `disk_mib` | Disk, likewise |
+| `ssh_keys` | A list of one: root's public key. Cargo keeps the private half |
+| `hostname` | The Machine's own name, e.g. `OSC-0001-storage-0001` |
+| `metadata` | Free-form. Cargo puts the machine's `role` here |
+| `egress` | Always `uplink` — see below |
 
-With no `placement_group`, send back exactly one id.
+Send back the machine, including its `id`. Don't wait for it to boot; Cargo polls.
 
-```json
-{
-  "strategy": "partition",
-  "topology_key": "rack",
-  "partition_count": 2,
-  "specs": [
-    { "role": "gateway", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 20 },
-    { "role": "storage", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 500 },
-    { "role": "storage", "count": 1, "cpu": 2, "ram_gb": 4, "disk_gb": 1000 }
-  ]
-}
-```
+**No public address is asked for.** `egress: uplink` gives the machine the internet without an
+address of its own. Everything Cargo does to a machine — SSH, Garage's admin API, Garage
+peering — goes over the mesh.
 
-One entry per machine. A gateway just passes traffic through and barely needs a disk, and
-storage nodes may differ from each other: Garage is not RAID 0, so a bigger disk simply holds
-more.
+## Checking on a machine — `GET /virtual-machines/{id}`
 
-Send back `{"vm_ids": [...]}` as soon as you accept the request. Don't wait for the machines
-to boot — Cargo polls for that.
-
-**Order matters.** Return the ids in the same order as `specs`, one per `count`. Cargo
-decides which machine is the gateway purely by position, so a shuffled list labels every
-machine wrong.
-
-> **Not built yet.** Atlas makes one VM at a time (`create_bare_vm`) and has no idea what a
-> placement group is.
->
-> Cargo needs the spread to actually happen, and needs the call to **fail** if it can't
-> rather than putting the machines anywhere. Garage keeps copies of data on separate
-> machines to survive a failure — but if all three copies land in the same rack, they die
-> together. Cargo can fake this today by pinning machines to different servers, which
-> spreads them across hosts rather than racks, and quietly stops working when there are
-> fewer servers than machines.
-
-## Checking on a machine — `get_virtual_machine`
-
-Send `{"name": "<vm-id>"}`. Cargo calls this every 2 minutes until the machine is usable.
+Cargo polls this until the machine is usable, and again whenever it needs the current state.
 
 | Send back | What it is |
 |---|---|
-| `name` | The id |
-| `status` | `Running` when booted. `Failed`, `Error`, `Terminated`, `Archived`, `Broken` mean it's never coming up |
-| `error` | Why, when the status is one of the dead ones. Optional, and the only way Cargo can tell an operator what went wrong — a bare `Broken` leaves nothing to act on |
-| `ipv4_address` | A public address that Cargo can SSH to |
-| `server` | Which host it ended up on |
+| `current_state` | `running` once it is up. `failed` means it is never coming up |
+| `wireguard_mesh_ipv6` | The mesh address. This is how Cargo reaches the machine |
 
-A machine that says `Running` but has no address is still starting up, and Cargo keeps
-waiting.
+A machine that is `running` but has no mesh address is still starting, and Cargo keeps
+waiting. Cargo derives nothing about the address itself: it records the one Atlas reports.
 
-> **What Cargo assumes.** Every machine gets a public IPv4 address you can reach from the
-> internet. These are infrastructure machines, not customer benches — there's no jumping
-> through a hypervisor and no private network. If Atlas can't promise this, Cargo's whole
-> approach to reaching machines has to change.
+> **Not built yet.** `wireguard_mesh_ipv6` is not on `VirtualMachineResponse` upstream. Until
+> it is, a machine never gets an address — Cargo will not compute one from the region, tenant
+> and VM number itself, because a wrong address is worse than none.
 
-## Photographing a machine — `create_snapshot`
+### Dead states
+
+Cargo treats only `failed` as terminal. If Atlas can also report `unknown`, `stopped` or
+`paused` for a machine that will not come back, Cargo needs to know — today it would wait on
+those forever.
+
+## Throwing a machine away — `DELETE /virtual-machines/{id}`
+
+Cargo calls this while cleaning up, so it must be safe to call twice. Once cleanup finishes
+the route answers 404, and that is how Cargo knows termination is done.
+
+Image builds call it on every path, including failures, so a build never leaves a machine
+running.
+
+## Photographing a machine — `POST /virtual-machines/{id}/actions/snapshot`
 
 Cargo builds golden images by provisioning a throwaway machine and snapshotting its disk.
-That snapshot is the image; Atlas boots later machines from it.
+That snapshot is the image; Atlas boots later machines from it by `image_id`.
 
-| Send | What it is |
-|---|---|
-| `vm` | The machine to snapshot. It is running and has been provisioned |
-| `title` | What to call the snapshot. Unique per image variant, so nothing is overwritten |
-
-Send back `{"snapshot_id": "..."}`.
+Send `{"title": "..."}` — unique per image variant, so nothing is overwritten. Send back the
+snapshot, including its `id`.
 
 Cargo terminates the machine straight afterwards, so the snapshot must not depend on it
 surviving.
 
-> **Not built yet.** Neither snapshot call exists on the Atlas side. Cargo's shape is a
-> guess and can move to match whatever Atlas offers.
+## Checking on a snapshot — `GET /images/{id}`
 
-## Checking on a snapshot — `get_snapshot`
+The image as Atlas sees it, so Cargo can tell when it is bootable.
 
-Send `{"snapshot": "<snapshot-id>"}`. Cargo uses this to know when an image is usable.
+> **No caller yet.** `AtlasClient.get_snapshot` exists but nothing uses it: an image variant
+> records the snapshot id and moves on. It is here for when a variant has to wait for the
+> image to become usable.
 
-| Send back | What it is |
-|---|---|
-| `snapshot_id` | The id |
-| `status` | `Available` once it can be booted from |
-| `size` | Bytes, so an operator can see what a variant costs to keep |
+## One tenant, one region
 
-## Throwing a machine away — `terminate_vm`
+Every call carries `X-Tenant-ID`, and Cargo sends the same one for its whole life — one
+Cargo, one region, one tenant. Atlas scopes each route to it, so another tenant's machine is
+a 404 rather than a refusal.
 
-Send `{"vm": "<vm-id>"}`. Cargo calls this while cleaning up, so it must be safe to call on
-a machine that's already gone. Image builds call it on every path, including failures, so a
-build never leaves a machine running.
+The region matters in the other direction too. Atlas packs the region id into the second
+16-bit group of every mesh address, and checks that a Central-signed token's audience is
+`atlas-<region id>-admin`. Cargo Settings carries that same `region_id`, and it has to match
+the region's Atlas Settings or nothing lines up.
