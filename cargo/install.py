@@ -17,21 +17,26 @@ ENROLMENT_VARS = (
 	"ATLAS_KEY",
 	"ATLAS_SECRET",
 	"ATLAS_TENANT_ID",
-	"CENTRAL_BOOTSTRAPPING_TOKEN",
+	"CENTRAL_WEBHOOK_SECRET",
 )
 
 
 def after_install() -> None:
-	"""Enrol this host with Central, using the bootstrapping token setup.sh passed in.
-	Skip CI in this case since the environment variables are not set there."""
-	if not any(os.getenv(name) for name in ENROLMENT_VARS):
-		frappe.throw(_("Set {0} before installing Cargo.").format(", ".join(ENROLMENT_VARS)))
+	"""Take the upstreams setup.sh passed in. CI installs the app with none, so it skips
+	this."""
+	if os.getenv("CI"):
+		return
 
-	record_bootstrapping_token()
+	missing = [name for name in ENROLMENT_VARS if not os.getenv(name)]
+	if missing:
+		frappe.throw(_("Set {0} before installing Cargo.").format(", ".join(missing)))
+
+	record_upstreams()
 
 
-def record_bootstrapping_token() -> None:
-	"""Take the upstream URLs and the one-time token out of the environment."""
+def record_upstreams() -> None:
+	"""Where this host reaches Central and Atlas, and the secret it signs Central's webhooks
+	with. Every one of them comes from the provisioner, through the environment."""
 	settings: CargoSettings = frappe.get_single("Cargo Settings")
 	settings.central_url = os.getenv("CENTRAL_URL")
 	settings.atlas_url = os.getenv("ATLAS_URL")
@@ -41,5 +46,5 @@ def record_bootstrapping_token() -> None:
 	settings.atlas_key = os.getenv("ATLAS_KEY")
 	settings.atlas_secret = os.getenv("ATLAS_SECRET")
 	settings.atlas_tenant_id = os.getenv("ATLAS_TENANT_ID")
-	settings.central_webhook_secret = os.getenv("CENTRAL_BOOTSTRAPPING_TOKEN")
+	settings.central_webhook_secret = os.getenv("CENTRAL_WEBHOOK_SECRET")
 	settings.save(ignore_permissions=True)

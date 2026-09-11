@@ -29,12 +29,12 @@ class AtlasNotFound(AtlasError):
 class AtlasClient:
 	"""Atlas's tenant API. Every route is scoped to the tenant in the header."""
 
-	def __init__(self, url: str, token: str, tenant_id: int, timeout: float = 120) -> None:
+	def __init__(self, url: str, api_key: str, api_secret: str, tenant_id: int, timeout: float = 120) -> None:
 		self.url = url.rstrip("/")
 		self.timeout = timeout
 		self.tenant_id = tenant_id
 		self.headers = {
-			"X-Atlas-Central-Token": token,
+			"Authorization": f"token {api_key}:{api_secret}",
 			"X-Tenant-ID": str(tenant_id),
 		}
 
@@ -46,7 +46,8 @@ class AtlasClient:
 
 		return cls(
 			url=settings.atlas_url,
-			token=settings.get_password("atlas_access_token"),
+			api_key=settings.atlas_key,
+			api_secret=settings.get_password("atlas_secret"),
 			tenant_id=settings.atlas_tenant_id,
 		)
 
