@@ -14,9 +14,10 @@ ENROLMENT_VARS = (
 	"CARGO_URL",
 	"REGION_ID",
 	"REGION",
-	"ATLAS_KEY",
-	"ATLAS_SECRET",
+	"ATLAS_TOKEN",
 	"ATLAS_TENANT_ID",
+	"PROXY_URL",
+	"PROXY_TOKEN",
 	"CENTRAL_WEBHOOK_SECRET",
 	"JWKS_URL",
 )
@@ -49,17 +50,17 @@ def complete_setup_wizard() -> None:
 
 
 def record_upstreams() -> None:
-	"""Where this host reaches Central and Atlas, and the secret it signs Central's webhooks
-	with. Every one of them comes from the provisioner, through the environment."""
+	"""Record the service URLs and credentials that the provisioner supplies."""
 	settings: CargoSettings = frappe.get_single("Cargo Settings")
 	settings.central_url = os.getenv("CENTRAL_URL")
 	settings.atlas_url = os.getenv("ATLAS_URL")
 	settings.cargo_url = os.getenv("CARGO_URL")
 	settings.region_id = os.getenv("REGION_ID")
 	settings.region = os.getenv("REGION")
-	settings.atlas_key = os.getenv("ATLAS_KEY")
-	settings.atlas_secret = os.getenv("ATLAS_SECRET")
+	settings.atlas_token = os.getenv("ATLAS_TOKEN")
 	settings.atlas_tenant_id = os.getenv("ATLAS_TENANT_ID")
+	settings.proxy_url = os.getenv("PROXY_URL")
+	settings.proxy_token = os.getenv("PROXY_TOKEN")
 	settings.central_webhook_secret = os.getenv("CENTRAL_WEBHOOK_SECRET")
 	settings.jwks_url = os.getenv("JWKS_URL")
 	settings.save(ignore_permissions=True)

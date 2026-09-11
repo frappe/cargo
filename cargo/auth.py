@@ -68,8 +68,7 @@ def presented_token() -> str:
 def token_claims(token: str) -> dict[str, Any] | None:
 	"""What one token carries, or None when it is not usable.
 
-	Central signs every caller's token, so Cargo verifies against Central's published keys
-	and holds no secret of its own."""
+	Cargo verifies against the configured merged key set and holds no verification secret of its own."""
 	import jwt
 	from jwt import PyJWKClient
 
@@ -96,10 +95,8 @@ def token_claims(token: str) -> dict[str, Any] | None:
 
 
 def accepted_audiences(settings: CargoSettings) -> list[str]:
-	"""Who a token has to have been minted for. Atlas presents the audience it checks
-	itself; Central presents the one it mints per Cargo Instance for bucket work. Both name
-	this region, so a token lifted from another region's traffic opens nothing here."""
-	return [f"atlas-{settings.region_id}-admin", f"central-{settings.region_id}-bucket"]
+	"""The audience reserved for this region's Cargo API."""
+	return [f"atlas-cargo:{settings.region_id}"]
 
 
 def jwks_client(url: str) -> PyJWKClient:

@@ -68,7 +68,9 @@ echo "Cargo Settings"
 check "central url was recorded" settings_is central_url "central.invalid"
 check "jwks url was recorded" settings_is jwks_url "jwks"
 check "atlas url was recorded" settings_is atlas_url "atlas.invalid"
+check "proxy url was recorded" settings_is proxy_url "proxy.invalid"
 check "region was recorded" settings_is region "e2e"
+check "tenant zero was recorded" settings_is atlas_tenant_id "0"
 
 echo "Production"
 check "systemd units are loaded" units_are_loaded

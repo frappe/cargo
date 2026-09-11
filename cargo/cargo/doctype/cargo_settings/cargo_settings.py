@@ -5,7 +5,7 @@ from frappe.model.document import Document
 
 
 class CargoSettings(Document):
-	"""Where Cargo reaches Atlas and Central. Shared by every service."""
+	"""Where Cargo reaches Atlas, Proxy, and Central. Shared by every service."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -15,14 +15,15 @@ class CargoSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		atlas_key: DF.Data
-		atlas_secret: DF.Password
 		atlas_tenant_id: DF.Int
+		atlas_token: DF.Password
 		atlas_url: DF.Data
 		cargo_url: DF.Data
 		central_url: DF.Data
 		central_webhook_secret: DF.Password
 		jwks_url: DF.Data
+		proxy_token: DF.Password
+		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
 	# end: auto-generated types

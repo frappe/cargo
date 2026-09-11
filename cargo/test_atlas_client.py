@@ -21,7 +21,7 @@ def response(status: int, payload=None, text: str = "") -> Mock:
 
 class UnitTestAtlasClient(UnitTestCase):
 	def setUp(self):
-		self.client = AtlasClient("https://atlas.test/", "api-key", "api-secret", TENANT_ID)
+		self.client = AtlasClient("https://atlas.test/", "atlas-token", TENANT_ID)
 
 	def call(self, answer: Mock):
 		return patch("cargo.atlas_client.requests.request", return_value=answer)
@@ -31,7 +31,7 @@ class UnitTestAtlasClient(UnitTestCase):
 			self.client.get_vm("vm-1")
 
 		headers = request.call_args.kwargs["headers"]
-		self.assertEqual(headers["Authorization"], "token api-key:api-secret")
+		self.assertEqual(headers["Authorization"], "Bearer atlas-token")
 		self.assertEqual(headers["X-Tenant-ID"], str(TENANT_ID))
 
 	def test_create_asks_for_one_machine_of_the_given_shape(self):
