@@ -117,9 +117,15 @@ class AtlasClient:
 		"""Start termination. The VM route answers 404 once cleanup finishes."""
 		self.call("DELETE", f"/virtual-machines/{vm_id}")
 
-	def create_snapshot(self, vm_id: str, title: str) -> str:
+	def create_snapshot(
+		self, vm_id: str, title: str, *, cache_image: bool = False, memory_snapshot: bool = False
+	) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""
-		created = self.call("POST", f"/virtual-machines/{vm_id}/actions/snapshot", {"title": title})
+		created = self.call(
+			"POST",
+			f"/virtual-machines/{vm_id}/actions/snapshot",
+			{"title": title, "cache_image": cache_image, "memory_snapshot": memory_snapshot},
+		)
 		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_snapshot returned no id: {created!r}")
 

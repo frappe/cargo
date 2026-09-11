@@ -5,14 +5,24 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
 : "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
+: "${ADMIN_DOMAIN:?ADMIN_DOMAIN is required}"
+: "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
 FRAPPE_VERSION="${FRAPPE_VERSION:-}"
 SITE="${SITE:-}"
 BENCH="${BENCH:-pilot}"
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1001}"
 BENCH_GID="${BENCH_GID:-1001}"
+SWAP_SIZE="${SWAP_SIZE:-1536M}"
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
+
+# The image boots with the memory it was baked on, which is not enough to build assets.
+# The cleanup at the end takes the swap file off, so it is never part of the snapshot.
+fallocate -l "$SWAP_SIZE" /swapfile
+chmod 600 /swapfile
+mkswap -q /swapfile
+swapon /swapfile
 
 # Cloud images ship their own first user (ubuntu at 1000). Clear every regular user out so
 # the bench user is the only one, at ids the image can rely on: anything baked into this
@@ -40,11 +50,13 @@ as_bench_user() {
 curl -fsSL "$INSTALLER" | bash
 as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
+# The admin domain is set here rather than at `setup production`, because the hostname
+# alias below only renders for a domain the bench already claims.
+as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
+
 # `new` only writes bench.toml; `init` clones and installs the framework app it names. The
 # branch is config, not a flag, so it is set in between (config/bench.py defaults to
 # version-16). No get-app: the bench brings frappe with it.
-as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-password '$ADMIN_PASSWORD'"
-
 if [ -n "$FRAPPE_VERSION" ]; then
 	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
 	as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_VERSION\"|' '$bench_toml'"
@@ -58,6 +70,66 @@ if [ -n "$SITE" ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 fi
 
+# Auto bootstrapping: the host comes up managed by Central but without its credential, so
+# Pilot serves the pending screen and polls instance metadata until Central writes one.
+# The aliases map the VM hostname Atlas assigns onto the local site and admin panel. Both
+# go in before `setup production`, which is what renders them into nginx.
+cat > /tmp/central.py <<'PYTHON'
+import os
+
+from pilot.config.central import HostnameAlias
+from pilot.config.common import CommonConfig
+from pilot.utils import benches_dir
+
+wildcard = os.environ["WILDCARD_DOMAIN"]
+aliases = [
+	HostnameAlias(
+		type="admin",
+		pattern=f"admin-vm-*.{wildcard}",
+		target=os.environ["ADMIN_DOMAIN"],
+		redirect=False,
+	)
+]
+
+# A site-less flavour has nothing for a site alias to point at.
+if site := os.environ["SITE"]:
+	aliases.append(HostnameAlias(type="site", pattern=f"site-*.{wildcard}", target=site, redirect=False))
+
+with CommonConfig.open(benches_dir()) as common:
+	common.central.enabled = True
+	common.central.bootstrapped = False
+	common.central.hostname_aliases = aliases
+PYTHON
+chmod 644 /tmp/central.py
+# The Pilot CLI is stdlib only and runs off the checkout, so its modules import from there.
+as_bench_user "SITE='$SITE' ADMIN_DOMAIN='$ADMIN_DOMAIN' WILDCARD_DOMAIN='$WILDCARD_DOMAIN' PYTHONPATH=\$HOME/pilot python3 /tmp/central.py"
+rm -f /tmp/central.py
+
+# No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
+as_bench_user "pilot --yes -b '$BENCH' setup production"
+as_bench_user "pilot --yes -b '$BENCH' build --force"
+
+# A snapshot of a host whose nginx does not come back at boot serves nothing, and the
+# enable verb only reaches production setup from v0.0.32-pre-alpha.
+systemctl is-enabled nginx > /dev/null
+
+# Any label under the wildcard zone matches the alias, so this proves the vhost renders.
+if [ -n "$SITE" ]; then
+	curl -fsS -o /dev/null -m 20 -H "Host: site-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/method/ping
+fi
+# Pending is the whole point: the alias resolves and the host is waiting on Central. Read
+# into a variable rather than piping, so a short read cannot make curl fail on a closed pipe.
+bootstrap="$(curl -fsS -m 20 -H "Host: admin-vm-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/v1/bootstrap)"
+case "$bootstrap" in
+	*'"pending"'*) ;;
+	*) echo "This host is not awaiting a Central credential: $bootstrap" >&2; exit 1 ;;
+esac
+
 # Build litter only. Cargo wipes the machine's identity itself, after this runs.
+swapoff /swapfile
+rm -f /swapfile
+as_bench_user "yarn cache clean" > /dev/null 2>&1 || true
+rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
+journalctl --vacuum-size=10M > /dev/null 2>&1 || true

@@ -18,6 +18,8 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
 SITE_DOMAIN = "frappe.cloud"
+# Reached only through the admin hostname alias, so it never has to resolve anywhere.
+ADMIN_DOMAIN = "admin.local"
 NAME_LENGTH = 8
 PASSWORD_LENGTH = 24
 PASSWORD_GROUPS = (string.ascii_uppercase, string.ascii_lowercase, string.digits, "!@#%^*+-=_")
@@ -99,14 +101,23 @@ class ImageVariant(WorkflowBuilder):
 
 	@property
 	def pilot_environment(self) -> dict[str, str]:
-		"""The Image's own version, not its name: the name carries the kind as a prefix."""
+		"""The Image's own version, not its name: the name carries the kind as a prefix.
+		The wildcard domain is what the hostname aliases match, so a host reaches its site
+		and its admin panel under the VM hostname Central gives it."""
 		return {
 			"VERSION": self.image_details.version,
 			"FRAPPE_VERSION": self.frappe_version,
 			"SITE": self.site_name or "",
 			"BENCH": self.bench_name,
+			"ADMIN_DOMAIN": ADMIN_DOMAIN,
+			"WILDCARD_DOMAIN": self.wildcard_domain,
 			"ADMIN_PASSWORD": self.get_password("admin_password"),
 		}
+
+	@property
+	def wildcard_domain(self) -> str:
+		"""The zone every VM hostname sits under. The aliases are built from it."""
+		return frappe.db.get_single_value("Cargo Settings", "wildcard_domain") or ""
 
 	def name_contents(self) -> None:
 		"""Name the bench and site this image will carry, kept across rebuilds."""
@@ -121,6 +132,10 @@ class ImageVariant(WorkflowBuilder):
 		"""Ask Atlas for a machine to bake. The scheduler takes it from here."""
 		if self.status in ("Provisioning", "Building"):
 			frappe.throw(frappe._("This variant is already building."))
+
+		# Checked before a machine is rented: without it the image reaches nothing.
+		if not self.wildcard_domain:
+			frappe.throw(frappe._("Set the wildcard domain in Cargo Settings before building."))
 
 		self.build_log = None
 		self.name_contents()
