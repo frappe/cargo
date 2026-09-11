@@ -58,14 +58,6 @@ s3_region     = "$REGION"
 api_bind_addr = "[::]:$S3_PORT"
 root_domain   = ".s3.$REGION.$BASE_DOMAIN"
 
-[s3_web]
-bind_addr   = "[::]:$WEB_PORT"
-root_domain = ".web.$REGION.$BASE_DOMAIN"
-index       = "index.html"
-
-[k2v_api]
-api_bind_addr = "[::]:$K2V_PORT"
-
 [admin]
 api_bind_addr = "[::]:$ADMIN_PORT"
 admin_token   = "$ADMIN_TOKEN"

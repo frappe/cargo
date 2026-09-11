@@ -19,6 +19,7 @@ frappe.ui.form.on("Object Storage Cluster", {
 		follow_setup_log(frm);
 		add_machine_buttons(frm);
 		add_cluster_buttons(frm);
+		add_admin_token_button(frm);
 
 		set_headline(frm);
 	},
@@ -105,6 +106,35 @@ function add_cluster_buttons(frm) {
 	if (frm.doc.status === "Draft") return;
 
 	add_release_button(frm);
+}
+
+// Fetched only when asked for, never with the form: it can rewrite the layout and every
+// bucket, and the server records each time it is shown.
+function add_admin_token_button(frm) {
+	frm.add_custom_button(__("Show Admin Token"), () =>
+		frm.call("reveal_admin_token").then(({ message: token }) => {
+			const dialog = new frappe.ui.Dialog({
+				title: __("Admin Token"),
+				fields: [
+					{
+						fieldtype: "HTML",
+						options: `<p class="text-muted">${__(
+							"Full control of this cluster's Garage: layout, buckets and keys. Do not paste it anywhere it will be kept."
+						)}</p>`,
+					},
+					{ fieldname: "token", fieldtype: "Code", read_only: 1, default: token },
+				],
+				primary_action_label: __("Copy"),
+				primary_action: () => {
+					frappe.utils.copy_to_clipboard(token);
+					dialog.hide();
+				},
+			});
+
+			dialog.show();
+			frm.reload_doc();
+		})
+	);
 }
 
 // A failed run leaves its machines alone, so this is the only thing that terminates one.

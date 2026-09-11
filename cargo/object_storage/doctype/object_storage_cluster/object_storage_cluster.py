@@ -267,6 +267,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.mark_cluster_status("Active", None)
 
 	@frappe.whitelist()
+	def reveal_admin_token(self) -> str:
+		"""The garage admin token"""
+		frappe.only_for("System Manager")
+
+		return self.get_password("admin_token")
+
+	@frappe.whitelist()
 	def release_machines(self, machines: list[str]) -> None:
 		"""Hand the named machines back to Atlas and drop them from this cluster."""
 		can_release_machines(self, machines)
