@@ -351,14 +351,17 @@ class Handler(BaseHTTPRequestHandler):
 			"id": vm_id,
 			"tenant_id": int(self.headers.get("X-Tenant-ID")),
 			"image_id": "ubuntu-24.04",
-			"vcpus": 1,
-			"memory_mib": 1024,
-			"disk_mib": 10240,
 			"created_at": int(time.time()),
 			"current_state": vm["state"],
 			"desired_state": "running",
-			# Real Atlas reports a mesh address; here it is the slot name /etc/hosts knows.
-			"wireguard_mesh_ipv6": vm["address"],
+			"error": None,
+			"compute": {"vcpus": 1, "memory_mib": 1024, "sleep_after_idle_seconds": 0},
+			"disk": {"size_mib": 10240, "used_mib": 0, "iops": 0, "throughput_mibps": 0},
+			"network": {
+				"egress": "uplink",
+				# Real Atlas reports a mesh address; here it is the slot name /etc/hosts knows.
+				"mesh_ipv6": vm["address"],
+			},
 		}
 
 	def get_virtual_machine(self, vm_id: str) -> dict:

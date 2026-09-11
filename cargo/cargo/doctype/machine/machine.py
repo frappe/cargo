@@ -145,7 +145,7 @@ class Machine(Document):
 		if state != RUNNING_STATE:
 			return self.record(self.status)
 
-		self.address = payload.get("wireguard_mesh_ipv6")
+		self.address = payload.get("network", {}).get("mesh_ipv6")
 		if not self.address:
 			return self.record("Broken", error="Atlas reported no mesh address")
 

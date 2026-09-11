@@ -56,14 +56,16 @@ Cargo polls this until the machine is usable, and again whenever it needs the cu
 | Send back | What it is |
 |---|---|
 | `current_state` | `running` once it is up. `failed` means it is never coming up |
-| `wireguard_mesh_ipv6` | The mesh address. This is how Cargo reaches the machine |
+| `network.mesh_ipv6` | The mesh address. This is how Cargo reaches the machine |
 
-A machine that is `running` but has no mesh address is still starting, and Cargo keeps
-waiting. Cargo derives nothing about the address itself: it records the one Atlas reports.
+Cargo reads nothing else from the reply. `network.public_ipv4` in particular is never used:
+everything Cargo does to a machine goes over the mesh, and public traffic reaches a service
+through the proxy in front of it, not the machine's own address.
 
-> **Not built yet.** `wireguard_mesh_ipv6` is not on `VirtualMachineResponse` upstream. Until
-> it is, a machine never gets an address — Cargo will not compute one from the region, tenant
-> and VM number itself, because a wrong address is worse than none.
+A machine that is `running` with no mesh address is marked **Broken** rather than waited on
+— Atlas says it is up, so an address that never came is a fault, not a delay. Cargo derives
+nothing about the address itself: it records the one Atlas reports, because a wrong address
+is worse than none.
 
 ### Dead states
 

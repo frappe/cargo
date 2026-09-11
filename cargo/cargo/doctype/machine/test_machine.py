@@ -14,6 +14,14 @@ from cargo.testing import use_test_settings
 MESH_ADDRESS = "fdaa:1:0:7::3"
 
 
+def running_vm(mesh_ipv6: str | None = MESH_ADDRESS) -> dict:
+	"""The parts of a `get_vm` reply Cargo reads, nested the way Atlas nests them."""
+	return {
+		"current_state": "running",
+		"network": {"egress": "uplink", "mesh_ipv6": mesh_ipv6, "public_ipv4": "203.0.113.10"},
+	}
+
+
 class IntegrationTestMachine(IntegrationTestCase):
 	"""How a Machine takes what Atlas reports about it."""
 
@@ -40,9 +48,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 		return client
 
 	def test_a_running_machine_takes_the_address_atlas_reports(self):
-		status = self.machine.sync(
-			self.client({"current_state": "running", "wireguard_mesh_ipv6": MESH_ADDRESS})
-		)
+		status = self.machine.sync(self.client(running_vm()))
 
 		self.assertEqual(status, "Running")
 		self.assertEqual(self.machine.address, MESH_ADDRESS)
@@ -54,7 +60,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertIsNone(self.machine.address)
 
 	def test_a_running_machine_atlas_gave_no_address_for_is_broken(self):
-		status = self.machine.sync(self.client({"current_state": "running"}))
+		status = self.machine.sync(self.client(running_vm(mesh_ipv6=None)))
 
 		self.assertEqual(status, "Broken")
 		self.assertIn("mesh address", self.machine.error)
@@ -80,3 +86,9 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertEqual(machine.status, "Pending")
 		self.assertEqual(machine.vm_id, "vm-00003")
 		self.assertIsNone(machine.address)
+
+	def test_the_public_address_is_never_taken_for_the_mesh_one(self):
+		"""Cargo reaches machines over the mesh only; the public address is for the proxy."""
+		self.machine.sync(self.client(running_vm()))
+
+		self.assertEqual(self.machine.address, MESH_ADDRESS)
