@@ -1,197 +1,96 @@
-# Setting up a Cargo host
+# Set up a Cargo host
 
-Cargo runs on its own machine, one per region. This is how a bare VM becomes a production
-Cargo host that Central trusts.
+## Purpose
 
-The provisioner does the handing over. Everything the host needs to know is passed to it at
-install time, in the environment, and written straight onto **Cargo Settings**. The host
-asks nobody for its configuration afterwards.
+Cargo runs on one virtual machine in each Atlas region. Atlas creates the virtual machine, installs Cargo, and publishes the Cargo route through the regional Proxy.
 
-## Before you start
+```text
+Atlas SSH ----------------------> Cargo public IPv4
+cargo.<wildcard-domain> -> Proxy -> Cargo mesh IPv6
+```
 
-Central needs an **Atlas Instance** for the region already, because the host will be calling
-Atlas for machines and you have to give it Atlas's URL.
+The public IPv4 address is for SSH and operations. The Proxy route must use the WireGuard mesh IPv6 address.
 
-## Step 1 — create the Cargo Instance in Central
+## Requirements
 
-Create a **Cargo Instance** and set its **Region**. One Cargo per region. That is the only
-field you fill in.
+Atlas must have an Active Proxy Server, an Available Virtual Machine Image, and an unattached Allocated Metal Server IP Address. Atlas Settings must contain the region values, wildcard domain, public SSH key, Proxy cluster password, and JSON Web Token signing key.
 
-The region also needs an **Atlas Region ID** on its **Region** record — Atlas's own numeric
-id, copied from that region's Atlas Settings. Central puts it in the audience of the token
-Cargo presents, so a token minted for one region is refused in another.
+## Atlas provisioning
 
-## Step 2 — run the script on the new machine
+Open the Cargo Server Single DocType and select Provision. Select the image and public IPv4 address. Confirm the default size or enter another size.
+
+Atlas creates a privileged tenant `0` virtual machine with `uplink` egress. Atlas waits for SSH on the public IPv4 address and runs `atlas/scripts/install-cargo.sh` with a synchronous SSH Task.
+
+Atlas generates the site password, Pilot admin password, Atlas token, and Proxy token immediately before installation. The SSH Task stores the environment and command output for operator visibility.
+
+After installation, Atlas maps the `cargo` site to the virtual machine mesh IPv6 address. Atlas then checks `https://cargo.<wildcard-domain>/api/method/ping` through the Proxy. The Cargo Server becomes Active only after this request returns `pong`.
+
+## Manual installation
+
+Use `setup.sh` when you must test or install Cargo without the Atlas provisioning action.
 
 ```bash
 PILOT_ADMIN_PASSWORD=... \
 SITE_PASSWORD=... \
-ADMIN_DOMAIN=pilot.blr.example.com \
-SITE=cargo.blr.example.com \
-CENTRAL_URL=https://central.example.com \
-JWKS_URL=https://central.example.com/api/method/central.api.jwks.get_jwks \
+ADMIN_DOMAIN=cargo-admin.invalid \
+SITE=cargo.example.com \
+CENTRAL_URL=https://central.invalid \
+JWKS_URL=https://atlas.example.com/api/atlas/jwks.json \
 ATLAS_URL=https://atlas.example.com \
-CARGO_URL=https://cargo-blr.example.com \
-CENTRAL_WEBHOOK_SECRET=... \
+ATLAS_TOKEN=... \
+ATLAS_TENANT_ID=0 \
+PROXY_URL=https://proxy.example.com \
+PROXY_TOKEN=... \
+CARGO_URL=https://cargo.example.com \
+CENTRAL_WEBHOOK_SECRET=not-configured \
 REGION=blr \
 REGION_ID=3 \
-ATLAS_KEY=... \
-ATLAS_SECRET=... \
-ATLAS_TENANT_ID=7 \
 ./setup.sh
 ```
 
-`setup.sh` refuses to start unless every one of them is set, and names the ones that are
-missing. There is one variable per mandatory field of Cargo Settings and nothing else: the
-install hook writes them straight onto it, so a missing one fails the install rather than
-leaving a host that is half configured. `SITE` is the only one with a usable default, and it
-is not one you want in production — see [Domains](#domains).
+`setup.sh` refuses to start when a required value is empty. Both passwords must contain at least eight characters, an uppercase letter, a lowercase letter, a number, and a symbol.
 
-Both passwords are checked against pilot's own rule before anything is installed: at least
-eight characters, upper and lower case, a number and a symbol. Pilot would otherwise refuse
-a weak one when it creates the bench, which is after the whole system stack has been built.
+The installation contract has these values:
 
-The two passwords are different things, and neither is the database password:
-
-| | What it is |
+| Variable | Purpose |
 |---|---|
-| `PILOT_ADMIN_PASSWORD` | Logs in to pilot's own admin panel on this machine |
-| `SITE_PASSWORD` | The Frappe `Administrator` password for the Cargo site |
-| MariaDB root | You don't set it. Pilot generates one when it creates the bench. |
-| `CENTRAL_WEBHOOK_SECRET` | Signs the reports this host sends Central. See [Reporting to Central](#reporting-to-central). |
-| `JWKS_URL` | Where Central publishes the keys it signs with, so Cargo can check the tokens Central presents |
-| `REGION` / `REGION_ID` | The region's name and Atlas's numeric id for it |
-| `ATLAS_KEY` / `ATLAS_SECRET` / `ATLAS_TENANT_ID` | This host's Atlas credentials, and the tenant every Atlas call is scoped to |
+| `PILOT_ADMIN_PASSWORD` | Password for the Pilot administration site. |
+| `SITE_PASSWORD` | Password for the Cargo Frappe Administrator. |
+| `SITE` | Cargo site name and public domain. |
+| `ADMIN_DOMAIN` | Pilot administration domain. Atlas uses `cargo-admin.invalid` until this interface is available. |
+| `ATLAS_URL` | Atlas base URL. |
+| `ATLAS_TOKEN` | Encrypted bearer token for the Atlas tenant API. |
+| `ATLAS_TENANT_ID` | Atlas tenant. The regional Cargo service uses `0`. |
+| `PROXY_URL` | Regional Proxy control API URL. |
+| `PROXY_TOKEN` | Encrypted token restricted to site names with the `-svc` suffix. |
+| `JWKS_URL` | Atlas merged JSON Web Key Set route. |
+| `CARGO_URL` | Public Cargo URL through the Proxy. |
+| `REGION` and `REGION_ID` | Atlas region name and numeric region ID. |
+| `CENTRAL_URL` | Central URL. Atlas uses `https://central.invalid` until this interface is available. |
+| `CENTRAL_WEBHOOK_SECRET` | Central webhook secret. Atlas uses `not-configured` until this interface is available. |
 
-`REGION` must name the same **Region** you picked in step 1, and `REGION_ID` must match that
-region's Atlas Region ID. Nothing checks either during install. A mismatched `REGION` fails
-every later Central call with *"This Cargo token is not for region X"*; a mismatched
-`REGION_ID` fails every Atlas call with a 403. See [One host, one region](#one-host-one-region).
+## Installation operation
 
-The script runs as root and does everything else as a `frappe` user it creates first —
-pilot refuses to run as root, and the bench's files belong to whoever serves them. Then:
+The script creates a `frappe` system user, installs Pilot, creates the bench and site, installs Cargo, deploys the workload, and restarts its workers. The Cargo install hook writes the configuration to Cargo Settings and completes the Frappe setup wizard.
 
-1. Runs pilot's installer twice. The root pass installs Python, Node, MariaDB, Redis and
-   nginx and grants the bench user what it needs; the second pass installs pilot as that
-   user. The machine can be completely bare. Pilot is pinned to a release
-   (`v0.0.29-pre-alpha`) rather than `develop`, so two hosts built weeks apart get the same
-   pilot.
-2. Creates a bench with `ADMIN_DOMAIN` as its admin domain, then initialises it. Creating a
-   bench only writes its `bench.toml`; initialising is what builds the virtualenv, clones
-   the framework and configures Redis.
-3. Creates a site named `SITE` and downloads the Cargo app.
-4. Deploys the bench to production: systemd units for the workload, nginx in front of them.
-   This comes before Cargo is installed, because installing an app queues background work
-   and there is no Redis to queue it on until the workload is up.
-5. Exports the ten variables above and installs Cargo on the site, then restarts the
-   workload — the workers started before Cargo existed, so they carry none of its
-   scheduled jobs.
+Cargo Settings stores `atlas_token`, `proxy_token`, and `central_webhook_secret` as encrypted Password fields. Cargo reads these values with `get_password` when it makes an authenticated request.
 
-`PILOT_VERSION`, `BENCH`, `BRANCH` and `REPO` can be overridden. `BRANCH` is Cargo's own
-branch and still defaults to `develop`.
+Set `CI` to make the install hook skip configuration. Use this only when CI installs the app without service endpoints.
 
-### Proving it without a machine
+## Domains
 
-`tools/e2e/run.sh` runs all of the above against a throwaway Ubuntu container and checks
-what came out — the bench, the site, Cargo Settings, the systemd units and the site
-answering over nginx. The container runs systemd as PID 1, because that is what pilot
-deploys the bench with. It installs the working tree rather than the pushed branch, so it
-tests what you are about to ship. See `tools/e2e/README.md`.
+The Cargo site listens on plain HTTP port 80 inside the virtual machine. The regional Proxy terminates public TLS and forwards traffic to the mesh IPv6 address.
 
-### Domains
+The existing regional wildcard DNS record covers `cargo.<wildcard-domain>`. Do not create a direct Cargo A record.
 
-Production serves two things, on two domains:
+## Authentication
 
-| | What it is |
-|---|---|
-| `ADMIN_DOMAIN` | pilot's admin panel for this machine, the one `PILOT_ADMIN_PASSWORD` logs in to |
-| `SITE` | the Cargo site itself, the host that answers at `CARGO_URL` |
+Cargo calls Atlas with `Authorization: Bearer <atlas_token>` and `X-Tenant-ID: 0`. The token has audience `atlas-admin:<region-id>`, subject `cargo`, scope `*`, tenant `0`, and a 365-day lifetime.
 
-Both are served over plain HTTP on **port 80**. The script passes no `--tls`, so pilot does
-not request certificates and nginx renders no HTTPS server block: HTTPS is expected to
-terminate on the proxy in front of this host.
+Cargo stores the Proxy token for a later control API integration. This token has audience `atlas-proxy:<region-id>`, subject `cargo`, scope `site:*`, a `constraints.site.suffix` value of `-svc`, no tenant claim, and a 365-day lifetime.
 
-`SITE` defaults to `cargo.localhost`, which is fine for a throwaway box and wrong everywhere
-else — the site name is the domain nginx serves, and `CARGO_URL` has to reach it. Set it to a
-real hostname before running.
+Inbound Cargo API tokens use the `X-Cargo-Access-Token` header. Cargo verifies them with the merged Atlas key set and requires the audience `atlas-cargo:<region-id>`. Cargo issuer validation is deferred.
 
-## Step 3 — what the install hook does
+## Validation
 
-`cargo/install.py` runs on `after_install`, writes all nine values onto **Cargo Settings**,
-and marks Frappe's setup wizard done. No call goes out, and nothing has to be reachable for
-the install to finish.
-
-The wizard is completed rather than answered. Frappe holds every desk page at
-`/app/setup-wizard` until a person walks it, and a Cargo host has nobody to — the site serves
-one app and already took its configuration from the environment. Country, timezone and
-currency are left at their defaults; set them in **System Settings** if the host's logs and
-schedules need a local clock.
-
-### Installing without configuring
-
-With `CI` set in the environment, the hook returns immediately. That is CI, where the app is
-installed with nothing to point it at.
-
-Otherwise a missing variable fails the install, naming the ones it did not get. A
-half-supplied set is a typo, not an intention.
-
-## Reporting to Central
-
-Cargo tells Central when a cluster becomes usable or fails. It does this with a **Webhook**,
-made against the cluster when the cluster is created and firing on `Active` and `Failed`.
-
-Frappe signs the body with `CENTRAL_WEBHOOK_SECRET` and sends the signature as
-`X-Frappe-Webhook-Signature` — an HMAC-SHA256 of the JSON body, base64 encoded. The secret
-itself never leaves the host, and the signature covers the payload, so Central can tell a
-tampered report from a genuine one.
-
-Central verifies it against the same secret, which the provisioner gave to both sides.
-
-## Talking to Atlas
-
-Every Atlas call carries two headers: `X-Atlas-Central-Token`, a JWT signed by Central, and
-`X-Tenant-ID`, the tenant this host provisions into. Atlas verifies the token against
-Central's published keys and checks its audience is `atlas-<region id>-admin` — which is why
-`REGION_ID` has to be right.
-
-## Central calling Cargo
-
-Bucket work runs the other way: Central asks Cargo to make, rotate and drop buckets, because
-Cargo owns the cluster's admin token and Central never sees it.
-
-Those calls carry `X-Cargo-Access-Token`, a JWT that Cargo verifies against the key set at
-`JWKS_URL`. Cargo holds no secret for this — it needs only Central's public keys. The URL is
-given outright rather than built from `CENTRAL_URL`, so Central can publish its keys
-somewhere else without a Cargo release. A token is accepted when its audience names this
-region: `central-<region id>-bucket`, which Central mints per Cargo Instance, or
-`atlas-<region id>-admin`, the one Atlas checks. A token minted for another region opens
-nothing here.
-
-This is the one path that needs the host to be reachable from Central, at `CARGO_URL`.
-
-Tokens ride their own headers rather than `Authorization`: Frappe treats `Authorization` as
-OAuth or an API key and rejects anything else with a 401 before the request reaches the
-endpoint.
-
-## One host, one region
-
-A Cargo host may only act on the region its own Cargo Instance names. Every call that takes a
-`region` is checked against it, in both directions — Central refuses a Cargo host asking
-about another region, and Cargo refuses a caller naming a region that is not its own.
-
-Without that check a valid token is a valid token: any Cargo host could name any region and
-Central would answer for it — repointing another cluster's endpoints at a machine of the
-caller's choosing, or marking it down. The token proves *a* Cargo host is calling; the
-instance claim is what proves *which* one.
-
-A host whose instance is set to **Disabled** is refused the same way, on every call. That is
-how you take a host out of service without deleting anything.
-
-## What Central knows and doesn't
-
-Central stores each Cargo's region and base URL, and the region's storage endpoints once a
-cluster reports itself up. Cargo keeps the cluster's own secrets — the Garage `rpc_secret`,
-admin token and metrics token are minted on the host and never sent.
-
-So if a Cargo host is down, provisioning new clusters and issuing new buckets stops, but
-everything already running is unaffected: benches speak S3 to the gateway directly.
+Run `tools/e2e/run.sh` to install the current Cargo worktree in a temporary Ubuntu container. The check confirms the bench, Cargo site, Cargo Settings, systemd units, and nginx response.

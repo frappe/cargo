@@ -18,16 +18,14 @@ Errors come back as `{"error": {"code", "message", "fields"}}`, and Cargo reads 
 and the per-field ones out of it. A 404 is its own thing (`AtlasNotFound`), because a machine
 Atlas no longer has is an answer rather than a failure.
 
-### Logging in
+### Authentication
 
 ```
-Authorization: token <atlas_key>:<atlas_secret>
-X-Tenant-ID: <atlas_tenant_id>
+Authorization: Bearer <atlas_token>
+X-Tenant-ID: 0
 ```
 
-Frappe's own token authentication, which is what Atlas offers service callers. The
-provisioner puts the pair in Cargo Settings; the user behind it needs the **Atlas Admin**
-role, and every route is scoped to the tenant in the header.
+Atlas provisions the bearer token with the `atlas-admin:<region-id>` audience, `cargo` subject, `*` scope, and tenant `0`. Cargo stores it in the encrypted `atlas_token` field. Every tenant API route is scoped to tenant `0` by the header and the signed tenant claim.
 
 ## Making a machine — `POST /virtual-machines`
 
@@ -102,11 +100,6 @@ The image as Atlas sees it, so Cargo can tell when it is bootable.
 
 ## One tenant, one region
 
-Every call carries `X-Tenant-ID`, and Cargo sends the same one for its whole life — one
-Cargo, one region, one tenant. Atlas scopes each route to it, so another tenant's machine is
-a 404 rather than a refusal.
+Every call carries `X-Tenant-ID`, and Cargo sends `0` for its whole life. Atlas scopes each route to tenant `0`, so another tenant's machine is a 404 rather than a refusal.
 
-The region matters in the other direction too. Atlas packs the region id into the second
-16-bit group of every mesh address, and checks that a Central-signed token's audience is
-`atlas-<region id>-admin`. Cargo Settings carries that same `region_id`, and it has to match
-the region's Atlas Settings or nothing lines up.
+The region matters in the other direction too. Atlas packs the region ID into the second 16-bit group of every mesh address and checks the `atlas-admin:<region-id>` audience. Cargo Settings carries the same `region_id`.

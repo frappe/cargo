@@ -28,9 +28,10 @@ CARGO_URL="${CARGO_URL:-}" # where this host answers
 CENTRAL_WEBHOOK_SECRET="${CENTRAL_WEBHOOK_SECRET:-}" # signs the reports this host sends Central
 REGION="${REGION:-}" # which region this Cargo provisions for
 REGION_ID="${REGION_ID:-}" # that region's numeric id, as Atlas knows it
-ATLAS_KEY="${ATLAS_KEY:-}"
-ATLAS_SECRET="${ATLAS_SECRET:-}"
+ATLAS_TOKEN="${ATLAS_TOKEN:-}"
 ATLAS_TENANT_ID="${ATLAS_TENANT_ID:-}" # the tenant every Atlas call of this host is scoped to
+PROXY_URL="${PROXY_URL:-}" # Proxy control API URL for this region
+PROXY_TOKEN="${PROXY_TOKEN:-}" # restricted token for the Proxy control API
 BENCH_USER="${BENCH_USER:-frappe}" # pilot refuses to run as root, so the bench gets its own user
 BENCH_UID="${BENCH_UID:-1001}"
 BENCH_GID="${BENCH_GID:-1001}"
@@ -64,7 +65,7 @@ if [ -z "$ADMIN_DOMAIN" ]; then
 fi
 
 ENROLMENT_VARS="CENTRAL_URL JWKS_URL ATLAS_URL CARGO_URL CENTRAL_WEBHOOK_SECRET REGION REGION_ID \
-	ATLAS_KEY ATLAS_SECRET ATLAS_TENANT_ID"
+	ATLAS_TOKEN ATLAS_TENANT_ID PROXY_URL PROXY_TOKEN"
 
 missing=""
 for name in $ENROLMENT_VARS; do

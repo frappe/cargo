@@ -5,12 +5,17 @@ SETTINGS = {
 	"central_url": "http://central.test",
 	"atlas_url": "http://atlas.test",
 	"cargo_url": "http://cargo.test",
+	"jwks_url": "http://atlas.test/api/atlas/jwks.json",
+	"proxy_url": "http://proxy.test",
 	"region_id": 1,
 	"region": "test-region",
-	"atlas_key": "test-key",
-	"atlas_tenant_id": 1,
+	"atlas_tenant_id": 0,
 }
-SECRETS = {"atlas_secret": "test-secret", "central_webhook_secret": "test-webhook-secret"}
+SECRETS = {
+	"atlas_token": "test-atlas-token",
+	"central_webhook_secret": "test-webhook-secret",
+	"proxy_token": "test-proxy-token",
+}
 
 
 def use_test_settings() -> None:

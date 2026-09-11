@@ -19,7 +19,7 @@ from cargo.auth import (
 )
 
 REGION_ID = 4
-AUDIENCE = f"atlas-{REGION_ID}-admin"
+AUDIENCE = f"atlas-cargo:{REGION_ID}"
 KEY_ID = "key-1"
 JWKS_URL = "https://central.test/api/method/central.api.jwks.get_jwks"
 SETTINGS = SimpleNamespace(central_url="https://central.test/", region_id=REGION_ID, jwks_url=JWKS_URL)
@@ -36,7 +36,7 @@ def build_token(private_key, audience: str = AUDIENCE, expires_in: int = 300, ke
 
 
 class UnitTestAccessToken(UnitTestCase):
-	"""Central signs for itself and for Atlas; Cargo takes either, and nothing else."""
+	"""Cargo accepts only the audience reserved for its regional API."""
 
 	@classmethod
 	def setUpClass(cls) -> None:
@@ -67,20 +67,19 @@ class UnitTestAccessToken(UnitTestCase):
 		"""Every Central token names the region it is for; one that names none is not ours."""
 		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="central-admin")))
 
-	def test_centrals_bucket_audience_for_this_region_is_accepted(self):
-		"""What Central mints per Cargo Instance for bucket work."""
-		token = build_token(self.private_key, audience=f"central-{REGION_ID}-bucket")
-
-		self.assertIsNotNone(self.claims_of(token))
+	def test_centrals_bucket_audience_for_this_region_is_refused(self):
+		self.assertIsNone(
+			self.claims_of(build_token(self.private_key, audience=f"central-{REGION_ID}-bucket"))
+		)
 
 	def test_a_bucket_token_minted_for_another_region_is_refused(self):
 		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="central-9-bucket")))
 
 	def test_a_token_minted_for_another_region_is_refused(self):
-		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="atlas-9-admin")))
+		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="atlas-cargo:9")))
 
 	def test_a_token_for_a_proxy_is_not_one_for_cargo(self):
-		self.assertIsNone(self.claims_of(build_token(self.private_key, audience=f"atlas-{REGION_ID}-proxy")))
+		self.assertIsNone(self.claims_of(build_token(self.private_key, audience=f"atlas-proxy:{REGION_ID}")))
 
 	def test_an_expired_token_is_refused(self):
 		self.assertIsNone(self.claims_of(build_token(self.private_key, expires_in=-1)))
@@ -88,7 +87,7 @@ class UnitTestAccessToken(UnitTestCase):
 	def test_a_token_that_names_no_key_is_refused(self):
 		self.assertIsNone(self.claims_of(build_token(self.private_key, key_id=None)))
 
-	def test_a_token_signed_by_anything_but_central_is_refused(self):
+	def test_a_token_signed_by_an_unknown_key_is_refused(self):
 		other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 		self.assertIsNone(self.claims_of(build_token(other)))

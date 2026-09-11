@@ -13,9 +13,10 @@
   "jwks_url",
   "column_break_atlas",
   "atlas_url",
-  "atlas_key",
-  "atlas_secret",
-  "atlas_tenant_id"
+  "atlas_token",
+  "atlas_tenant_id",
+  "proxy_url",
+  "proxy_token"
  ],
  "fields": [
   {
@@ -43,7 +44,7 @@
    "reqd": 1
   },
   {
-   "description": "Which Atlas tenant this Cargo owns its machines as. Issued by Central with the tokens.",
+   "description": "Atlas tenant that owns the virtual machines. Regional Cargo uses tenant 0.",
    "fieldname": "atlas_tenant_id",
    "fieldtype": "Int",
    "label": "Atlas Tenant ID",
@@ -66,17 +67,10 @@
    "reqd": 1
   },
   {
-   "description": "Atlas user secret \u2014\u00a0used for talking to atlas.",
-   "fieldname": "atlas_secret",
+   "description": "Bearer token for the Atlas tenant API.",
+   "fieldname": "atlas_token",
    "fieldtype": "Password",
-   "label": "Atlas Secret",
-   "reqd": 1
-  },
-  {
-   "description": "Atlas user key \u2014\u00a0used for talking to atlas.",
-   "fieldname": "atlas_key",
-   "fieldtype": "Data",
-   "label": "Atlas Key",
+   "label": "Atlas Token",
    "reqd": 1
   },
   {
@@ -95,10 +89,25 @@
    "reqd": 1
   },
   {
-   "description": "JWKS url to fetch key sets and verify a token.",
+   "description": "Merged JSON Web Key Set URL for token verification.",
    "fieldname": "jwks_url",
    "fieldtype": "Data",
    "label": "JWKS URL",
+   "reqd": 1
+  },
+  {
+   "description": "Proxy control API URL for this region.",
+   "fieldname": "proxy_url",
+   "fieldtype": "Data",
+   "label": "Proxy URL",
+   "options": "URL",
+   "reqd": 1
+  },
+  {
+   "description": "Restricted bearer token for the Proxy control API.",
+   "fieldname": "proxy_token",
+   "fieldtype": "Password",
+   "label": "Proxy Token",
    "reqd": 1
   }
  ],
