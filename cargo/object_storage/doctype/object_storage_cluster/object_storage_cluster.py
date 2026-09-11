@@ -157,11 +157,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Set up what's not setup yet. THat's it idempotently called by the user whenever ready from desk."""
 		can_trigger_setup(self)
 
-		registered_nodes = self.garage_setup.healthy_nodes()
-		if len(registered_nodes) == len(self.all_nodes):
-			self.mark_cluster_status("Active", None)
-			return
-
+		# Always the whole flow, even with every node joined: gateway routing is re-applied on
+		# each run, and a cluster is only Active once that has succeeded.
 		self.clear_logs()
 		self.mark_cluster_status("Setting Up", None)
 		# Here we will start a flow of triggers.
@@ -196,6 +193,16 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		self.record_cluster_peers()
 		self.apply_layout()
+
+		if not self.configure_gateway_routing():
+			self.mark_cluster_status(
+				"Failed",
+				_(
+					"Gateway routing (nginx) failed. Garage itself is up: see the Setup Log, then set up again."
+				),
+			)
+			return
+
 		self.verify_connected_nodes()
 
 	@task
@@ -219,6 +226,23 @@ class ObjectStorageCluster(WorkflowBuilder):
 			except Exception:
 				frappe.log_error(
 					title=f"{machine.name} failed to set up",
+					message=frappe.get_traceback(with_context=True),
+				)
+				return False
+
+		return True
+
+	@task
+	def configure_gateway_routing(self) -> bool:
+		"""nginx on the gateway's port 80, in front of Garage. A step of its own, run on every
+		setup, so setting up again is also how a failed one is retried."""
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				garage = self.garage_setup
+				garage.setup_nginx_on_machine(garage.machine(self.gateway_node.name), on_output=log.write)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} gateway routing failed",
 					message=frappe.get_traceback(with_context=True),
 				)
 				return False

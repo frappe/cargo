@@ -186,9 +186,6 @@ class Setup(Client):
 		self.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
 
-		if machine["role"] == GATEWAY:
-			self.setup_nginx_on_machine(machine, on_output)
-
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
 		"""Write this machine into the next layout. Nothing takes effect until it is applied."""
 		role = {
@@ -206,6 +203,13 @@ class Setup(Client):
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:
 		"""Put nginx on the gateway's port 80 routing to s3 and admin api."""
+		if machine["role"] != GATEWAY:
+			frappe.throw(
+				_("{0} is a {1} node. Only the gateway routes traffic.").format(
+					machine["name"], machine["role"]
+				)
+			)
+
 		self.run(machine, script(*NGINX_CONF, environment=self.nginx_environment()), on_output)
 
 	def nginx_environment(self) -> dict[str, str]:

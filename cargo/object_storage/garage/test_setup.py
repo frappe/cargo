@@ -63,19 +63,14 @@ class IntegrationTestGatewayNginx(IntegrationTestCase):
 		self.assertIn("server_name s3-admin-svc.${WILDCARD_DOMAIN}", run.call_args.args[1])
 		self.assertIn(f"export WILDCARD_DOMAIN={SETTINGS['wildcard_domain']}", run.call_args.args[1])
 
-	def test_only_the_gateway_gets_nginx(self):
-		for role, expected in ((GATEWAY, 1), (STORAGE, 0)):
-			with (
-				self.subTest(role=role),
-				patch.object(Setup, "run"),
-				patch.object(Setup, "node_identifier", return_value="id@[fdaa:1::5]:3901"),
-				patch.object(Setup, "connect_nodes"),
-				patch.object(Setup, "stage_role"),
-				patch.object(Setup, "setup_nginx_on_machine") as nginx,
-			):
-				self.setup.setup_machine(machine(role))
+	def test_nginx_is_refused_on_a_storage_node(self):
+		with (
+			patch.object(Setup, "run") as run,
+			self.assertRaisesRegex(frappe.ValidationError, "Only the gateway"),
+		):
+			self.setup.setup_nginx_on_machine(machine(STORAGE))
 
-				self.assertEqual(nginx.call_count, expected)
+		run.assert_not_called()
 
 	def test_the_script_ships_with_the_app(self):
 		self.assertTrue(os.path.isfile(frappe.get_app_path("cargo", *NGINX_CONF)))
