@@ -22,6 +22,7 @@ class CargoSettings(Document):
 		cargo_url: DF.Data
 		central_url: DF.Data
 		central_webhook_secret: DF.Password
+		jwks_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
 	# end: auto-generated types

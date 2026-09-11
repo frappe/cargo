@@ -10,6 +10,7 @@
   "central_url",
   "cargo_url",
   "central_webhook_secret",
+  "jwks_url",
   "column_break_atlas",
   "atlas_url",
   "atlas_key",
@@ -92,13 +93,20 @@
    "fieldtype": "Data",
    "label": "Region",
    "reqd": 1
+  },
+  {
+   "description": "JWKS url to fetch key sets and verify a token.",
+   "fieldname": "jwks_url",
+   "fieldtype": "Data",
+   "label": "JWKS URL",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-10 17:32:09.953423",
+ "modified": "2026-09-11 13:42:38.961545",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

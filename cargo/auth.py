@@ -14,7 +14,6 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 TOKEN_HEADER = "X-Cargo-Access-Token"
-JWKS_PATH = "/api/method/central.api.jwks.get_jwks"
 JWKS_ALGORITHMS = (
 	"RS256",
 	"RS384",
@@ -81,7 +80,7 @@ def token_claims(token: str) -> dict[str, Any] | None:
 			return None
 
 		# An unknown key id must not make an attacker refetch the key set.
-		signing_key = PyJWKClient.match_kid(jwks_client(jwks_url(settings)).get_signing_keys(), kid)
+		signing_key = PyJWKClient.match_kid(jwks_client(settings.jwks_url).get_signing_keys(), kid)
 		if signing_key is None:
 			return None
 
@@ -101,14 +100,6 @@ def accepted_audiences(settings: CargoSettings) -> list[str]:
 	itself; Central presents the one it mints per Cargo Instance for bucket work. Both name
 	this region, so a token lifted from another region's traffic opens nothing here."""
 	return [f"atlas-{settings.region_id}-admin", f"central-{settings.region_id}-bucket"]
-
-
-def jwks_url(settings: CargoSettings) -> str:
-	"""Where Central publishes the keys it signs with."""
-	if not settings.central_url:
-		frappe.throw(_("Cargo Settings has no Central URL to fetch signing keys from."))
-
-	return settings.central_url.rstrip("/") + JWKS_PATH
 
 
 def jwks_client(url: str) -> PyJWKClient:

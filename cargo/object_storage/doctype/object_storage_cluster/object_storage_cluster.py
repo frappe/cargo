@@ -25,7 +25,7 @@ if typing.TYPE_CHECKING:
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
-WEBHOOK_ENDPOINT = "/api/webhook/services/"
+WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook"
 # The two states worth a call: the cluster may be used, or it may not.
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")

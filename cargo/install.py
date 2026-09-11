@@ -18,6 +18,7 @@ ENROLMENT_VARS = (
 	"ATLAS_SECRET",
 	"ATLAS_TENANT_ID",
 	"CENTRAL_WEBHOOK_SECRET",
+	"JWKS_URL",
 )
 
 
@@ -32,6 +33,19 @@ def after_install() -> None:
 		frappe.throw(_("Set {0} before installing Cargo.").format(", ".join(missing)))
 
 	record_upstreams()
+	complete_setup_wizard()
+
+
+def complete_setup_wizard() -> None:
+	"""Frappe holds the desk at the setup wizard until someone walks it, and a Cargo host has
+	nobody to. Nothing is answered: the site serves one app and took its configuration from
+	the environment above."""
+	if frappe.is_setup_complete():
+		return
+
+	from frappe.desk.page.setup_wizard.setup_wizard import setup_complete
+
+	setup_complete({})
 
 
 def record_upstreams() -> None:
@@ -47,4 +61,5 @@ def record_upstreams() -> None:
 	settings.atlas_secret = os.getenv("ATLAS_SECRET")
 	settings.atlas_tenant_id = os.getenv("ATLAS_TENANT_ID")
 	settings.central_webhook_secret = os.getenv("CENTRAL_WEBHOOK_SECRET")
+	settings.jwks_url = os.getenv("JWKS_URL")
 	settings.save(ignore_permissions=True)
