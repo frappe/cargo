@@ -418,6 +418,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"region_id": settings.region_id,
 					"service": "storage",
 					"status": "{{ doc.status }}",
+					"service_endpoint": "{{ doc.gateway_address }}",
 				}
 			),
 			"enable_security": True,

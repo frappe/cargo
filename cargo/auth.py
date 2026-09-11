@@ -15,9 +15,6 @@ if typing.TYPE_CHECKING:
 
 TOKEN_HEADER = "X-Cargo-Access-Token"
 JWKS_PATH = "/api/method/central.api.jwks.get_jwks"
-CENTRAL_ADMIN_AUDIENCE = "central-admin"
-# Central signs every token in the fleet, Atlas's own included, and publishes the keys.
-# RSA today; the rest are listed so rotating to another key family is not a Cargo release.
 JWKS_ALGORITHMS = (
 	"RS256",
 	"RS384",
@@ -100,14 +97,10 @@ def token_claims(token: str) -> dict[str, Any] | None:
 
 
 def accepted_audiences(settings: CargoSettings) -> list[str]:
-	"""Who a token has to have been minted for. Central and Atlas both reach Cargo, and a
-	region's control plane is one trust tier: the audience Atlas checks is the one Cargo
-	answers to."""
-	audiences = [CENTRAL_ADMIN_AUDIENCE]
-	if settings.region_id:
-		audiences.append(f"atlas-{settings.region_id}-admin")
-
-	return audiences
+	"""Who a token has to have been minted for. Atlas presents the audience it checks
+	itself; Central presents the one it mints per Cargo Instance for bucket work. Both name
+	this region, so a token lifted from another region's traffic opens nothing here."""
+	return [f"atlas-{settings.region_id}-admin", f"central-{settings.region_id}-bucket"]
 
 
 def jwks_url(settings: CargoSettings) -> str:

@@ -63,8 +63,18 @@ class UnitTestAccessToken(UnitTestCase):
 		self.assertEqual(claims["aud"], AUDIENCE)
 		self.assertEqual(claims["scope"], "cargo:atlas")
 
-	def test_central_own_admin_audience_is_accepted(self):
-		self.assertIsNotNone(self.claims_of(build_token(self.private_key, audience="central-admin")))
+	def test_a_region_wide_central_audience_is_refused(self):
+		"""Every Central token names the region it is for; one that names none is not ours."""
+		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="central-admin")))
+
+	def test_centrals_bucket_audience_for_this_region_is_accepted(self):
+		"""What Central mints per Cargo Instance for bucket work."""
+		token = build_token(self.private_key, audience=f"central-{REGION_ID}-bucket")
+
+		self.assertIsNotNone(self.claims_of(token))
+
+	def test_a_bucket_token_minted_for_another_region_is_refused(self):
+		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="central-9-bucket")))
 
 	def test_a_token_minted_for_another_region_is_refused(self):
 		self.assertIsNone(self.claims_of(build_token(self.private_key, audience="atlas-9-admin")))

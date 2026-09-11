@@ -133,7 +133,9 @@ Cargo owns the cluster's admin token and Central never sees it.
 Those calls carry `X-Cargo-Access-Token`, a JWT that Cargo verifies against Central's JWKS at
 `/api/method/central.api.jwks.get_jwks`. Cargo holds no secret for this — it needs only
 Central's public keys, which it fetches from `CENTRAL_URL`. A token is accepted when its
-audience is `central-admin` or this region's `atlas-<region id>-admin`.
+audience names this region: `central-<region id>-bucket`, which Central mints per Cargo
+Instance, or `atlas-<region id>-admin`, the one Atlas checks. A token minted for another
+region opens nothing here.
 
 This is the one path that needs the host to be reachable from Central, at `CARGO_URL`.
 
