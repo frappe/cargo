@@ -404,6 +404,8 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)
 	webhook.name = name
+	# TODO:  Once the proxy is layouted we can simply add a field in osc for gateway node address (domain)
+	# And that is going to be our service_endpoint.
 	webhook.update(
 		{
 			"webhook_doctype": cluster.doctype,
@@ -418,7 +420,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"region_id": settings.region_id,
 					"service": "storage",
 					"status": "{{ doc.status }}",
-					"service_endpoint": "{{ doc.gateway_address }}",
+					"service_endpoint": "<TBD>",
 				}
 			),
 			"enable_security": True,
