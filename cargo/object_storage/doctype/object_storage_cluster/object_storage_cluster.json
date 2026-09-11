@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "OSC-.####.",
- "creation": "2026-08-28 00:00:00",
+ "creation": "2026-09-11 17:22:03.268619",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -21,8 +21,6 @@
   "partition_count",
   "machine_info_section",
   "machines",
-  "section_break_access",
-  "column_break_access",
   "section_break_garage",
   "garage_version",
   "garage_arch",
@@ -30,14 +28,11 @@
   "column_break_garage",
   "metadata_dir",
   "data_dir",
-  "base_domain",
   "section_break_ports",
   "s3_port",
   "rpc_port",
-  "web_port",
   "column_break_ports",
   "admin_port",
-  "k2v_port",
   "section_break_secrets",
   "rpc_secret",
   "admin_token",
@@ -151,16 +146,6 @@
    "label": "Partition Count"
   },
   {
-   "description": "Key pair stamped onto this cluster's machines. Both halves needed.",
-   "fieldname": "section_break_access",
-   "fieldtype": "Section Break",
-   "label": "Machine Access"
-  },
-  {
-   "fieldname": "column_break_access",
-   "fieldtype": "Column Break"
-  },
-  {
    "collapsible": 1,
    "description": "Defaults suit a normal cluster.",
    "fieldname": "section_break_garage",
@@ -212,14 +197,6 @@
    "reqd": 1
   },
   {
-   "default": "frappe.cloud",
-   "description": "Buckets served at .s3... Needs wildcard DNS.",
-   "fieldname": "base_domain",
-   "fieldtype": "Data",
-   "label": "Base Domain",
-   "reqd": 1
-  },
-  {
    "collapsible": 1,
    "description": "Garage's defaults. Every machine binds all five.",
    "fieldname": "section_break_ports",
@@ -228,7 +205,7 @@
   },
   {
    "default": "3900",
-   "description": "Where benches and Central speak S3.",
+   "description": "Garage's S3 API, on every node. Users never reach it directly: nginx on the gateway takes port 80 and forwards s3-svc.<domain> here.",
    "fieldname": "s3_port",
    "fieldtype": "Int",
    "label": "S3 API",
@@ -243,14 +220,6 @@
    "reqd": 1
   },
   {
-   "default": "3902",
-   "description": "Serves buckets as static sites.",
-   "fieldname": "web_port",
-   "fieldtype": "Int",
-   "label": "Web",
-   "reqd": 1
-  },
-  {
    "fieldname": "column_break_ports",
    "fieldtype": "Column Break"
   },
@@ -260,14 +229,6 @@
    "fieldname": "admin_port",
    "fieldtype": "Int",
    "label": "Admin API",
-   "reqd": 1
-  },
-  {
-   "default": "3904",
-   "description": "Garage's key-value API. Unused.",
-   "fieldname": "k2v_port",
-   "fieldtype": "Int",
-   "label": "K2V API",
    "reqd": 1
   },
   {
@@ -337,7 +298,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-04 14:50:42.616348",
+ "modified": "2026-09-11 18:03:58.770150",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

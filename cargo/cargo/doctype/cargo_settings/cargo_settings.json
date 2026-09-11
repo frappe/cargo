@@ -16,7 +16,8 @@
   "atlas_token",
   "atlas_tenant_id",
   "proxy_url",
-  "proxy_token"
+  "proxy_token",
+  "wildcard_domain"
  ],
  "fields": [
   {
@@ -109,13 +110,19 @@
    "fieldtype": "Password",
    "label": "Proxy Token",
    "reqd": 1
+  },
+  {
+   "fieldname": "wildcard_domain",
+   "fieldtype": "Data",
+   "label": "Wildcard Domain",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-11 13:42:38.961545",
+ "modified": "2026-09-11 17:48:18.834703",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
