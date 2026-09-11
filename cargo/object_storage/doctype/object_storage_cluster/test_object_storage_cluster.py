@@ -6,7 +6,7 @@ import hashlib
 import hmac
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import frappe
 from frappe.integrations.doctype.webhook.webhook import (
@@ -30,6 +30,7 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 )
 from cargo.object_storage.garage.client import Client
 from cargo.object_storage.garage.setup import Setup
+from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.testing import use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
@@ -143,6 +144,52 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 			self.cluster.garage_setup.secrets
 
 		self.assertIn("rpc_secret", str(raised.exception))
+
+
+class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+		self.vm_ids: dict[str, str] = {}
+		self.gateway = self.add_machine(GATEWAY)
+		frappe.db.set_value("Machine", self.gateway, "address", "fdaa:1::10")
+
+	add_machine = IntegrationTestObjectStorageCluster.add_machine
+
+	def test_the_two_service_domains_map_to_the_gateway(self):
+		client = MagicMock()
+		with patch.object(ProxyClient, "from_settings", return_value=client):
+			published = self.cluster.publish_proxy_routes()
+
+		self.assertTrue(published)
+		self.assertEqual(
+			client.map_domain.call_args_list,
+			[
+				call("s3-svc.example.test", "fdaa:1::10"),
+				call("s3-admin-svc.example.test", "fdaa:1::10"),
+			],
+		)
+
+	def test_a_proxy_failure_marks_the_cluster_failed(self):
+		client = MagicMock()
+		client.map_domain.side_effect = ProxyError("proxy unavailable")
+		with (
+			patch.object(ProxyClient, "from_settings", return_value=client),
+			patch.object(self.cluster, "mark_cluster_status") as mark_status,
+		):
+			published = self.cluster.publish_proxy_routes()
+
+		self.assertFalse(published)
+		mark_status.assert_called_once_with("Failed", "Proxy route setup failed: proxy unavailable")
+
+	def test_a_second_active_cluster_is_refused(self):
+		self.cluster.db_set("status", "Active")
+		other_cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+		other_cluster.status = "Active"
+
+		with self.assertRaisesRegex(frappe.ValidationError, self.cluster.name):
+			other_cluster.save()
 
 
 class IntegrationTestLiveClusterRelease(IntegrationTestCase):

@@ -26,4 +26,5 @@ class CargoSettings(Document):
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
+		wildcard_domain: DF.Data
 	# end: auto-generated types

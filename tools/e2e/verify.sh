@@ -69,6 +69,7 @@ check "central url was recorded" settings_is central_url "central.invalid"
 check "jwks url was recorded" settings_is jwks_url "jwks"
 check "atlas url was recorded" settings_is atlas_url "atlas.invalid"
 check "proxy url was recorded" settings_is proxy_url "proxy.invalid"
+check "wildcard domain was recorded" settings_is wildcard_domain "e2e.invalid"
 check "region was recorded" settings_is region "e2e"
 check "tenant zero was recorded" settings_is atlas_tenant_id "0"
 
