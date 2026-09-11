@@ -1,5 +1,3 @@
-import subprocess
-import tempfile
 from collections.abc import Callable
 
 import frappe
@@ -9,10 +7,12 @@ from cargo.atlas_client import AtlasClient
 from cargo.ssh import run_over_ssh, script
 
 BASE_IMAGE = "ubuntu-24.04"
-# A build machine is rented for one bake, so it is sized for the bake and nothing else.
-BUILD_VCPUS = 2
-BUILD_MEMORY_MIB = 4096
-BUILD_DISK_MIB = 30 * 1024
+# Atlas records the snapshotted machine's shape as the warm-start template, so this is the
+# shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
+# on its own, which is why the provision script runs on temporary swap.
+BUILD_VCPUS = 1
+BUILD_MEMORY_MIB = 1024
+BUILD_DISK_MIB = 8 * 1024
 # A new kind is a new conf/<kind>/provision.sh and an entry here.
 KINDS = ("pilot",)
 PROVISION_TIMEOUT = 3600
@@ -71,8 +71,9 @@ class Builder:
 		)["id"]
 
 	def snapshot_build_machine(self, vm_id: str) -> str:
-		"""Photograph the baked machine. This is the image."""
-		return self.client.create_snapshot(vm_id, self.atlas_name)
+		"""Photograph the baked machine. This is the image. Both flags are what lets a host
+		cache the artifacts and build a warm template, so a tenant VM starts from memory."""
+		return self.client.create_snapshot(vm_id, self.atlas_name, cache_image=True, memory_snapshot=True)
 
 	def destroy_build_machine(self, vm_id: str) -> bool:
 		"""Best effort: a machine left running after a failed bake still costs money."""

@@ -66,6 +66,24 @@ class UnitTestAtlasClient(UnitTestCase):
 				hostname="host",
 			)
 
+	def test_a_snapshot_asks_for_a_cached_image_with_a_warm_template(self):
+		with self.call(response(201, {"id": "img-4"})) as request:
+			created = self.client.create_snapshot(
+				"vm-1", "pilot golden", cache_image=True, memory_snapshot=True
+			)
+
+		self.assertEqual(created, "img-4")
+		body = request.call_args.kwargs["json"]
+		self.assertEqual(body, {"title": "pilot golden", "cache_image": True, "memory_snapshot": True})
+
+	def test_a_snapshot_asks_for_neither_host_flag_by_default(self):
+		with self.call(response(201, {"id": "img-5"})) as request:
+			self.client.create_snapshot("vm-1", "plain")
+
+		body = request.call_args.kwargs["json"]
+		self.assertFalse(body["cache_image"])
+		self.assertFalse(body["memory_snapshot"])
+
 	def test_a_missing_machine_is_its_own_error(self):
 		with self.call(response(404, {"error": {"code": "not_found", "message": "gone"}})):
 			with self.assertRaises(AtlasNotFound):
