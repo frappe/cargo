@@ -18,9 +18,10 @@ class IntegrationTestImageVariant(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
-		self.image = frappe.get_doc(
-			{"doctype": "Image", "kind": "pilot", "version": "v0.0.32-pre-alpha"}
-		).insert()
+		# A test that throws invalidates its rollback savepoint, so the row it inserted
+		# outlives it. Every test gets its own release rather than the same one twice.
+		self.version = f"v0.0.32-{frappe.generate_hash(length=6)}"
+		self.image = frappe.get_doc({"doctype": "Image", "kind": "pilot", "version": self.version}).insert()
 
 	def variant(self, site: str, frappe_version: str = "version-16") -> ImageVariant:
 		variant: ImageVariant = frappe.get_doc(
@@ -39,7 +40,7 @@ class IntegrationTestImageVariant(IntegrationTestCase):
 	def test_a_flavour_with_a_site_names_every_value_its_script_reads(self):
 		environment = self.variant("Included").pilot_environment
 
-		self.assertEqual(environment["VERSION"], "v0.0.32-pre-alpha")
+		self.assertEqual(environment["VERSION"], self.version)
 		self.assertEqual(environment["FRAPPE_VERSION"], "version-16")
 		self.assertEqual(environment["ADMIN_DOMAIN"], ADMIN_DOMAIN)
 		self.assertEqual(environment["WILDCARD_DOMAIN"], WILDCARD_DOMAIN)
