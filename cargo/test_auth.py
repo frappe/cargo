@@ -14,7 +14,6 @@ from frappe.tests import UnitTestCase
 from cargo.auth import (
 	TOKEN_HEADER,
 	authenticate_request,
-	jwks_url,
 	token_claims,
 	verify_token,
 )
@@ -22,7 +21,8 @@ from cargo.auth import (
 REGION_ID = 4
 AUDIENCE = f"atlas-{REGION_ID}-admin"
 KEY_ID = "key-1"
-SETTINGS = SimpleNamespace(central_url="https://central.test/", region_id=REGION_ID)
+JWKS_URL = "https://central.test/api/method/central.api.jwks.get_jwks"
+SETTINGS = SimpleNamespace(central_url="https://central.test/", region_id=REGION_ID, jwks_url=JWKS_URL)
 
 
 def build_token(private_key, audience: str = AUDIENCE, expires_in: int = 300, key_id=KEY_ID) -> str:
@@ -152,12 +152,24 @@ class UnitTestVerifyToken(UnitTestCase):
 
 
 class UnitTestJwksUrl(UnitTestCase):
-	def test_the_key_set_hangs_off_central_url(self):
-		self.assertEqual(jwks_url(SETTINGS), "https://central.test/api/method/central.api.jwks.get_jwks")
+	"""Where the keys come from is configured, not derived: Central may publish them
+	somewhere other than its own host."""
 
-	def test_a_cargo_that_knows_no_central_cannot_verify_anything(self):
-		with self.assertRaises(frappe.ValidationError):
-			jwks_url(SimpleNamespace(central_url=None, region_id=REGION_ID))
+	@classmethod
+	def setUpClass(cls) -> None:
+		super().setUpClass()
+		cls.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+	def test_the_configured_key_set_is_the_one_fetched(self):
+		key = SimpleNamespace(key=self.private_key.public_key())
+		with (
+			patch("frappe.get_cached_doc", return_value=SETTINGS),
+			patch("cargo.auth.jwks_client", return_value=Mock()) as client,
+			patch("jwt.PyJWKClient.match_kid", return_value=key),
+		):
+			token_claims(build_token(self.private_key))
+
+		client.assert_called_once_with(JWKS_URL)
 
 
 class UnitTestAuthenticateRequest(UnitTestCase):
