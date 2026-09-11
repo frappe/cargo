@@ -198,6 +198,11 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
+		# Every test here activates a cluster, and the suite does not roll back between
+		# tests. Only one cluster may be Active, so stand the earlier ones down.
+		for name in frappe.get_all("Object Storage Cluster", filters={"status": "Active"}, pluck="name"):
+			frappe.db.set_value("Object Storage Cluster", name, "status", "Draft")
+
 		self.cluster = frappe.get_doc(
 			{
 				"doctype": "Object Storage Cluster",

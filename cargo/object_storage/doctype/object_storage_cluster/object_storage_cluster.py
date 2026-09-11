@@ -293,7 +293,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			for domain in self.proxy_domains:
 				client.map_domain(domain, self.gateway_address)
 		except (ProxyError, frappe.ValidationError) as error:
-			self.mark_cluster_status("Failed", _(f"Proxy route setup failed: {error:str}"))
+			self.mark_cluster_status("Failed", _("Proxy route setup failed: {0}").format(error))
 			return False
 
 		return True
@@ -388,6 +388,7 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 
 
 def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:
+	# Check-then-act: an operator activates a cluster by hand, so two at once is not a real race.
 	active_cluster = frappe.db.exists(
 		"Object Storage Cluster",
 		{"status": "Active", "name": ("!=", cluster.name)},
