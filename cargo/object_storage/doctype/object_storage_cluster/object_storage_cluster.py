@@ -293,7 +293,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			for domain in self.proxy_domains:
 				client.map_domain(domain, self.gateway_address)
 		except (ProxyError, frappe.ValidationError) as error:
-			self.mark_cluster_status("Failed", _("Proxy route setup failed: {0}").format(error))
+			self.mark_cluster_status("Failed", _(f"Proxy route setup failed: {error}"))
 			return False
 
 		return True
