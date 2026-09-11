@@ -50,16 +50,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 		activated_on: DF.Datetime | None
 		admin_port: DF.Int
 		admin_token: DF.Password | None
-		base_domain: DF.Data
 		base_image: DF.Data
 		data_dir: DF.Data
 		error: DF.LongText | None
 		garage_arch: DF.Data
 		garage_binary: DF.Data
 		garage_version: DF.Data
-		health_reason: DF.Data | None
 		health: DF.Literal["Unknown", "Healthy", "Degraded", "Critical"]
-		k2v_port: DF.Int
+		health_reason: DF.Data | None
 		machines: DF.Table[ObjectStorageNode]
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
@@ -72,7 +70,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
-		web_port: DF.Int
 	# end: auto-generated types
 
 	@property

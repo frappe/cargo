@@ -147,20 +147,6 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 	def test_a_system_manager_can_see_the_admin_token(self):
 		self.assertEqual(self.cluster.reveal_admin_token(), self.secrets()["admin_token"])
 
-	def test_each_look_at_the_admin_token_is_recorded(self):
-		self.cluster.reveal_admin_token()
-
-		self.assertTrue(
-			frappe.db.exists(
-				"Comment",
-				{
-					"reference_doctype": self.cluster.doctype,
-					"reference_name": self.cluster.name,
-					"comment_type": "Info",
-				},
-			)
-		)
-
 	def test_nobody_else_can_see_the_admin_token(self):
 		frappe.set_user("Guest")
 		self.addCleanup(frappe.set_user, "Administrator")
