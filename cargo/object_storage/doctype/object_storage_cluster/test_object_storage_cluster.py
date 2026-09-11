@@ -350,7 +350,10 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 			hmac.new(b"shared-with-central", frappe.as_json(data).encode(), hashlib.sha256).digest()
 		)
 
-		self.assertEqual(get_webhook_headers(cluster, webhook)[WEBHOOK_SECRET_HEADER], signature)
+		# Frappe hands the signature back as bytes on some versions and str on others.
+		header = get_webhook_headers(cluster, webhook)[WEBHOOK_SECRET_HEADER]
+
+		self.assertEqual(frappe.as_unicode(header), signature.decode())
 
 	def test_reconfiguring_rotates_the_secret_and_keeps_one_webhook(self):
 		cluster = self.insert_cluster()
