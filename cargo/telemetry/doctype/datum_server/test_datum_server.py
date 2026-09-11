@@ -33,6 +33,9 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		return doc
 
 	def saved(self, **changes) -> bool:
+		"""Each attempt is rolled back, which takes the test settings with it, so every
+		attempt lays them down again rather than leaning on whatever the site has committed."""
+		use_test_settings()
 		try:
 			self.server(**changes).save()
 			return True
