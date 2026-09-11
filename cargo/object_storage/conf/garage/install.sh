@@ -12,12 +12,9 @@ set -euo pipefail
 : "${ADMIN_TOKEN:?ADMIN_TOKEN is required}"
 : "${METRICS_TOKEN:?METRICS_TOKEN is required}"
 : "${REGION:?REGION is required}"
-: "${BASE_DOMAIN:?BASE_DOMAIN is required}"
 : "${REPLICATION_FACTOR:?REPLICATION_FACTOR is required}"
 : "${RPC_PORT:?RPC_PORT is required}"
 : "${S3_PORT:?S3_PORT is required}"
-: "${WEB_PORT:?WEB_PORT is required}"
-: "${K2V_PORT:?K2V_PORT is required}"
 : "${ADMIN_PORT:?ADMIN_PORT is required}"
 GARAGE_CONFIG="${GARAGE_CONFIG:-/etc/garage.toml}"
 
@@ -56,15 +53,6 @@ bootstrap_peers = [
 [s3_api]
 s3_region     = "$REGION"
 api_bind_addr = "[::]:$S3_PORT"
-root_domain   = ".s3.$REGION.$BASE_DOMAIN"
-
-[s3_web]
-bind_addr   = "[::]:$WEB_PORT"
-root_domain = ".web.$REGION.$BASE_DOMAIN"
-index       = "index.html"
-
-[k2v_api]
-api_bind_addr = "[::]:$K2V_PORT"
 
 [admin]
 api_bind_addr = "[::]:$ADMIN_PORT"

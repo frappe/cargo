@@ -52,16 +52,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 		activated_on: DF.Datetime | None
 		admin_port: DF.Int
 		admin_token: DF.Password | None
-		base_domain: DF.Data
 		base_image: DF.Data
 		data_dir: DF.Data
 		error: DF.LongText | None
 		garage_arch: DF.Data
 		garage_binary: DF.Data
 		garage_version: DF.Data
-		health_reason: DF.Data | None
 		health: DF.Literal["Unknown", "Healthy", "Degraded", "Critical"]
-		k2v_port: DF.Int
+		health_reason: DF.Data | None
 		machines: DF.Table[ObjectStorageNode]
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
@@ -74,7 +72,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
 		strategy: DF.Literal["partition", "spread", "pack"]
 		topology_key: DF.Data | None
-		web_port: DF.Int
 	# end: auto-generated types
 
 	@property
@@ -174,12 +171,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Set up what's not setup yet. THat's it idempotently called by the user whenever ready from desk."""
 		can_trigger_setup(self)
 
-		registered_nodes = self.garage_setup.healthy_nodes()
-		if len(registered_nodes) == len(self.all_nodes):
-			if self.publish_proxy_routes():
-				self.mark_cluster_status("Active", None)
-			return
-
+		# Always the whole flow, even with every node joined: gateway routing and proxy routes
+		# are re-applied on each run, and a cluster is only Active once both have succeeded.
 		self.clear_logs()
 		self.mark_cluster_status("Setting Up", None)
 		# Here we will start a flow of triggers.
@@ -214,6 +207,17 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		self.record_cluster_peers()
 		self.apply_layout()
+
+		# nginx before the proxy: the proxy only gets routes to a gateway ready to take them.
+		if not self.configure_gateway_routing():
+			self.mark_cluster_status(
+				"Failed",
+				_(
+					"Gateway routing (nginx) failed. Garage itself is up: see the Setup Log, then set up again."
+				),
+			)
+			return
+
 		if not self.verify_connected_nodes():
 			return
 		if not self.publish_proxy_routes():
@@ -242,6 +246,23 @@ class ObjectStorageCluster(WorkflowBuilder):
 			except Exception:
 				frappe.log_error(
 					title=f"{machine.name} failed to set up",
+					message=frappe.get_traceback(with_context=True),
+				)
+				return False
+
+		return True
+
+	@task
+	def configure_gateway_routing(self) -> bool:
+		"""nginx on the gateway's port 80, in front of Garage. A step of its own, run on every
+		setup, so setting up again is also how a failed one is retried."""
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				garage = self.garage_setup
+				garage.setup_nginx_on_machine(garage.machine(self.gateway_node.name), on_output=log.write)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} gateway routing failed",
 					message=frappe.get_traceback(with_context=True),
 				)
 				return False
@@ -297,6 +318,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 			return False
 
 		return True
+
+	@frappe.whitelist()
+	def reveal_admin_token(self) -> str:
+		"""The garage admin token"""
+		frappe.only_for("System Manager")
+
+		return self.get_password("admin_token")
 
 	@frappe.whitelist()
 	def release_machines(self, machines: list[str]) -> None:

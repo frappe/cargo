@@ -145,6 +145,16 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 
 		self.assertIn("rpc_secret", str(raised.exception))
 
+	def test_a_system_manager_can_see_the_admin_token(self):
+		self.assertEqual(self.cluster.reveal_admin_token(), self.secrets()["admin_token"])
+
+	def test_nobody_else_can_see_the_admin_token(self):
+		frappe.set_user("Guest")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		with self.assertRaises(frappe.PermissionError):
+			self.cluster.reveal_admin_token()
+
 
 class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
 	def setUp(self):
@@ -414,3 +424,107 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 
 		self.assertEqual(frappe.db.count("Webhook", {"name": f"object_storage_cluster-{cluster.name}"}), 1)
 		self.assertEqual(self.webhook_of(cluster).get_password("webhook_secret"), "rotated")
+
+
+class IntegrationTestGatewayRouting(IntegrationTestCase):
+	"""nginx on the gateway is a step of its own: a cluster is ready only once it succeeds,
+	and setting up again is how a failed one is retried."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		# Only one cluster may be Active and these drive one there, without a rollback between
+		# tests: stand the others down first, and this one down after.
+		for name in frappe.get_all("Object Storage Cluster", filters={"status": "Active"}, pluck="name"):
+			frappe.db.set_value("Object Storage Cluster", name, "status", "Draft")
+
+		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster", "replication_factor": 1}).insert()
+		self.addCleanup(frappe.db.set_value, "Object Storage Cluster", self.cluster.name, "status", "Draft")
+		self.vm_ids: dict[str, str] = {}
+		self.gateway = self.add_machine(GATEWAY)
+		self.storage = self.add_machine(STORAGE)
+		self.cluster.reload()
+
+	add_machine = IntegrationTestObjectStorageCluster.add_machine
+
+	@contextmanager
+	def everything_joined(self, nginx=None):
+		"""Garage up on every node, so the flow has nothing to install and goes straight to
+		routing and verification."""
+		joined = {self.gateway, self.storage}
+		with (
+			patch.object(Setup, "healthy_nodes", return_value=joined),
+			patch.object(Setup, "get_connected_nodes"),
+			patch.object(Setup, "apply_staged_layout"),
+			patch.object(Setup, "setup_nginx_on_machine", **(nginx or {})) as routed,
+			patch.object(ObjectStorageCluster, "publish_proxy_routes", return_value=True) as self.published,
+		):
+			yield routed
+
+	def run_flow(self):
+		self.cluster._setup()
+		self.cluster.reload()
+
+	def test_a_cluster_is_ready_only_once_the_gateway_routes(self):
+		with self.everything_joined() as routed:
+			self.run_flow()
+
+		routed.assert_called_once()
+		self.assertEqual(routed.call_args.args[0]["name"], self.gateway)
+		self.assertEqual(self.cluster.status, "Active")
+
+	def test_a_routing_failure_fails_the_cluster_and_says_why(self):
+		with self.everything_joined(nginx={"side_effect": RuntimeError("nginx -t failed")}):
+			self.run_flow()
+
+		self.assertEqual(self.cluster.status, "Failed")
+		self.assertIn("nginx", self.cluster.error)
+		self.assertIn("set up again", self.cluster.error)
+
+	def test_the_proxy_gets_no_routes_to_a_gateway_that_cannot_take_them(self):
+		with self.everything_joined(nginx={"side_effect": RuntimeError("nginx -t failed")}):
+			self.run_flow()
+
+		self.published.assert_not_called()
+
+	def test_routes_are_published_once_the_gateway_is_ready(self):
+		with self.everything_joined():
+			self.run_flow()
+
+		self.published.assert_called_once()
+
+	def test_setting_up_again_retries_routing_even_with_every_node_joined(self):
+		"""Garage joined before nginx ran, so no node is left to install: routing must be
+		re-applied anyway, not skipped as already done."""
+		with self.everything_joined(nginx={"side_effect": RuntimeError("apt mirror down")}):
+			self.run_flow()
+		self.assertEqual(self.cluster.status, "Failed")
+
+		with self.everything_joined() as routed:
+			self.run_flow()
+
+		routed.assert_called_once()
+		self.assertEqual(self.cluster.status, "Active")
+
+	def test_setting_up_a_fully_joined_cluster_runs_the_flow_not_a_shortcut(self):
+		with (
+			patch.object(Setup, "healthy_nodes", return_value={self.gateway, self.storage}),
+			patch.object(ObjectStorageCluster, "_setup") as flow,
+		):
+			self.cluster.setup()
+
+		flow.run_as_workflow.assert_called_once()
+		self.assertEqual(self.cluster.status, "Setting Up")
+
+	def test_installing_garage_no_longer_touches_nginx(self):
+		with (
+			patch.object(Setup, "run"),
+			patch.object(Setup, "node_identifier", return_value="id@[fdaa:1::5]:3901"),
+			patch.object(Setup, "connect_nodes"),
+			patch.object(Setup, "stage_role"),
+			patch.object(Setup, "setup_nginx_on_machine") as routed,
+		):
+			setup = self.cluster.garage_setup
+			setup.setup_machine(setup.machine(self.gateway))
+
+		routed.assert_not_called()
