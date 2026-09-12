@@ -86,8 +86,12 @@ running.
 Cargo builds golden images by provisioning a throwaway machine and snapshotting its disk.
 That snapshot is the image; Atlas boots later machines from it by `image_id`.
 
-Send `{"title": "..."}` — unique per image variant, so nothing is overwritten. Send back the
-snapshot, including its `id`.
+Send `{"title": "...", "cache_image": true, "memory_snapshot": true}`. The title is unique per
+image, so nothing is overwritten. Send back the snapshot, including its `id`.
+
+`cache_image` pre-downloads the artifacts to every host in the region. `memory_snapshot`
+records the build machine's shape as the warm-start template, so a machine of that exact
+shape resumes from memory instead of booting. Atlas accepts both from tenant `0` only.
 
 Cargo terminates the machine straight afterwards, so the snapshot must not depend on it
 surviving.
@@ -96,9 +100,20 @@ surviving.
 
 The image as Atlas sees it, so Cargo can tell when it is bootable.
 
-> **No caller yet.** `AtlasClient.get_snapshot` exists but nothing uses it: an image variant
-> records the snapshot id and moves on. It is here for when a variant has to wait for the
-> image to become usable.
+> **No caller yet.** `AtlasClient.get_snapshot` exists but nothing uses it: an image records
+> the snapshot id and moves on. It is here for when an image has to wait for the snapshot to
+> become usable.
+
+## Retiring an image — `DELETE /images/{id}`
+
+Release tracking calls this for every image that falls outside the window it keeps.
+
+Atlas never refuses an image a machine still uses. It archives the image and reclaims the
+artifacts when the last machine goes, so Cargo sends the call without checking usage. A
+snapshot Atlas no longer has answers 404, which Cargo reads as already gone.
+
+Cargo deletes its own record only after this call is accepted, so a failure leaves the
+record for the next run rather than leaking the snapshot.
 
 ## One tenant, one region
 
