@@ -291,17 +291,13 @@ def retire_old_releases() -> None:
 
 
 def tracked_pilot_versions() -> list[str]:
-	"""The Pilot versions inside the window, newest first."""
-	rows = frappe.db.sql(
-		"""
-		SELECT pilot_version
-		FROM `tabImage`
-		GROUP BY pilot_version
-		ORDER BY MIN(creation) DESC
-		LIMIT %s
-		""",
-		TRACKED_PILOT_VERSIONS,
-		pluck=True,
-	)
+	"""The Pilot versions inside the window, newest first.
 
-	return rows
+	A version is placed by the first image Cargo made for it, so building one again
+	later does not move it."""
+	first_seen: list[str] = []
+	for version in frappe.get_all("Image", order_by="creation asc", pluck="pilot_version"):
+		if version not in first_seen:
+			first_seen.append(version)
+
+	return first_seen[-TRACKED_PILOT_VERSIONS:][::-1]
