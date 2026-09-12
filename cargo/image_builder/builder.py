@@ -5,7 +5,7 @@ from collections.abc import Callable
 import frappe
 
 from cargo.atlas_client import AtlasClient
-from cargo.ssh import run_over_ssh, script
+from cargo.ssh import SshError, run_over_ssh, script
 
 # Atlas names an image by a generated id, so the one to bake on is found by what it holds.
 BASE_OPERATING_SYSTEM = "Ubuntu"
@@ -67,13 +67,16 @@ class Builder:
 			time.sleep(PING_INTERVAL)
 
 	def is_accepting_ssh(self, address: str, private_key: str) -> bool:
-		"""Whether sshd answered a trivial command before the deadline."""
+		"""Whether sshd answered a trivial command before the deadline.
+
+		Only a failed command is retried. A missing ssh binary or an unusable key is not
+		going to fix itself, and its own error says more than a readiness timeout."""
 		deadline = time.monotonic() + SSH_READY_TIMEOUT
 		while True:
 			try:
 				run_over_ssh(address, "uptime", private_key, timeout=SSH_PROBE_TIMEOUT)
 				return True
-			except Exception:
+			except SshError:
 				if time.monotonic() >= deadline:
 					return False
 

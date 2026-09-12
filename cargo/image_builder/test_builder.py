@@ -47,6 +47,12 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 		self.assertEqual(run.call_count, 2)
 
+	def test_a_local_failure_keeps_its_own_error(self):
+		"""A missing ssh binary says more than a readiness timeout, so it is not retried."""
+		with patch("cargo.image_builder.builder.run_over_ssh", side_effect=FileNotFoundError("ssh")):
+			with self.assertRaises(FileNotFoundError):
+				self.builder.is_accepting_ssh("fdaa:1::1d", "key")
+
 	def test_a_machine_that_never_accepts_ssh_gives_up(self):
 		with patch("cargo.image_builder.builder.run_over_ssh", side_effect=SshError("timed out")):
 			with patch("cargo.image_builder.builder.time.monotonic", side_effect=[0, 999, 999]):

@@ -7,9 +7,6 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.image_builder.doctype.image.image import (
-	ADMIN_DOMAIN,
-	BENCH_NAME,
-	SITE_NAME,
 	Image,
 	build_image,
 	ensure_release,
@@ -50,10 +47,7 @@ class IntegrationTestImage(IntegrationTestCase):
 
 		self.assertEqual(environment["VERSION"], version)
 		self.assertEqual(environment["FRAPPE_VERSION"], "version-16")
-		self.assertEqual(environment["ADMIN_DOMAIN"], ADMIN_DOMAIN)
 		self.assertEqual(environment["WILDCARD_DOMAIN"], WILDCARD_DOMAIN)
-		self.assertEqual(environment["SITE"], SITE_NAME)
-		self.assertEqual(environment["BENCH"], BENCH_NAME)
 
 	def test_cargo_keeps_no_password_from_a_build(self):
 		"""The script makes its own, so nothing to store and nothing to leak."""
@@ -61,12 +55,13 @@ class IntegrationTestImage(IntegrationTestCase):
 
 		self.assertNotIn("ADMIN_PASSWORD", environment)
 
-	def test_every_image_carries_the_same_bench_and_site(self):
-		first = self.image(self.release()).provision_environment
-		second = self.image(self.release(), frappe_version="develop").provision_environment
+	def test_the_script_names_the_bench_site_and_admin_domain(self):
+		"""Every image carries the same three, so Cargo does not hand them out."""
+		environment = self.image(self.release()).provision_environment
 
-		self.assertEqual(first["BENCH"], second["BENCH"])
-		self.assertEqual(first["SITE"], second["SITE"])
+		self.assertNotIn("BENCH", environment)
+		self.assertNotIn("SITE", environment)
+		self.assertNotIn("ADMIN_DOMAIN", environment)
 
 	def test_one_release_cannot_take_the_same_frappe_version_twice(self):
 		version = self.release()
