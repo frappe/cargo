@@ -1,9 +1,6 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
-import secrets
-import string
-
 import frappe
 from frappe.utils import now_datetime
 
@@ -16,15 +13,14 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 
 BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
-SITE_DOMAIN = "frappe.cloud"
-# Reached only through the admin hostname alias, so it never has to resolve.
+# Every image carries the same bench and site. Both are reached through a hostname alias,
+# so neither has to be unique or to resolve anywhere.
+BENCH_NAME = "pilot"
+SITE_NAME = "site1.local"
 ADMIN_DOMAIN = "admin.local"
 FRAPPE_VERSIONS = ("version-16", "develop")
 TRACKED_PILOT_VERSIONS = 3
 BUILDING_STATUSES = ("Provisioning", "Building", "Snapshotting")
-NAME_LENGTH = 8
-PASSWORD_LENGTH = 24
-PASSWORD_GROUPS = (string.ascii_uppercase, string.ascii_lowercase, string.digits, "!@#%^*+-=_")
 
 
 class Image(WorkflowBuilder):
@@ -36,14 +32,11 @@ class Image(WorkflowBuilder):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		admin_password: DF.Password | None
-		bench_name: DF.Data | None
 		build_log: DF.Code | None
 		built_at: DF.Datetime | None
 		error: DF.LongText | None
 		frappe_version: DF.Literal["version-16", "develop"]
 		pilot_version: DF.Data
-		site_name: DF.Data | None
 		snapshot_id: DF.Data | None
 		ssh_private_key: DF.Password | None
 		ssh_public_key: DF.SmallText | None
@@ -82,25 +75,16 @@ class Image(WorkflowBuilder):
 		return {
 			"VERSION": self.pilot_version,
 			"FRAPPE_VERSION": self.frappe_version,
-			"SITE": self.site_name,
-			"BENCH": self.bench_name,
+			"SITE": SITE_NAME,
+			"BENCH": BENCH_NAME,
 			"ADMIN_DOMAIN": ADMIN_DOMAIN,
 			"WILDCARD_DOMAIN": self.wildcard_domain,
-			"ADMIN_PASSWORD": self.get_password("admin_password"),
 		}
 
 	@property
 	def wildcard_domain(self) -> str:
 		"""The zone every VM hostname sits under. The aliases are built from it."""
 		return frappe.db.get_single_value("Cargo Settings", "wildcard_domain") or ""
-
-	def name_contents(self) -> None:
-		"""Name the bench and site this image carries, kept across rebuilds."""
-		self.bench_name = self.bench_name or f"bench-{frappe.generate_hash(length=NAME_LENGTH)}"
-
-		if not self.site_name:
-			region = frappe.db.get_single_value("Cargo Settings", "region")
-			self.site_name = f"{frappe.generate_hash(length=NAME_LENGTH)}.{region}.{SITE_DOMAIN}"
 
 	@frappe.whitelist()
 	def build(self) -> None:
@@ -113,9 +97,7 @@ class Image(WorkflowBuilder):
 			frappe.throw(frappe._("Set the wildcard domain in Cargo Settings before building."))
 
 		self.build_log = None
-		self.name_contents()
 		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
-		self.admin_password = generate_admin_password()
 		self.temporary_vm_id = self.builder.provision_build_machine(public_key=self.ssh_public_key)
 		self.mark("Provisioning")
 
@@ -162,8 +144,8 @@ class Image(WorkflowBuilder):
 				on_output=log.write,
 			)
 
-		# The machine loses the key, then Cargo loses its half. Both before the snapshot.
-		self.builder.wipe_machine_identity(address, self.get_password("ssh_private_key"))
+		# Atlas serves the authorized key from instance metadata on each attempt, so the
+		# disk holds no key to take off it. Cargo drops its own half here.
 		self.drop_ssh_keys()
 		self.mark("Snapshotting")
 
@@ -223,16 +205,6 @@ class Image(WorkflowBuilder):
 		# The record goes last, or a failed call above would leak the snapshot.
 		self.delete(ignore_permissions=True)
 		return True
-
-
-def generate_admin_password() -> str:
-	"""A password pilot will accept: upper, lower, digit and symbol."""
-	characters = [secrets.choice(group) for group in PASSWORD_GROUPS]
-	pool = "".join(PASSWORD_GROUPS)
-	characters += [secrets.choice(pool) for _ in range(PASSWORD_LENGTH - len(PASSWORD_GROUPS))]
-	secrets.SystemRandom().shuffle(characters)
-
-	return "".join(characters)
 
 
 def sync_build_machines() -> None:

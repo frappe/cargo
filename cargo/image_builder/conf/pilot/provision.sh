@@ -4,18 +4,25 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
-: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
 : "${ADMIN_DOMAIN:?ADMIN_DOMAIN is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
 : "${SITE:?SITE is required}"
+: "${BENCH:?BENCH is required}"
 : "${FRAPPE_VERSION:?FRAPPE_VERSION is required}"
-BENCH="${BENCH:-pilot}"
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1001}"
 BENCH_GID="${BENCH_GID:-1001}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
+PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
+PROBE_DELAY="${PROBE_DELAY:-5}"
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
+
+# Pilot wants an upper, a lower, a digit and a symbol. Nothing reads this again: the host
+# is Central managed from its first boot, and Cargo keeps no copy.
+# `head` reads the device itself: a producer piped into `head` is killed by SIGPIPE, and
+# `pipefail` would make that the status of the whole script.
+ADMIN_PASSWORD="$(head -c 18 /dev/urandom | base64)aA1#"
 
 # The image boots with the memory it was baked on, which is not enough to build assets.
 # The cleanup at the end takes the swap file off, so it is never part of the snapshot.
@@ -110,17 +117,35 @@ as_bench_user "pilot --yes -b '$BENCH' build --force"
 # enable verb only reaches production setup from v0.0.32-pre-alpha.
 systemctl is-enabled nginx > /dev/null
 
+# The hostnames below never resolve anywhere, so `--resolve` points them at this machine
+# and nothing leaves it. Gunicorn and the workers take a moment to answer after production
+# setup, so each probe waits rather than reading one cold start as a broken image.
+probe() {
+	host="$1"
+	path="$2"
+	for _ in $(seq 1 "$PROBE_ATTEMPTS"); do
+		if body="$(curl -fsS -m 20 --resolve "$host:80:127.0.0.1" "http://$host$path")"; then
+			echo "$body"
+			return 0
+		fi
+		sleep "$PROBE_DELAY"
+	done
+
+	echo "$host$path never answered" >&2
+	return 1
+}
+
 # Any label under the wildcard zone matches the alias, so this proves the vhost renders.
-curl -fsS -o /dev/null -m 20 -H "Host: site-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/method/ping
-# Pending is the whole point: the alias resolves and the host is waiting on Central. Read
-# into a variable rather than piping, so a short read cannot make curl fail on a closed pipe.
-bootstrap="$(curl -fsS -m 20 -H "Host: admin-vm-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/v1/bootstrap)"
+probe "site-verify.$WILDCARD_DOMAIN" /api/method/ping > /dev/null
+
+# Pending is the whole point: the alias resolves and the host is waiting on Central.
+bootstrap="$(probe "admin-vm-verify.$WILDCARD_DOMAIN" /api/v1/bootstrap)"
 case "$bootstrap" in
 	*'"pending"'*) ;;
 	*) echo "This host is not awaiting a Central credential: $bootstrap" >&2; exit 1 ;;
 esac
 
-# Build litter only. Cargo wipes the machine's identity itself, after this runs.
+# Build litter only.
 swapoff /swapfile
 rm -f /swapfile
 as_bench_user "yarn cache clean" > /dev/null 2>&1 || true
