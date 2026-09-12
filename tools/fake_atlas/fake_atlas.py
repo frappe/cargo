@@ -25,6 +25,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
 IMAGES = {"ubuntu-24.04": "ubuntu:24.04", "ubuntu-22.04": "ubuntu:22.04"}
+# What `GET /images` offers as the System image to bake on.
+SYSTEM_IMAGE = {
+	"id": "ubuntu-24.04",
+	"title": "Ubuntu 24.04",
+	"image_type": "system",
+	"operating_system": "Ubuntu",
+	"operating_system_version": "24.04",
+	"status": "available",
+	"enabled": True,
+}
 # Atlas machines take minutes to boot. A few seconds here is enough to prove the variant
 # really goes Provisioning -> scheduler sweep -> Building, rather than racing straight through.
 BOOT_DELAY = 6
@@ -298,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
 		try:
 			if len(route) == 2 and route[0] == "virtual-machines":
 				self.reply(self.get_virtual_machine(route[1]))
+			elif route == ["images"]:
+				self.reply(self.list_images())
 			elif len(route) == 2 and route[0] == "images":
 				self.reply(self.get_image(route[1]))
 			else:
@@ -381,6 +393,10 @@ class Handler(BaseHTTPRequestHandler):
 		print(f"    inspect it: docker run --rm -it {tag} bash", flush=True)
 
 		return {"id": tag, "title": payload.get("title", vm_id), "status": "Available"}
+
+	def list_images(self) -> dict:
+		"""The base image Cargo bakes on. Cargo finds it by operating system, not by name."""
+		return {"items": [SYSTEM_IMAGE], "offset": 0, "limit": 1, "has_more": False}
 
 	def get_image(self, image_id: str) -> dict:
 		result = subprocess.run(
