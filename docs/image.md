@@ -8,7 +8,7 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`.
 
-Every image carries the same bench `golden` and the same site `site1.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
+Every image carries the same bench `pilot` and the same site `site1.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
 One pair is one image, so a Pilot release has two images.
 

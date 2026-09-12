@@ -15,7 +15,7 @@ BUILD_TIMEOUT = 3600
 SNAPSHOT_TIMEOUT = 1800
 # Every image carries the same bench and site. Both are reached through a hostname alias,
 # so neither has to be unique or to resolve anywhere.
-BENCH_NAME = "golden"
+BENCH_NAME = "pilot"
 SITE_NAME = "site1.local"
 ADMIN_DOMAIN = "admin.local"
 FRAPPE_VERSIONS = ("version-16", "develop")
