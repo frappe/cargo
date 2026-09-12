@@ -148,6 +148,9 @@ class Image(WorkflowBuilder):
 				on_output=log.write,
 			)
 
+		# Here, not in the snapshot task: that one runs without a key.
+		self.builder.flush_build_machine(address, private_key)
+
 		# Atlas serves the authorized key from instance metadata on each attempt, so the
 		# disk holds no key to take off it. Cargo drops its own half here.
 		self.drop_ssh_keys()

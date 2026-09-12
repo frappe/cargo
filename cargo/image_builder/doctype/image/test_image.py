@@ -63,6 +63,20 @@ class IntegrationTestImage(IntegrationTestCase):
 		self.assertNotIn("SITE", environment)
 		self.assertNotIn("ADMIN_DOMAIN", environment)
 
+	def test_a_build_flushes_its_machine_while_it_still_holds_the_key(self):
+		"""The snapshot task has no key, so a later flush could not reach the machine."""
+		image = self.image(self.release())
+		image.ssh_private_key = "key"
+		image.save()
+
+		with patch("cargo.image_builder.doctype.image.image.Builder") as builder:
+			with patch("cargo.image_builder.doctype.image.image.OutputLog"):
+				image.run_provision_script("fdaa:1::1d")
+
+		builder.return_value.flush_build_machine.assert_called_once()
+		self.assertEqual(image.status, "Snapshotting")
+		self.assertIsNone(image.ssh_private_key)
+
 	def test_one_release_cannot_take_the_same_frappe_version_twice(self):
 		version = self.release()
 		self.image(version)
