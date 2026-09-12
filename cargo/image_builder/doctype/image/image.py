@@ -280,7 +280,7 @@ def build_release(pilot_version: str) -> list[str]:
 		# The machine is rented now, so its id is committed before the next one is asked
 		# for. A later failure would otherwise roll back the record that holds the id and
 		# leave the machine running with nothing tracking it.
-		frappe.db.commit()  # nosemgrep: an external resource exists and must outlive a rollback
+		frappe.db.commit()  # nosemgrep
 		started.append(image.name)
 
 	return started
