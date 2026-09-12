@@ -1,3 +1,5 @@
+import subprocess
+import time
 from collections.abc import Callable
 
 import frappe
@@ -16,6 +18,13 @@ BUILD_MEMORY_MIB = 1024
 BUILD_DISK_MIB = 8 * 1024
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
+# Atlas reports a machine running once it is created, which is before it has booted. It
+# answers the network first and sshd some time after that.
+PING_TIMEOUT = 60
+PING_INTERVAL = 2
+SSH_READY_TIMEOUT = 180
+SSH_READY_INTERVAL = 5
+SSH_PROBE_TIMEOUT = 15
 
 
 class Builder:
@@ -27,6 +36,48 @@ class Builder:
 	@property
 	def client(self) -> AtlasClient:
 		return AtlasClient.from_settings()
+
+	def wait_until_reachable(self, address: str, private_key: str) -> None:
+		"""Wait for the machine to answer, on the network first and then on SSH."""
+		if not self.is_answering_ping(address):
+			frappe.throw(
+				frappe._("{0} did not answer a ping within {1} seconds.").format(address, PING_TIMEOUT)
+			)
+
+		if not self.is_accepting_ssh(address, private_key):
+			frappe.throw(
+				frappe._("{0} answered a ping but not SSH within {1} seconds.").format(
+					address, SSH_READY_TIMEOUT
+				)
+			)
+
+	def is_answering_ping(self, address: str) -> bool:
+		"""Whether the machine reached the mesh before the deadline."""
+		deadline = time.monotonic() + PING_TIMEOUT
+		while True:
+			reply = subprocess.run(
+				["ping", "-6", "-c", "1", "-W", "2", address], capture_output=True, check=False
+			)
+			if reply.returncode == 0:
+				return True
+
+			if time.monotonic() >= deadline:
+				return False
+
+			time.sleep(PING_INTERVAL)
+
+	def is_accepting_ssh(self, address: str, private_key: str) -> bool:
+		"""Whether sshd answered a trivial command before the deadline."""
+		deadline = time.monotonic() + SSH_READY_TIMEOUT
+		while True:
+			try:
+				run_over_ssh(address, "uptime", private_key, timeout=SSH_PROBE_TIMEOUT)
+				return True
+			except Exception:
+				if time.monotonic() >= deadline:
+					return False
+
+				time.sleep(SSH_READY_INTERVAL)
 
 	def run_provision_script_on_build_machine(
 		self,

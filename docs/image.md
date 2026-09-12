@@ -30,7 +30,11 @@ run_build flow
   take_snapshot        -> Atlas snapshot, destroy the build machine (Available)
 ```
 
-`sync_build_machines` runs every minute and moves an image on when Atlas reports its machine running. The build log streams into the record while the script runs.
+`sync_build_machines` runs every minute and moves an image on when Atlas reports its machine running.
+
+Running is not the same as booted. Before it sends the script, the build waits up to 60 seconds for the machine to answer a ping, then up to 180 seconds for sshd to answer a trivial command. A machine that does neither fails the build with which step it failed at, instead of a connection timeout.
+
+The build log streams into the record while the script runs.
 
 A failed build records the failing step, destroys the build machine, and sets the image to Failed. Build again to retry.
 

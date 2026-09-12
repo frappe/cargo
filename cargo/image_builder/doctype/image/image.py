@@ -136,10 +136,15 @@ class Image(WorkflowBuilder):
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def run_provision_script(self, address: str) -> None:
 		"""Install onto the build machine"""
+		private_key = self.get_password("ssh_private_key")
+		# Atlas calls a machine running before it has booted, so the first SSH attempt of a
+		# build would otherwise time out against a machine that is only seconds old.
+		self.builder.wait_until_reachable(address, private_key)
+
 		with OutputLog(self, "build_log") as log:
 			self.builder.run_provision_script_on_build_machine(
 				address,
-				self.get_password("ssh_private_key"),
+				private_key,
 				self.provision_environment,
 				on_output=log.write,
 			)
