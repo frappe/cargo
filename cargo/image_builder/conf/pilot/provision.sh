@@ -20,7 +20,9 @@ INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 
 # Pilot wants an upper, a lower, a digit and a symbol. Nothing reads this again: the host
 # is Central managed from its first boot, and Cargo keeps no copy.
-ADMIN_PASSWORD="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)aA1#"
+# `head` reads the device itself: a producer piped into `head` is killed by SIGPIPE, and
+# `pipefail` would make that the status of the whole script.
+ADMIN_PASSWORD="$(head -c 18 /dev/urandom | base64)aA1#"
 
 # The image boots with the memory it was baked on, which is not enough to build assets.
 # The cleanup at the end takes the swap file off, so it is never part of the snapshot.
@@ -151,3 +153,10 @@ rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
 journalctl --vacuum-size=10M > /dev/null 2>&1 || true
+
+# The identity of the machine that baked the image, which every clone would otherwise
+# share. systemd writes a new machine ID at boot, and sshd makes new host keys. The
+# authorized key is not here to remove: Atlas serves it from instance metadata.
+truncate -s 0 /etc/machine-id
+rm -f /etc/ssh/ssh_host_*
+sync

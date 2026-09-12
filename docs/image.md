@@ -23,16 +23,18 @@ Use Pilot `v0.0.32-pre-alpha` or later. Earlier releases have no Central bootstr
 Select **Build** on an Image.
 
 ```text
-build            -> keypair, admin password, Atlas VM (Provisioning)
+build            -> keypair, Atlas VM (Provisioning)
 sync_build_vm    -> VM is running and has a mesh address (Building)
 run_build flow
-  run_provision_script -> conf/pilot/provision.sh over SSH, then wipe identity (Snapshotting)
+  run_provision_script -> conf/pilot/provision.sh over SSH (Snapshotting)
   take_snapshot        -> Atlas snapshot, destroy the build machine (Available)
 ```
 
 `sync_build_machines` runs every minute and moves an image on when Atlas reports its machine running. The build log streams into the record while the script runs.
 
-A failed build records the failing step, destroys the build machine, and sets the image to Failed. Build again to retry. The bench name and the site name survive a rebuild, so an image keeps the same contents.
+A failed build records the failing step, destroys the build machine, and sets the image to Failed. Build again to retry.
+
+Cargo holds the private key only while the machine is being baked, and drops it when the script ends.
 
 ## What the provision script installs
 
@@ -41,11 +43,11 @@ A failed build records the failing step, destroys the build machine, and sets th
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1001.
 3. Runs the Pilot installer as root, then as the bench user.
-4. Creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
+4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
 5. Writes the Central bootstrap state and the hostname aliases.
 6. Runs `pilot setup production` and `pilot build --force`.
 7. Verifies that nginx is enabled at boot and that both aliases answer. Each probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network. A probe waits for the bench to answer rather than reading one cold start as a broken image.
-8. Removes the swap file and the build caches.
+8. Removes the swap file and the build caches, then empties `/etc/machine-id` and deletes the SSH host keys. systemd writes a new machine ID at boot and sshd makes new host keys, so two machines from one image do not share an identity.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
