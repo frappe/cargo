@@ -11,6 +11,8 @@ SETTINGS = {
 	"region_id": 1,
 	"region": "test-region",
 	"atlas_tenant_id": 0,
+	# Release tracking is off unless a test turns it on, whatever ran before it.
+	"track_pilot_releases": 0,
 }
 SECRETS = {
 	"atlas_token": "test-atlas-token",
