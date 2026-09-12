@@ -8,7 +8,7 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`.
 
-Every image carries the same bench `pilot` and the same site `site1.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
+Every image carries the same bench `default-bench` and the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
 One pair is one image, so a Pilot release has two images.
 
@@ -45,12 +45,13 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 `cargo/image_builder/conf/pilot/provision.sh` runs as root on a bare Ubuntu 24.04 machine.
 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
-2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1001.
+2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
 3. Runs the Pilot installer as root, then as the bench user.
 4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
-5. Writes the Central bootstrap state and the hostname aliases.
-6. Runs `pilot setup production` and `pilot build --force`.
-7. Removes the swap file and the build caches.
+5. Runs `pilot setup production`.
+6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image.
+7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. It comes last because it puts the host in the awaiting-bootstrap state, where the pending screen replaces the site the step above probes.
+8. Removes the swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
@@ -64,7 +65,7 @@ Atlas delivers the attribute through the instance metadata service, so nothing i
 
 ## Hostname aliases
 
-An alias maps the VM hostname that Atlas assigns onto a local target, so a fresh VM answers on a name it did not know at bake time. Cargo writes two, both built from the wildcard domain in Cargo Settings.
+An alias maps the VM hostname that Atlas assigns onto a local target, so a fresh VM answers on a name it did not know at bake time. `pilot setup central` writes two, both built from the wildcard domain in Cargo Settings.
 
 | Type | Pattern | Target |
 |---|---|---|
@@ -73,7 +74,7 @@ An alias maps the VM hostname that Atlas assigns onto a local target, so a fresh
 
 Neither alias redirects, because the edge proxy terminates TLS and these names never resolve to the machine itself.
 
-The aliases are written before `pilot setup production`, because production setup is what renders them into nginx.
+The aliases are written after `pilot setup production`, so `pilot setup central` rewrites nginx and rebuilds the process set itself.
 
 ## Release tracking
 
