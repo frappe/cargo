@@ -31,6 +31,7 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 from cargo.object_storage.garage.client import Client
 from cargo.object_storage.garage.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
+from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
@@ -515,6 +516,15 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 
 		flow.run_as_workflow.assert_called_once()
 		self.assertEqual(self.cluster.status, "Setting Up")
+
+	def test_steps_that_install_over_ssh_outlast_the_ssh_calls_they_make(self):
+		"""The worker's default is 300s against SSH's 600s, so an unmarked step would be
+		killed partway through an install SSH would still have let finish."""
+		for method in ("start_setup_on_machine", "configure_gateway_routing"):
+			step = ObjectStorageCluster.__dict__[method]
+			with self.subTest(method=method):
+				self.assertEqual(step._queue, "long")
+				self.assertGreater(step._timeout, SSH_TIMEOUT)
 
 	def test_installing_garage_no_longer_touches_nginx(self):
 		with (
