@@ -1,7 +1,6 @@
 from collections.abc import Callable
 
 import frappe
-from frappe import _
 
 from cargo.atlas_client import AtlasClient
 from cargo.ssh import run_over_ssh, script
@@ -13,8 +12,7 @@ BASE_IMAGE = "ubuntu-24.04"
 BUILD_VCPUS = 1
 BUILD_MEMORY_MIB = 1024
 BUILD_DISK_MIB = 8 * 1024
-# A new kind is a new conf/<kind>/provision.sh and an entry here.
-KINDS = ("pilot",)
+PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
 # Atlas will be responsible for placing machine's identity on boot from snapshot.
 WIPE_IDENTITY = """
@@ -28,11 +26,7 @@ sync
 class Builder:
 	"""Rents a machine, runs one script on it, photographs it, throws it away."""
 
-	def __init__(self, kind: str, atlas_name: str) -> None:
-		if kind not in KINDS:
-			frappe.throw(_("{0} is not an image Cargo knows how to build.").format(kind))
-
-		self.kind = kind
+	def __init__(self, atlas_name: str) -> None:
 		self.atlas_name = atlas_name
 
 	@property
@@ -50,10 +44,10 @@ class Builder:
 		environment: dict[str, str],
 		on_output: Callable[[str], None] | None = None,
 	) -> str:
-		"""Run this kind's script on the machine."""
+		"""Run the provision script on the machine."""
 		return run_over_ssh(
 			address,
-			script("image_builder", "conf", self.kind, "provision.sh", environment=environment),
+			script(*PROVISION_SCRIPT, environment=environment),
 			private_key,
 			timeout=PROVISION_TIMEOUT,
 			on_output=on_output,

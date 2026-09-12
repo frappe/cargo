@@ -7,8 +7,8 @@ export DEBIAN_FRONTEND=noninteractive
 : "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}"
 : "${ADMIN_DOMAIN:?ADMIN_DOMAIN is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
-FRAPPE_VERSION="${FRAPPE_VERSION:-}"
-SITE="${SITE:-}"
+: "${SITE:?SITE is required}"
+: "${FRAPPE_VERSION:?FRAPPE_VERSION is required}"
 BENCH="${BENCH:-pilot}"
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1001}"
@@ -55,20 +55,15 @@ as_bench_user "curl -fsSL '$INSTALLER' | bash"
 as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
 
 # `new` only writes bench.toml; `init` clones and installs the framework app it names. The
-# branch is config, not a flag, so it is set in between (config/bench.py defaults to
-# version-16). No get-app: the bench brings frappe with it.
-if [ -n "$FRAPPE_VERSION" ]; then
-	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
-	as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_VERSION\"|' '$bench_toml'"
-	# A silent miss would build version-16 while claiming this branch, so check it took.
-	as_bench_user "grep -q '^branch = \"$FRAPPE_VERSION\"' '$bench_toml'"
-fi
+# branch is config, not a flag, so it is set in between. No get-app: the bench brings
+# frappe with it.
+bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
+as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_VERSION\"|' '$bench_toml'"
+# A silent miss would build the default branch while claiming this one, so check it took.
+as_bench_user "grep -q '^branch = \"$FRAPPE_VERSION\"' '$bench_toml'"
 
 as_bench_user "pilot --yes -b '$BENCH' init"
-
-if [ -n "$SITE" ]; then
-	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
-fi
+as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 
 # Auto bootstrapping: the host comes up managed by Central but without its credential, so
 # Pilot serves the pending screen and polls instance metadata until Central writes one.
@@ -88,12 +83,14 @@ aliases = [
 		pattern=f"admin-vm-*.{wildcard}",
 		target=os.environ["ADMIN_DOMAIN"],
 		redirect=False,
-	)
+	),
+	HostnameAlias(
+		type="site",
+		pattern=f"site-*.{wildcard}",
+		target=os.environ["SITE"],
+		redirect=False,
+	),
 ]
-
-# A site-less flavour has nothing for a site alias to point at.
-if site := os.environ["SITE"]:
-	aliases.append(HostnameAlias(type="site", pattern=f"site-*.{wildcard}", target=site, redirect=False))
 
 with CommonConfig.open(benches_dir()) as common:
 	common.central.enabled = True
@@ -114,9 +111,7 @@ as_bench_user "pilot --yes -b '$BENCH' build --force"
 systemctl is-enabled nginx > /dev/null
 
 # Any label under the wildcard zone matches the alias, so this proves the vhost renders.
-if [ -n "$SITE" ]; then
-	curl -fsS -o /dev/null -m 20 -H "Host: site-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/method/ping
-fi
+curl -fsS -o /dev/null -m 20 -H "Host: site-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/method/ping
 # Pending is the whole point: the alias resolves and the host is waiting on Central. Read
 # into a variable rather than piping, so a short read cannot make curl fail on a closed pipe.
 bootstrap="$(curl -fsS -m 20 -H "Host: admin-vm-verify.$WILDCARD_DOMAIN" http://127.0.0.1/api/v1/bootstrap)"
