@@ -92,6 +92,8 @@ Cargo maps `s3-svc.<wildcard-domain>` and `s3-admin-svc.<wildcard-domain>` to th
 
 Cargo permits only one Active Object Storage Cluster. Other cluster records can remain for archival history, but setup stops while another cluster is Active.
 
+A host builds its own cluster when the site config holds `default_storage_cluster_config`. Without that key, an operator builds it from the desk. Read [object storage](object-storage.md).
+
 ## Authentication
 
 Cargo calls Atlas with `Authorization: Bearer <atlas_token>` and `X-Tenant-ID: 0`. The token has audience `atlas-admin:<region-id>`, subject `cargo`, scope `*`, tenant `0`, and a 365-day lifetime.

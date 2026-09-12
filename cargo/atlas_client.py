@@ -13,6 +13,9 @@ API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
+# Atlas names an image by a generated id, so the one to boot on is found by what it holds.
+BASE_OPERATING_SYSTEM = "Ubuntu"
+BASE_OPERATING_SYSTEM_VERSION = "24.04"
 # The most a list route returns in one page.
 IMAGE_PAGE_LIMIT = 100
 # Reaches the mesh and the internet, without a public address of its own.
@@ -164,6 +167,21 @@ class AtlasClient:
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""
 		return self.call("GET", f"/images/{image_id}")
+
+
+def base_image_id() -> str:
+	"""The system image every Cargo machine boots on. Throws when Atlas has none."""
+	image_id = AtlasClient.from_settings().find_system_image(
+		BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION
+	)
+	if not image_id:
+		frappe.throw(
+			frappe._("Atlas has no available {0} {1} system image.").format(
+				BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION
+			)
+		)
+
+	return image_id
 
 
 def host_port(address: str, port: int | str) -> str:

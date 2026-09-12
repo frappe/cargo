@@ -10,6 +10,7 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
+from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
@@ -52,7 +53,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		activated_on: DF.Datetime | None
 		admin_port: DF.Int
 		admin_token: DF.Password | None
-		base_image: DF.Data
+		auto_setup_attempts: DF.Int
+		auto_spawn: DF.Check
+		base_image: DF.Data | None
 		data_dir: DF.Data
 		error: DF.LongText | None
 		garage_arch: DF.Data
@@ -137,34 +140,37 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Ensure webhook for this cluster is configured"""
 		configure_storage_cluster_webhook(self)
 
-	def request_machine(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
-		"""Record one machine and ask Atlas to build it. Throws, rolling the record back."""
-		spec = NodeSpec(role=role, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+	def add_node(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
+		"""Ask Atlas for one machine and put it in this cluster. Throws, rolling the row back.
 
-		return MachineDoc.request(
+		Atlas names an image by a generated id, so an empty `base_image` is resolved rather
+		than sent as a name Atlas cannot know."""
+		spec = NodeSpec(role=role, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+		machine: Machine = MachineDoc.request(
 			self,
 			spec,
-			base_image=self.base_image,
+			base_image=self.base_image or base_image_id(),
 			zone=self.region,
 		)
+
+		self.append("machines", {"machine": machine.name, "role": role})
+		self.save()
+
+		return machine
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
 		"""Can add a gateway node to this cluster? Throws if not."""
 		can_add_gateway_node(self)
 
-		machine: Machine = self.request_machine(cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb, role=GATEWAY)
-		self.append("machines", {"machine": machine.name, "role": GATEWAY})
-		self.save()
+		self.add_node(GATEWAY, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
 
 	@frappe.whitelist()
 	def add_storage_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
 		"""Add a storage node to this cluster."""
 		can_add_storage_node(self)
 
-		machine: Machine = self.request_machine(cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb, role=STORAGE)
-		self.append("machines", {"machine": machine.name, "role": STORAGE})
-		self.save()
+		self.add_node(STORAGE, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
 
 	@frappe.whitelist()
 	def setup(self) -> None:
@@ -376,8 +382,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	def mark_cluster_status(self, status: str, reason: str | None = None) -> None:
 		"""Mark the cluster's status and reason."""
-		if status == "Active" and not self.activated_on:
-			self.activated_on = now_datetime()
+		if status == "Active":
+			if not self.activated_on:
+				self.activated_on = now_datetime()
+
+			# A cluster that served is worth automatic setup again if it later fails.
+			self.auto_setup_attempts = 0
 
 		self.status = status
 		self.error = reason
