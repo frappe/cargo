@@ -67,7 +67,7 @@ as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$F
 # A silent miss would build the default branch, so check the edit took.
 as_bench_user "grep -q '^branch = \"$FRAPPE_VERSION\"' '$bench_toml'"
 
-as_bench_user "pilot --yes -b '$BENCH' init"
+as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
 as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
