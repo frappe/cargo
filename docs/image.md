@@ -6,9 +6,9 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-An **Image** is one release of one kind. `kind` is `pilot`. `version` is the Pilot release tag the build installs.
+An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`. Every image carries a site.
 
-An **Image Variant** is one flavour of that release and the snapshot it produced. Select **Generate Variants** on an Image to create one variant for each Frappe version (`version-15`, `version-16`, `develop`) with a site and without a site.
+One pair is one image, so a Pilot release has two images.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ Use Pilot `v0.0.32-pre-alpha` or later. Earlier releases have no Central bootstr
 
 ## Build sequence
 
-Select **Build** on an Image Variant.
+Select **Build** on an Image.
 
 ```text
 build            -> keypair, admin password, Atlas VM (Provisioning)
@@ -28,9 +28,9 @@ run_build flow
   take_snapshot        -> Atlas snapshot, destroy the build machine (Available)
 ```
 
-`sync_build_machines` runs every minute and moves a variant on when Atlas reports its machine running. The build log streams into the variant while the script runs.
+`sync_build_machines` runs every minute and moves an image on when Atlas reports its machine running. The build log streams into the record while the script runs.
 
-A failed build records the failing step, destroys the build machine, and sets the variant to Failed. Build again to retry. The bench name and the site name survive a rebuild, so the same flavour keeps the same contents.
+A failed build records the failing step, destroys the build machine, and sets the image to Failed. Build again to retry. The bench name and the site name survive a rebuild, so an image keeps the same contents.
 
 ## What the provision script installs
 
@@ -39,7 +39,7 @@ A failed build records the failing step, destroys the build machine, and sets th
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1001.
 3. Runs the Pilot installer as root, then as the bench user.
-4. Creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site when the flavour includes one.
+4. Creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
 5. Writes the Central bootstrap state and the hostname aliases.
 6. Runs `pilot setup production` and `pilot build --force`.
 7. Verifies that nginx is enabled at boot and that both aliases answer.
@@ -62,11 +62,27 @@ An alias maps the VM hostname that Atlas assigns onto a local target, so a fresh
 | Type | Pattern | Target |
 |---|---|---|
 | `admin` | `admin-vm-*.<wildcard-domain>` | `admin.local`, the bench admin domain |
-| `site` | `site-*.<wildcard-domain>` | the site the flavour was baked with |
+| `site` | `site-*.<wildcard-domain>` | the site the image was baked with |
 
-A flavour without a site gets only the admin alias. Neither alias redirects, because the edge proxy terminates TLS and these names never resolve to the machine itself.
+Neither alias redirects, because the edge proxy terminates TLS and these names never resolve to the machine itself.
 
 The aliases are written before `pilot setup production`, because production setup is what renders them into nginx.
+
+## Release tracking
+
+Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Settings. It is off by default, and a person or another system can turn it on.
+
+An hourly job then:
+
+1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
+2. Creates an image for `version-16` and `develop` if they are absent, and builds each one.
+3. Retires everything outside the newest 3 Pilot versions, which keeps 6 images.
+
+A version is newest by the time Cargo first created an image for it.
+
+Retiring deletes the Atlas snapshot and then the Cargo record. The record goes last, so a failed Atlas call cannot leave a snapshot behind. An image that is building is never retired. Atlas does not refuse an image that a machine still uses: it archives the image and reclaims it when the last machine goes.
+
+While tracking is off, nothing is created and nothing is retired.
 
 ## Snapshot flags
 
@@ -74,4 +90,4 @@ Cargo snapshots with `cache_image` and `memory_snapshot`. Atlas accepts both fro
 
 `cache_image` tells every host in the region to download the artifacts ahead of the first boot. `memory_snapshot` records the build machine's shape at Atlas as the warm-start template, so a tenant VM of that shape starts from memory instead of a cold boot.
 
-Atlas takes the warm template shape from the machine being snapshotted. `BUILD_VCPUS`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Change them together with the tenant VM size.
+Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_VCPUS`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.

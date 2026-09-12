@@ -2,46 +2,174 @@
  "actions": [],
  "allow_bulk_edit": 0,
  "allow_rename": 0,
+ "autoname": "IMG-.####",
  "creation": "2026-09-01 11:34:25.577127",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "kind",
-  "version"
+  "section_break_identity",
+  "pilot_version",
+  "frappe_version",
+  "column_break_identity",
+  "status",
+  "error",
+  "section_break_contents",
+  "bench_name",
+  "site_name",
+  "section_break_artifact",
+  "snapshot_id",
+  "built_at",
+  "section_break_log",
+  "build_log",
+  "section_break_build",
+  "temporary_vm_id",
+  "ssh_public_key",
+  "column_break_build",
+  "ssh_private_key",
+  "admin_password"
  ],
  "fields": [
   {
-   "fieldname": "kind",
-   "fieldtype": "Select",
-   "label": "Kind",
-   "options": "pilot",
-   "default": "pilot",
-   "reqd": 1,
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "set_only_once": 1,
-   "description": "What this image is of. Only pilot is buildable so far."
+   "fieldname": "section_break_identity",
+   "fieldtype": "Section Break",
+   "label": "Image"
   },
   {
-   "fieldname": "version",
+   "description": "The Pilot release inside this image, such as v0.0.32-pre-alpha.",
+   "fieldname": "pilot_version",
    "fieldtype": "Data",
-   "label": "Version",
-   "reqd": 1,
    "in_list_view": 1,
-   "set_only_once": 1,
-   "description": "The release this image is built from, e.g. v0.0.29-pre-alpha."
+   "in_standard_filter": 1,
+   "label": "Pilot Version",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The Frappe branch the bench is built against.",
+   "fieldname": "frappe_version",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Frappe Version",
+   "options": "version-16\ndevelop",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Draft\nProvisioning\nBuilding\nAvailable\nSnapshotting\nFailed",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Why the last build failed.",
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error",
+   "max_height": "16rem",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_contents",
+   "fieldtype": "Section Break",
+   "label": "Contents"
+  },
+  {
+   "description": "The bench inside this image.",
+   "fieldname": "bench_name",
+   "fieldtype": "Data",
+   "label": "Bench",
+   "read_only": 1
+  },
+  {
+   "description": "The site inside this image.",
+   "fieldname": "site_name",
+   "fieldtype": "Data",
+   "label": "Site",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_artifact",
+   "fieldtype": "Section Break",
+   "label": "Snapshot"
+  },
+  {
+   "description": "What Atlas boots this image from.",
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "built_at",
+   "fieldtype": "Datetime",
+   "label": "Built At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_log",
+   "fieldtype": "Section Break",
+   "label": "Build Log"
+  },
+  {
+   "description": "Everything the provisioning script printed, as it printed it.",
+   "fieldname": "build_log",
+   "fieldtype": "Code",
+   "label": "Build Log",
+   "max_height": "24rem",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_build",
+   "fieldtype": "Section Break",
+   "label": "Build Machine"
+  },
+  {
+   "description": "The machine being baked. Cleared once it is snapshotted and destroyed.",
+   "fieldname": "temporary_vm_id",
+   "fieldtype": "Data",
+   "label": "Temporary VM",
+   "read_only": 1
+  },
+  {
+   "description": "Generated per build; the machine is destroyed after.",
+   "fieldname": "ssh_public_key",
+   "fieldtype": "Small Text",
+   "label": "SSH Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_build",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ssh_private_key",
+   "fieldtype": "Password",
+   "label": "SSH Private Key",
+   "read_only": 1
+  },
+  {
+   "description": "The Administrator password of the site baked into this image.",
+   "fieldname": "admin_password",
+   "fieldtype": "Password",
+   "label": "Site Admin Password",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
- "links": [
-  {
-   "group": "Variants",
-   "link_doctype": "Image Variant",
-   "link_fieldname": "image"
-  }
- ],
- "modified": "2026-09-01 11:34:25.577127",
+ "links": [],
+ "modified": "2026-09-12 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Image",
@@ -64,6 +192,5 @@
  "rows_threshold_for_grid_search": 20,
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "autoname": "IMG-.{kind}.-.{version}.-.####"
+ "states": []
 }

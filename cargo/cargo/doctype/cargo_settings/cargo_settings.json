@@ -17,7 +17,8 @@
   "atlas_tenant_id",
   "proxy_url",
   "proxy_token",
-  "wildcard_domain"
+  "wildcard_domain",
+  "track_pilot_releases"
  ],
  "fields": [
   {
@@ -117,6 +118,13 @@
    "fieldtype": "Data",
    "label": "Wildcard Domain",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Build every new Pilot prerelease and drop the oldest. Off by default.",
+   "fieldname": "track_pilot_releases",
+   "fieldtype": "Check",
+   "label": "Track Pilot Releases"
   }
  ],
  "grid_page_length": 50,

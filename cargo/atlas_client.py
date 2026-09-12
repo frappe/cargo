@@ -131,6 +131,10 @@ class AtlasClient:
 
 		return created["id"]
 
+	def delete_snapshot(self, image_id: str) -> None:
+		"""Retire an image. Atlas archives one a machine still uses and reclaims it later."""
+		self.call("DELETE", f"/images/{image_id}")
+
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""
 		return self.call("GET", f"/images/{image_id}")

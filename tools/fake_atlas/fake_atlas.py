@@ -314,6 +314,11 @@ class Handler(BaseHTTPRequestHandler):
 		route = self.route
 		if len(route) == 2 and route[0] == "virtual-machines":
 			self.reply(self.terminate(route[1]), 202)
+		elif len(route) == 2 and route[0] == "images":
+			try:
+				self.reply(self.delete_image(route[1]), 202)
+			except KeyError:
+				self.fail("The resource does not exist.", 404, "not_found")
 		else:
 			self.fail(f"unimplemented: DELETE {self.path}", 404, "not_found")
 
@@ -394,6 +399,16 @@ class Handler(BaseHTTPRequestHandler):
 			"rootfs_size_mib": int(result.stdout.strip()) // (1024 * 1024),
 		}
 
+	def delete_image(self, image_id: str) -> dict:
+		"""Atlas archives an image a machine still uses, so this never refuses either."""
+		result = subprocess.run(["docker", "image", "rm", "-f", image_id], capture_output=True, text=True)
+		if result.returncode != 0 and "No such image" in result.stderr:
+			raise KeyError(image_id)
+
+		print(f"  - image {image_id} deleted", flush=True)
+
+		return {"id": image_id, "status": "Deleting"}
+
 	def terminate(self, vm_id: str) -> dict:
 		vm = VMS.get(vm_id)
 		if vm and vm["container"]:
@@ -427,7 +442,7 @@ def main() -> None:
 	print(
 		f"fake atlas on http://127.0.0.1:{args.port}  (systemd={args.systemd}, boot delay={args.boot_delay}s)"
 	)
-	print("point Cargo Settings' Atlas URL at it, then build an Image Variant")
+	print("point Cargo Settings' Atlas URL at it, then build an Image")
 	names = " ".join(f"{HOST_PREFIX}{slot}" for slot in range(1, SLOTS + 1))
 	print(f"\nadd this line to /etc/hosts once, so the machine names resolve:\n127.0.0.1 {names}\n")
 	ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
