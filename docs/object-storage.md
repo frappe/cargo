@@ -40,14 +40,17 @@ Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` 
 ```json
 "default_storage_cluster_config": {
   "storage_node_count": 3,
+  "replication_factor": 3,
   "gateway": {"cpu": 2, "ram_gb": 4, "disk_gb": 20},
   "storage": {"cpu": 2, "ram_gb": 4, "disk_gb": 100}
 }
 ```
 
-Every value is required, and each must be a whole number of at least 1. An unusable config is logged once and nothing is built. Without the key, Cargo builds nothing and the desk flow above is the only way in.
+Every value is required, and each must be a whole number of at least 1. `storage_node_count` must be at least `replication_factor`, because a cluster with fewer storage nodes than a full copy needs is one every setup run refuses. The cluster takes its replication factor from here, so the two can never disagree.
 
-`ensure_cluster` then runs on the scheduler and, on each run:
+An unusable config is logged once and nothing is built. Without the key, Cargo builds nothing and the desk flow above is the only way in.
+
+`ensure_cluster` then runs on the scheduler under a site lock, so two runs never rent machines at the same time. On each run it:
 
 1. Builds a cluster if the region has none. It builds one only when there is no Object Storage Cluster at all, so a cluster added by hand is never joined by a second, and a Failed cluster is retried rather than replaced. This is what makes a leaked machine impossible: Cargo never rents a second set while the first is still held.
 2. Asks Atlas for the machines the cluster is short of, gateway first. The count is a deficit, so a run that fails part way asks only for what is missing next time, and a full cluster is asked for nothing.

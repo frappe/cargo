@@ -11,11 +11,17 @@ from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	ObjectStorageCluster,
 )
-from cargo.object_storage.spawn import CONFIG_KEY, MAX_SETUP_ATTEMPTS, ensure_cluster
+from cargo.object_storage.spawn import (
+	CONFIG_KEY,
+	LOCK_NAME,
+	MAX_SETUP_ATTEMPTS,
+	ensure_cluster,
+)
 from cargo.testing import use_test_settings
 
 CONFIG = {
 	"storage_node_count": 3,
+	"replication_factor": 3,
 	GATEWAY: {"cpu": 2, "ram_gb": 4, "disk_gb": 20},
 	STORAGE: {"cpu": 2, "ram_gb": 4, "disk_gb": 100},
 }
@@ -87,6 +93,27 @@ class IntegrationTestSpawnCreation(SpawnTestCase):
 
 	def test_an_unusable_config_builds_nothing(self):
 		with self.configured({"storage_node_count": 0}):
+			ensure_cluster()
+
+		self.assertEqual(self.clusters(), [])
+
+	def test_too_few_storage_nodes_for_a_full_copy_is_refused(self):
+		"""Rented machines that every setup run would then refuse. Nothing is built."""
+		with self.configured(CONFIG | {"storage_node_count": 2}):
+			ensure_cluster()
+
+		self.assertEqual(self.clusters(), [])
+
+	def test_the_cluster_needs_as_many_copies_as_the_config_asks_for(self):
+		with self.configured(CONFIG | {"storage_node_count": 2, "replication_factor": 2}):
+			ensure_cluster()
+
+		self.assertEqual(self.auto_cluster().replication_factor, 2)
+
+	def test_a_run_already_under_way_is_not_joined_by_another(self):
+		from frappe.utils.synchronization import filelock
+
+		with self.configured(), filelock(LOCK_NAME, timeout=0):
 			ensure_cluster()
 
 		self.assertEqual(self.clusters(), [])

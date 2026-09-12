@@ -6,6 +6,8 @@ import typing
 
 import frappe
 from frappe import _
+from frappe.utils.file_lock import LockTimeoutError
+from frappe.utils.synchronization import filelock
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import GATEWAY, STORAGE, Role
@@ -16,6 +18,8 @@ if typing.TYPE_CHECKING:
 	)
 
 CONFIG_KEY = "default_storage_cluster_config"
+# Renting a machine is the expensive half of this, so two runs must not overlap.
+LOCK_NAME = "object-storage-spawn"
 # Setting up again rents no machine, so a transient fault is worth another run. A broken
 # gateway is not, and three runs is where saying so beats trying again.
 MAX_SETUP_ATTEMPTS = 3
@@ -32,10 +36,21 @@ def ensure_cluster() -> None:
 	if not config or not has_required_settings():
 		return
 
+	try:
+		with filelock(LOCK_NAME, timeout=0):
+			build_cluster(config)
+	except LockTimeoutError:
+		# Another run holds it and is already doing this work. Nothing here is urgent enough
+		# to wait for: the next run picks up wherever that one leaves the region.
+		return
+
+
+def build_cluster(config: dict) -> None:
+	"""One step towards the region having a cluster that serves."""
 	cluster = auto_cluster()
 	if not cluster:
 		if not frappe.db.count("Object Storage Cluster"):
-			create_cluster()
+			create_cluster(config)
 
 		return
 
@@ -67,8 +82,18 @@ def validate_config(config: dict) -> None:
 	if not isinstance(config, dict):
 		frappe.throw(_("{0} must be an object.").format(CONFIG_KEY))
 
-	if not isinstance(config.get("storage_node_count"), int) or config["storage_node_count"] < 1:
-		frappe.throw(_("storage_node_count must be a whole number of at least 1."))
+	for count in ("storage_node_count", "replication_factor"):
+		if not isinstance(config.get(count), int) or config[count] < 1:
+			frappe.throw(_("{0} must be a whole number of at least 1.").format(count))
+
+	# A cluster needs a full copy's worth of storage nodes before it can be set up. Fewer and
+	# the machines would be rented, and every setup run would then refuse them.
+	if config["storage_node_count"] < config["replication_factor"]:
+		frappe.throw(
+			_("storage_node_count must be at least the replication_factor of {0}.").format(
+				config["replication_factor"]
+			)
+		)
 
 	for role in (GATEWAY, STORAGE):
 		size = config.get(role)
@@ -99,10 +124,19 @@ def auto_cluster() -> ObjectStorageCluster | None:
 	return frappe.get_doc("Object Storage Cluster", name) if name else None
 
 
-def create_cluster() -> ObjectStorageCluster:
+def create_cluster(config: dict) -> ObjectStorageCluster:
 	"""One cluster, on its defaults. Machines are asked for on the next run, so a failure
-	here leaves a record to carry on from rather than a rented machine with no owner."""
-	return frappe.get_doc({"doctype": "Object Storage Cluster", "auto_spawn": 1}).insert()
+	here leaves a record to carry on from rather than a rented machine with no owner.
+
+	The replication factor comes from the same config as the node count, so the two can
+	never disagree about how many storage nodes the cluster needs."""
+	return frappe.get_doc(
+		{
+			"doctype": "Object Storage Cluster",
+			"auto_spawn": 1,
+			"replication_factor": config["replication_factor"],
+		}
+	).insert()
 
 
 def missing_slots(cluster: ObjectStorageCluster, config: dict) -> list[Role]:
