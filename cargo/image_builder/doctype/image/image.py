@@ -277,6 +277,10 @@ def build_release(pilot_version: str) -> list[str]:
 			continue
 
 		image.build()
+		# The machine is rented now, so its id is committed before the next one is asked
+		# for. A later failure would otherwise roll back the record that holds the id and
+		# leave the machine running with nothing tracking it.
+		frappe.db.commit()
 		started.append(image.name)
 
 	return started
@@ -296,6 +300,11 @@ def retire_old_releases() -> None:
 	for name in stale:
 		image: Image = frappe.get_doc("Image", name)
 		image.retire()
+
+
+def on_doctype_update() -> None:
+	"""The pair is the identity, so the database holds it, not only `validate`."""
+	frappe.db.add_unique("Image", ["pilot_version", "frappe_version"], constraint_name="unique_image_pair")
 
 
 def tracked_pilot_versions() -> list[str]:
