@@ -9,7 +9,8 @@ from frappe.tests import IntegrationTestCase
 from cargo.image_builder.doctype.image.image import (
 	ADMIN_DOMAIN,
 	Image,
-	build_release,
+	build_image,
+	ensure_release,
 	retire_old_releases,
 	sync_pilot_releases,
 	tracked_pilot_versions,
@@ -71,13 +72,11 @@ class IntegrationTestImage(IntegrationTestCase):
 
 		atlas.from_settings.assert_not_called()
 
-	def test_a_release_becomes_one_image_per_frappe_version_and_builds_each(self):
+	def test_a_release_becomes_one_image_per_frappe_version(self):
 		version = self.release()
-		with patch.object(Image, "build") as build:
-			created = build_release(version)
+		waiting = ensure_release(version)
 
-		self.assertEqual(len(created), 2)
-		self.assertEqual(build.call_count, 2)
+		self.assertEqual(len(waiting), 2)
 		self.assertEqual(
 			sorted(frappe.get_all("Image", {"pilot_version": version}, pluck="frappe_version")),
 			["develop", "version-16"],
@@ -85,26 +84,40 @@ class IntegrationTestImage(IntegrationTestCase):
 
 	def test_a_release_whose_build_started_is_left_alone(self):
 		version = self.release()
-		with patch.object(Image, "build"):
-			build_release(version)
-
+		ensure_release(version)
 		frappe.db.set_value("Image", {"pilot_version": version}, "status", "Provisioning")
 
-		with patch.object(Image, "build") as build:
-			self.assertEqual(build_release(version), [])
-
-		build.assert_not_called()
+		self.assertEqual(ensure_release(version), [])
 
 	def test_an_image_whose_build_never_started_is_tried_again(self):
 		version = self.release()
 		self.image(version).db_set("status", "Draft")
 
-		with patch.object(Image, "build") as build:
-			started = build_release(version)
-
 		# The draft left behind, and the Frappe version that had no image yet.
-		self.assertEqual(len(started), 2)
-		self.assertEqual(build.call_count, 2)
+		self.assertEqual(len(ensure_release(version)), 2)
+
+	def test_each_image_is_built_in_a_job_of_its_own(self):
+		version = self.release()
+		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		with patch("cargo.image_builder.doctype.image.image.latest_pilot_release", return_value=version):
+			with patch("cargo.image_builder.doctype.image.image.frappe.enqueue") as enqueue:
+				sync_pilot_releases()
+
+		# Frappe enqueues its own work on insert, so only this app's jobs are counted.
+		calls = [call for call in enqueue.call_args_list if "build_image" in call.args[0]]
+		self.assertEqual(len(calls), 2)
+		self.assertTrue(all(call.kwargs["deduplicate"] for call in calls))
+
+	def test_a_queued_build_that_already_started_does_nothing(self):
+		image = self.image(self.release())
+		image.db_set("status", "Provisioning")
+
+		with patch.object(Image, "build") as build:
+			build_image(image.name)
+
+		build.assert_not_called()
 
 	def test_tracking_is_off_until_the_setting_turns_it_on(self):
 		with patch("cargo.image_builder.doctype.image.image.latest_pilot_release") as latest:
@@ -118,7 +131,7 @@ class IntegrationTestImage(IntegrationTestCase):
 		version = self.release()
 
 		with patch("cargo.image_builder.doctype.image.image.latest_pilot_release", return_value=version):
-			with patch.object(Image, "build"):
+			with patch("cargo.image_builder.doctype.image.image.frappe.enqueue"):
 				sync_pilot_releases()
 
 		self.assertEqual(frappe.db.count("Image", {"pilot_version": version}), 2)

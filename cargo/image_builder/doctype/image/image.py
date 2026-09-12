@@ -254,36 +254,54 @@ def sync_pilot_releases() -> None:
 	if not frappe.db.get_single_value("Cargo Settings", "track_pilot_releases"):
 		return
 
-	build_release(latest_pilot_release())
+	for name in ensure_release(latest_pilot_release()):
+		enqueue_build(name)
+
 	retire_old_releases()
 
 
-def build_release(pilot_version: str) -> list[str]:
-	"""Give this release one built image per Frappe version.
+def ensure_release(pilot_version: str) -> list[str]:
+	"""One record per Frappe version. Returns those still waiting for a machine.
 
 	A build that never started leaves the image in Draft, so the next run picks it up.
 	A Failed image is left alone, because retrying it hourly would rent a machine hourly."""
-	started = []
+	waiting = []
 	for frappe_version in FRAPPE_VERSIONS:
 		name = frappe.db.exists("Image", {"pilot_version": pilot_version, "frappe_version": frappe_version})
-		image: Image = (
-			frappe.get_doc("Image", name)
-			if name
-			else frappe.get_doc(
-				{"doctype": "Image", "pilot_version": pilot_version, "frappe_version": frappe_version}
-			).insert()
-		)
-		if image.status != "Draft":
-			continue
+		if not name:
+			name = (
+				frappe.get_doc(
+					{"doctype": "Image", "pilot_version": pilot_version, "frappe_version": frappe_version}
+				)
+				.insert()
+				.name
+			)
 
-		image.build()
-		# The machine is rented now, so its id is committed before the next one is asked
-		# for. A later failure would otherwise roll back the record that holds the id and
-		# leave the machine running with nothing tracking it.
-		frappe.db.commit()  # nosemgrep
-		started.append(image.name)
+		if frappe.db.get_value("Image", name, "status") == "Draft":
+			waiting.append(name)
 
-	return started
+	return waiting
+
+
+def enqueue_build(name: str) -> None:
+	"""One job per image, so each rented machine lands in a transaction of its own."""
+	frappe.enqueue(
+		"cargo.image_builder.doctype.image.image.build_image",
+		queue="short",
+		job_id=f"cargo||image||build||{name}",
+		deduplicate=True,
+		enqueue_after_commit=True,
+		name=name,
+	)
+
+
+def build_image(name: str) -> None:
+	"""Rent a machine for one image. Its own job, so one failure cannot undo another."""
+	image: Image = frappe.get_doc("Image", name)
+	if image.status != "Draft":
+		return
+
+	image.build()
 
 
 def retire_old_releases() -> None:
