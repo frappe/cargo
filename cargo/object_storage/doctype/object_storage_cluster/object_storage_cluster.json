@@ -12,6 +12,8 @@
   "health",
   "health_reason",
   "activated_on",
+  "auto_spawn",
+  "auto_setup_attempts",
   "error",
   "section_break_topology",
   "replication_factor",
@@ -48,12 +50,10 @@
    "label": "Cluster"
   },
   {
-   "default": "ubuntu-22.04",
-   "description": "Image every machine boots from.",
+   "description": "Image every machine boots from. Leave empty to use the system image Atlas serves.",
    "fieldname": "base_image",
    "fieldtype": "Data",
-   "label": "Base Image",
-   "reqd": 1
+   "label": "Base Image"
   },
   {
    "fieldname": "column_break_cluster",
@@ -94,6 +94,23 @@
    "fieldname": "activated_on",
    "fieldtype": "Datetime",
    "label": "Activated On",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Cargo created this cluster and keeps it moving. A cluster added by hand is never advanced on its own.",
+   "fieldname": "auto_spawn",
+   "fieldtype": "Check",
+   "label": "Auto Spawn",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "auto_spawn",
+   "description": "Setup runs Cargo started by itself. It stops trying once the budget is spent, and clears when the cluster serves.",
+   "fieldname": "auto_setup_attempts",
+   "fieldtype": "Int",
+   "label": "Auto Setup Attempts",
    "read_only": 1
   },
   {
@@ -298,7 +315,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-11 18:03:58.770150",
+ "modified": "2026-09-12 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

@@ -4,12 +4,9 @@ from collections.abc import Callable
 
 import frappe
 
-from cargo.atlas_client import AtlasClient
+from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.ssh import SshError, run_over_ssh, script
 
-# Atlas names an image by a generated id, so the one to bake on is found by what it holds.
-BASE_OPERATING_SYSTEM = "Ubuntu"
-BASE_OPERATING_SYSTEM_VERSION = "24.04"
 # Atlas records the snapshotted machine's shape as the warm-start template, so this is the
 # shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
 # on its own, which is why the provision script runs on temporary swap.
@@ -100,17 +97,8 @@ class Builder:
 
 	def provision_build_machine(self, public_key: str) -> str:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
-		client = self.client
-		image_id = client.find_system_image(BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION)
-		if not image_id:
-			frappe.throw(
-				frappe._("Atlas has no available {0} {1} system image to build on.").format(
-					BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION
-				)
-			)
-
-		return client.create_vm(
-			image_id=image_id,
+		return self.client.create_vm(
+			image_id=base_image_id(),
 			vcpus=BUILD_VCPUS,
 			memory_mib=BUILD_MEMORY_MIB,
 			disk_mib=BUILD_DISK_MIB,

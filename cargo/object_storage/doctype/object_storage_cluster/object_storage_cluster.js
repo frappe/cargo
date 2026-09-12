@@ -3,6 +3,11 @@
 
 const HEALTH_COLORS = { Healthy: "green", Degraded: "orange", Critical: "red", Unknown: "gray" };
 
+// Only Draft: the other three read the same whoever built the cluster.
+const AUTO_HEADLINES = {
+	Draft: __("Cargo is asking Atlas for this cluster's machines, and sets it up once they boot."),
+};
+
 const HEADLINES = {
 	Draft: __("Add a gateway and its storage nodes. Each one is asked for as you add it."),
 	"Setting Up": __("Installing Garage on the machines. Follow the Setup Log below."),
@@ -29,7 +34,9 @@ frappe.ui.form.on("Object Storage Cluster", {
 // Cargo is doing. Health is what users get from the cluster, so it reads as a sentence
 // underneath rather than as a second, competing status pill.
 function set_headline(frm) {
-	const guidance = HEADLINES[frm.doc.status];
+	// A cluster Cargo made is not one the operator adds machines to, so it reads differently.
+	const guidance =
+		(frm.doc.auto_spawn && AUTO_HEADLINES[frm.doc.status]) || HEADLINES[frm.doc.status];
 	const health = frm.doc.health;
 	if (!HEALTH_COLORS[health] || health === "Unknown") {
 		if (guidance) frm.dashboard.set_headline(guidance);
