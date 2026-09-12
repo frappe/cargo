@@ -83,11 +83,28 @@ class IntegrationTestImage(IntegrationTestCase):
 			["develop", "version-16"],
 		)
 
-	def test_a_release_already_built_is_left_alone(self):
+	def test_a_release_whose_build_started_is_left_alone(self):
 		version = self.release()
 		with patch.object(Image, "build"):
 			build_release(version)
+
+		frappe.db.set_value("Image", {"pilot_version": version}, "status", "Provisioning")
+
+		with patch.object(Image, "build") as build:
 			self.assertEqual(build_release(version), [])
+
+		build.assert_not_called()
+
+	def test_an_image_whose_build_never_started_is_tried_again(self):
+		version = self.release()
+		self.image(version).db_set("status", "Draft")
+
+		with patch.object(Image, "build") as build:
+			started = build_release(version)
+
+		# The draft left behind, and the Frappe version that had no image yet.
+		self.assertEqual(len(started), 2)
+		self.assertEqual(build.call_count, 2)
 
 	def test_tracking_is_off_until_the_setting_turns_it_on(self):
 		with patch("cargo.image_builder.doctype.image.image.latest_pilot_release") as latest:

@@ -259,19 +259,27 @@ def sync_pilot_releases() -> None:
 
 
 def build_release(pilot_version: str) -> list[str]:
-	"""One image per Frappe version, built as soon as it is created."""
-	created = []
+	"""Give this release one built image per Frappe version.
+
+	A build that never started leaves the image in Draft, so the next run picks it up.
+	A Failed image is left alone, because retrying it hourly would rent a machine hourly."""
+	started = []
 	for frappe_version in FRAPPE_VERSIONS:
-		if frappe.db.exists("Image", {"pilot_version": pilot_version, "frappe_version": frappe_version}):
+		name = frappe.db.exists("Image", {"pilot_version": pilot_version, "frappe_version": frappe_version})
+		image: Image = (
+			frappe.get_doc("Image", name)
+			if name
+			else frappe.get_doc(
+				{"doctype": "Image", "pilot_version": pilot_version, "frappe_version": frappe_version}
+			).insert()
+		)
+		if image.status != "Draft":
 			continue
 
-		image: Image = frappe.get_doc(
-			{"doctype": "Image", "pilot_version": pilot_version, "frappe_version": frappe_version}
-		).insert()
 		image.build()
-		created.append(image.name)
+		started.append(image.name)
 
-	return created
+	return started
 
 
 def retire_old_releases() -> None:
