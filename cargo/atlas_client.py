@@ -142,16 +142,24 @@ class AtlasClient:
 
 		Atlas names an image by a generated id, so the one to build on is found by what
 		it holds. The route returns enabled images only."""
-		page = self.call("GET", f"/images?image_type=system&limit={IMAGE_PAGE_LIMIT}")
-		for image in page.get("items", []):
-			if (
-				image.get("operating_system") == operating_system
-				and image.get("operating_system_version") == version
-				and image.get("status") == "available"
-			):
-				return image["id"]
+		offset = 0
+		while True:
+			page = self.call("GET", f"/images?image_type=system&offset={offset}&limit={IMAGE_PAGE_LIMIT}")
+			items = page.get("items") or []
+			for image in items:
+				if (
+					image.get("operating_system") == operating_system
+					and image.get("operating_system_version") == version
+					and image.get("status") == "available"
+				):
+					return image["id"]
 
-		return None
+			# An empty page ends the walk whatever `has_more` says, so a wrong flag
+			# cannot spin here forever.
+			if not items or not page.get("has_more"):
+				return None
+
+			offset += len(items)
 
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""

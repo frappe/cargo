@@ -122,7 +122,42 @@ class UnitTestAtlasClient(UnitTestCase):
 			self.assertIsNone(self.client.find_system_image("Ubuntu", "24.04"))
 
 	def test_no_system_image_at_all_is_not_an_error(self):
-		with self.call(response(200, {"items": []})):
+		with self.call(response(200, {"items": [], "has_more": False})):
+			self.assertIsNone(self.client.find_system_image("Ubuntu", "24.04"))
+
+	def test_the_lookup_walks_past_the_first_page(self):
+		first = {
+			"items": [
+				{
+					"id": "img-1",
+					"operating_system": "Ubuntu",
+					"operating_system_version": "22.04",
+					"status": "available",
+				}
+			],
+			"has_more": True,
+		}
+		second = {
+			"items": [
+				{
+					"id": "img-2",
+					"operating_system": "Ubuntu",
+					"operating_system_version": "24.04",
+					"status": "available",
+				}
+			],
+			"has_more": False,
+		}
+		with patch(
+			"cargo.atlas_client.requests.request",
+			side_effect=[response(200, first), response(200, second)],
+		) as request:
+			self.assertEqual(self.client.find_system_image("Ubuntu", "24.04"), "img-2")
+
+		self.assertIn("offset=1", request.call_args.args[1])
+
+	def test_an_empty_page_ends_the_walk_even_when_more_is_claimed(self):
+		with self.call(response(200, {"items": [], "has_more": True})):
 			self.assertIsNone(self.client.find_system_image("Ubuntu", "24.04"))
 
 	def test_a_missing_machine_is_its_own_error(self):
