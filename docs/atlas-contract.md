@@ -96,6 +96,15 @@ shape resumes from memory instead of booting. Atlas accepts both from tenant `0`
 Cargo terminates the machine straight afterwards, so the snapshot must not depend on it
 surviving.
 
+## Finding the base image — `GET /images?image_type=system`
+
+Cargo bakes on the Ubuntu System image. Atlas names an image by a generated id, so Cargo
+reads the enabled System images and takes the one whose `operating_system` and
+`operating_system_version` match, and whose `status` is `available`.
+
+A build stops with a clear error when no such image exists, rather than asking Atlas for a
+machine that cannot boot.
+
 ## Checking on a snapshot — `GET /images/{id}`
 
 The image as Atlas sees it, so Cargo can tell when it is bootable.

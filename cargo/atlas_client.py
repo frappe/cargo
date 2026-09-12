@@ -13,6 +13,8 @@ API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
+# The most a list route returns in one page.
+IMAGE_PAGE_LIMIT = 100
 # Reaches the mesh and the internet, without a public address of its own.
 EGRESS = "uplink"
 
@@ -134,6 +136,22 @@ class AtlasClient:
 	def delete_snapshot(self, image_id: str) -> None:
 		"""Retire an image. Atlas archives one a machine still uses and reclaims it later."""
 		self.call("DELETE", f"/images/{image_id}")
+
+	def find_system_image(self, operating_system: str, version: str) -> str | None:
+		"""The id of the System image for this operating system, or None.
+
+		Atlas names an image by a generated id, so the one to build on is found by what
+		it holds. The route returns enabled images only."""
+		page = self.call("GET", f"/images?image_type=system&limit={IMAGE_PAGE_LIMIT}")
+		for image in page.get("items", []):
+			if (
+				image.get("operating_system") == operating_system
+				and image.get("operating_system_version") == version
+				and image.get("status") == "available"
+			):
+				return image["id"]
+
+		return None
 
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""

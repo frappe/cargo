@@ -84,6 +84,47 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertFalse(body["cache_image"])
 		self.assertFalse(body["memory_snapshot"])
 
+	def test_the_system_image_is_found_by_its_operating_system(self):
+		payload = {
+			"items": [
+				{
+					"id": "img-old",
+					"operating_system": "Ubuntu",
+					"operating_system_version": "22.04",
+					"status": "available",
+				},
+				{
+					"id": "0p0ap0f857",
+					"operating_system": "Ubuntu",
+					"operating_system_version": "24.04",
+					"status": "available",
+				},
+			]
+		}
+		with self.call(response(200, payload)) as request:
+			found = self.client.find_system_image("Ubuntu", "24.04")
+
+		self.assertEqual(found, "0p0ap0f857")
+		self.assertIn("image_type=system", request.call_args.args[1])
+
+	def test_an_image_that_is_not_available_yet_is_not_offered(self):
+		payload = {
+			"items": [
+				{
+					"id": "img-1",
+					"operating_system": "Ubuntu",
+					"operating_system_version": "24.04",
+					"status": "pending",
+				}
+			]
+		}
+		with self.call(response(200, payload)):
+			self.assertIsNone(self.client.find_system_image("Ubuntu", "24.04"))
+
+	def test_no_system_image_at_all_is_not_an_error(self):
+		with self.call(response(200, {"items": []})):
+			self.assertIsNone(self.client.find_system_image("Ubuntu", "24.04"))
+
 	def test_a_missing_machine_is_its_own_error(self):
 		with self.call(response(404, {"error": {"code": "not_found", "message": "gone"}})):
 			with self.assertRaises(AtlasNotFound):
