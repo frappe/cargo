@@ -70,6 +70,13 @@ class IntegrationTestBuilder(IntegrationTestCase):
 				with self.assertRaises(frappe.ValidationError):
 					self.builder.wait_until_reachable("fdaa:1::1d", "key")
 
+	def test_a_baked_machine_is_flushed_before_it_is_photographed(self):
+		"""Atlas snapshots a paused disk, so what is only in the page cache is lost."""
+		with patch("cargo.image_builder.builder.run_over_ssh") as run:
+			self.builder.flush_build_machine("fdaa:1::1d", "key")
+
+		self.assertEqual(run.call_args.args[1], "sync")
+
 	def test_a_built_image_is_snapshotted_as_a_system_image(self):
 		client = Mock()
 		with patch.object(Builder, "client", new=property(lambda _: client)):

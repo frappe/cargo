@@ -22,6 +22,7 @@ PING_INTERVAL = 2
 SSH_READY_TIMEOUT = 180
 SSH_READY_INTERVAL = 5
 SSH_PROBE_TIMEOUT = 15
+FLUSH_TIMEOUT = 300
 
 
 class Builder:
@@ -94,6 +95,11 @@ class Builder:
 			timeout=PROVISION_TIMEOUT,
 			on_output=on_output,
 		)
+
+	def flush_build_machine(self, address: str, private_key: str) -> None:
+		"""Write the page cache out. Atlas photographs a paused disk, and pausing flushes
+		nothing, so unwritten files land in the image empty."""
+		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
 
 	def provision_build_machine(self, public_key: str) -> str:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
