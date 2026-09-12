@@ -74,13 +74,22 @@ class UnitTestAtlasClient(UnitTestCase):
 
 		self.assertEqual(created, "img-4")
 		body = request.call_args.kwargs["json"]
-		self.assertEqual(body, {"title": "pilot golden", "cache_image": True, "memory_snapshot": True})
+		self.assertEqual(
+			body,
+			{
+				"title": "pilot golden",
+				"image_type": "machine",
+				"cache_image": True,
+				"memory_snapshot": True,
+			},
+		)
 
 	def test_a_snapshot_asks_for_neither_host_flag_by_default(self):
 		with self.call(response(201, {"id": "img-5"})) as request:
 			self.client.create_snapshot("vm-1", "plain")
 
 		body = request.call_args.kwargs["json"]
+		self.assertEqual(body["image_type"], "machine")
 		self.assertFalse(body["cache_image"])
 		self.assertFalse(body["memory_snapshot"])
 
