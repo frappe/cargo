@@ -153,10 +153,3 @@ rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
 journalctl --vacuum-size=10M > /dev/null 2>&1 || true
-
-# The identity of the machine that baked the image, which every clone would otherwise
-# share. systemd writes a new machine ID at boot, and sshd makes new host keys. The
-# authorized key is not here to remove: Atlas serves it from instance metadata.
-truncate -s 0 /etc/machine-id
-rm -f /etc/ssh/ssh_host_*
-sync
