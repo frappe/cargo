@@ -5,13 +5,20 @@ import frappe
 from frappe.utils import now_datetime
 
 from cargo.atlas_client import DEAD_STATES, RUNNING_STATE, AtlasClient, AtlasNotFound
-from cargo.image_builder.builder import Builder
+from cargo.image_builder.builder import (
+	PING_TIMEOUT,
+	PROVISION_TIMEOUT,
+	SSH_READY_TIMEOUT,
+	Builder,
+)
 from cargo.image_builder.releases import latest_pilot_release
 from cargo.ssh import OutputLog, create_keypair
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
-BUILD_TIMEOUT = 3600
+# The task holds the wait for the machine as well as the script it then runs, so a slow
+# boot cannot eat into the time the script is allowed.
+BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 SNAPSHOT_TIMEOUT = 1800
 # Every image carries the same bench and site. Both are reached through a hostname alias,
 # so neither has to be unique or to resolve anywhere.
