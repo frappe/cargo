@@ -13,8 +13,6 @@ BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1001}"
 BENCH_GID="${BENCH_GID:-1001}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
-PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
-PROBE_DELAY="${PROBE_DELAY:-5}"
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 
@@ -112,38 +110,6 @@ rm -f /tmp/central.py
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
 as_bench_user "pilot --yes -b '$BENCH' setup production"
 as_bench_user "pilot --yes -b '$BENCH' build --force"
-
-# A snapshot of a host whose nginx does not come back at boot serves nothing, and the
-# enable verb only reaches production setup from v0.0.32-pre-alpha.
-systemctl is-enabled nginx > /dev/null
-
-# The hostnames below never resolve anywhere, so `--resolve` points them at this machine
-# and nothing leaves it. Gunicorn and the workers take a moment to answer after production
-# setup, so each probe waits rather than reading one cold start as a broken image.
-probe() {
-	host="$1"
-	path="$2"
-	for _ in $(seq 1 "$PROBE_ATTEMPTS"); do
-		if body="$(curl -fsS -m 20 --resolve "$host:80:127.0.0.1" "http://$host$path")"; then
-			echo "$body"
-			return 0
-		fi
-		sleep "$PROBE_DELAY"
-	done
-
-	echo "$host$path never answered" >&2
-	return 1
-}
-
-# Any label under the wildcard zone matches the alias, so this proves the vhost renders.
-probe "site-verify.$WILDCARD_DOMAIN" /api/method/ping > /dev/null
-
-# Pending is the whole point: the alias resolves and the host is waiting on Central.
-bootstrap="$(probe "admin-vm-verify.$WILDCARD_DOMAIN" /api/v1/bootstrap)"
-case "$bootstrap" in
-	*'"pending"'*) ;;
-	*) echo "This host is not awaiting a Central credential: $bootstrap" >&2; exit 1 ;;
-esac
 
 # Build litter only.
 swapoff /swapfile

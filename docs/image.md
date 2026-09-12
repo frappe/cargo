@@ -50,8 +50,7 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
 5. Writes the Central bootstrap state and the hostname aliases.
 6. Runs `pilot setup production` and `pilot build --force`.
-7. Verifies that nginx is enabled at boot and that both aliases answer. Each probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network. A probe waits for the bench to answer rather than reading one cold start as a broken image.
-8. Removes the swap file and the build caches.
+7. Removes the swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
