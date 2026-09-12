@@ -109,7 +109,13 @@ class Builder:
 	def snapshot_build_machine(self, vm_id: str) -> str:
 		"""Photograph the baked machine. This is the image. Both flags are what lets a host
 		cache the artifacts and build a warm template, so a tenant VM starts from memory."""
-		return self.client.create_snapshot(vm_id, self.atlas_name, cache_image=True, memory_snapshot=True)
+		return self.client.create_snapshot(
+			vm_id,
+			self.atlas_name,
+			image_type="system",
+			cache_image=True,
+			memory_snapshot=True,
+		)
 
 	def destroy_build_machine(self, vm_id: str) -> bool:
 		"""Best effort: a machine left running after a failed bake still costs money."""

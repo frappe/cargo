@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import frappe
 import requests
@@ -123,13 +123,24 @@ class AtlasClient:
 		self.call("DELETE", f"/virtual-machines/{vm_id}")
 
 	def create_snapshot(
-		self, vm_id: str, title: str, *, cache_image: bool = False, memory_snapshot: bool = False
+		self,
+		vm_id: str,
+		title: str,
+		*,
+		image_type: Literal["machine", "system"] = "machine",
+		cache_image: bool = False,
+		memory_snapshot: bool = False,
 	) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""
 		created = self.call(
 			"POST",
 			f"/virtual-machines/{vm_id}/actions/snapshot",
-			{"title": title, "cache_image": cache_image, "memory_snapshot": memory_snapshot},
+			{
+				"title": title,
+				"image_type": image_type,
+				"cache_image": cache_image,
+				"memory_snapshot": memory_snapshot,
+			},
 		)
 		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_snapshot returned no id: {created!r}")

@@ -69,3 +69,16 @@ class IntegrationTestBuilder(IntegrationTestCase):
 			with patch.object(Builder, "is_accepting_ssh", return_value=False):
 				with self.assertRaises(frappe.ValidationError):
 					self.builder.wait_until_reachable("fdaa:1::1d", "key")
+
+	def test_a_built_image_is_snapshotted_as_a_system_image(self):
+		client = Mock()
+		with patch.object(Builder, "client", new=property(lambda _: client)):
+			self.builder.snapshot_build_machine("vm-1")
+
+		client.create_snapshot.assert_called_once_with(
+			"vm-1",
+			"IMG-0001-version-16",
+			image_type="system",
+			cache_image=True,
+			memory_snapshot=True,
+		)
