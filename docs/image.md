@@ -6,7 +6,9 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`. Every image carries a site.
+An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`.
+
+Every image carries the same bench `golden` and the same site `site1.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
 One pair is one image, so a Pilot release has two images.
 
@@ -42,10 +44,10 @@ A failed build records the failing step, destroys the build machine, and sets th
 4. Creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
 5. Writes the Central bootstrap state and the hostname aliases.
 6. Runs `pilot setup production` and `pilot build --force`.
-7. Verifies that nginx is enabled at boot and that both aliases answer.
+7. Verifies that nginx is enabled at boot and that both aliases answer. Each probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network. A probe waits for the bench to answer rather than reading one cold start as a broken image.
 8. Removes the swap file and the build caches.
 
-Cargo wipes the machine identity after the script ends, so the snapshot carries no machine ID, no host keys, and no authorized key.
+Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
 ## Auto bootstrapping
 

@@ -16,13 +16,6 @@ BUILD_MEMORY_MIB = 1024
 BUILD_DISK_MIB = 8 * 1024
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
-# Atlas will be responsible for placing machine's identity on boot from snapshot.
-WIPE_IDENTITY = """
-set -e
-truncate -s 0 /etc/machine-id
-rm -f /root/.ssh/authorized_keys /etc/ssh/ssh_host_*
-sync
-"""
 
 
 class Builder:
@@ -34,10 +27,6 @@ class Builder:
 	@property
 	def client(self) -> AtlasClient:
 		return AtlasClient.from_settings()
-
-	def wipe_machine_identity(self, address: str, private_key: str) -> str:
-		"""Take the build key and this machine's identity off the disk. Runs last."""
-		return run_over_ssh(address, WIPE_IDENTITY, private_key, timeout=PROVISION_TIMEOUT)
 
 	def run_provision_script_on_build_machine(
 		self,

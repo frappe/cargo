@@ -13,9 +13,6 @@
   "column_break_identity",
   "status",
   "error",
-  "section_break_contents",
-  "bench_name",
-  "site_name",
   "section_break_artifact",
   "snapshot_id",
   "built_at",
@@ -25,8 +22,7 @@
   "temporary_vm_id",
   "ssh_public_key",
   "column_break_build",
-  "ssh_private_key",
-  "admin_password"
+  "ssh_private_key"
  ],
  "fields": [
   {
@@ -76,25 +72,6 @@
    "fieldtype": "Long Text",
    "label": "Error",
    "max_height": "16rem",
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_break_contents",
-   "fieldtype": "Section Break",
-   "label": "Contents"
-  },
-  {
-   "description": "The bench inside this image.",
-   "fieldname": "bench_name",
-   "fieldtype": "Data",
-   "label": "Bench",
-   "read_only": 1
-  },
-  {
-   "description": "The site inside this image.",
-   "fieldname": "site_name",
-   "fieldtype": "Data",
-   "label": "Site",
    "read_only": 1
   },
   {
@@ -156,13 +133,6 @@
    "fieldname": "ssh_private_key",
    "fieldtype": "Password",
    "label": "SSH Private Key",
-   "read_only": 1
-  },
-  {
-   "description": "The Administrator password of the site baked into this image.",
-   "fieldname": "admin_password",
-   "fieldtype": "Password",
-   "label": "Site Admin Password",
    "read_only": 1
   }
  ],
