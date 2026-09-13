@@ -12,6 +12,9 @@ export DEBIAN_FRONTEND=noninteractive
 BENCH="default-bench"
 SITE="site.local"
 ADMIN_DOMAIN="admin.local"
+PREWARM_SCRIPT="/usr/local/lib/pilot/prewarm-frappe.sh"
+PREWARM_UNIT="/etc/systemd/system/pilot-prewarm.service"
+PREWARM_MARKER="/var/lib/pilot/prewarm-pending"
 
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1000}"
@@ -96,6 +99,118 @@ probe_site
 # Last: this hands the host to Central, and the pending screen then replaces the site
 # probed above. It rewrites nginx itself now that production is up.
 as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern 'site-*.$WILDCARD_DOMAIN'"
+
+# Atlas boots a separate guest for five minutes before it captures the warm image. The
+# Central pending screen would intercept nginx during that boot, so warm the Frappe web
+# worker through its loopback upstream instead. The authenticated warmup logs out before
+# capture, so its Administrator session is not shared by warm-started machines.
+install -d -m 755 "$(dirname "$PREWARM_SCRIPT")"
+cat > "$PREWARM_SCRIPT" <<PREWARM_SCRIPT
+#!/bin/bash
+set -u
+
+site="$SITE"
+upstream="http://127.0.0.1:8000"
+bench_user="$BENCH_USER"
+marker="$PREWARM_MARKER"
+attempts=12
+delay=5
+
+if [ ! -e "\$marker" ]; then
+	exit 0
+fi
+
+# The password never reaches disk. The marker makes this a one-time action: Atlas captures
+# its removal with the warm guest, so resumed tenants do not reset Administrator on boot.
+password="\$(head -c 24 /dev/urandom | base64 | tr -d '\\n')aA1#"
+
+set_temporary_password() {
+	su - "\$bench_user" -c "pilot --site '\$site' set-password Administrator '\$password'"
+}
+
+request() {
+	local path="\$1"
+	local expected="\$2"
+	local body status
+	body="\$(mktemp)"
+	status="\$(curl -sS -m 10 -o "\$body" -w '%{http_code}' -H "Host: \$site" "\$upstream\$path" || true)"
+
+	case "\$expected" in
+	pong)
+		[ "\$status" = "200" ] && grep -q pong "\$body"
+		;;
+	ok)
+		[ "\$status" = "200" ]
+		;;
+	esac
+	local result=\$?
+	rm -f "\$body"
+	return "\$result"
+}
+
+login_and_warm_desk() {
+	local body cookies status result
+	body="\$(mktemp)"
+	cookies="\$(mktemp)"
+	result=1
+	status="\$(curl -sS -m 10 -o "\$body" -c "\$cookies" -w '%{http_code}' -X POST \\
+		-H 'Content-Type: application/json' -H 'Accept: application/json' \\
+		--data "{\\\"usr\\\":\\\"Administrator\\\",\\\"pwd\\\":\\\"\$password\\\"}" \\
+		"\$upstream/api/method/login" || true)"
+	if [ "\$status" = "200" ] && grep -q 'Logged In' "\$body"; then
+		status="\$(curl -sS -m 10 -o "\$body" -b "\$cookies" -w '%{http_code}' -H "Host: \$site" "\$upstream/desk" || true)"
+		[ "\$status" = "200" ] && result=0
+	fi
+	curl -sS -m 10 -o /dev/null -b "\$cookies" -X POST -H "Host: \$site" "\$upstream/api/method/logout" || true
+	rm -f "\$body" "\$cookies"
+	return "\$result"
+}
+
+password_is_set=false
+for _ in \$(seq 1 "\$attempts"); do
+	if [ "\$password_is_set" = false ]; then
+		if ! set_temporary_password; then
+			sleep "\$delay"
+			continue
+		fi
+		rm -f "\$marker"
+		sync
+		password_is_set=true
+	fi
+
+	if request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk; then
+		logger -t pilot-prewarm "Frappe is warm"
+		exit 0
+	fi
+	sleep "\$delay"
+done
+
+logger -t pilot-prewarm "Frappe did not warm before the deadline"
+exit 0
+PREWARM_SCRIPT
+chmod 755 "$PREWARM_SCRIPT"
+install -d -m 755 "$(dirname "$PREWARM_MARKER")"
+install -m 600 /dev/null "$PREWARM_MARKER"
+
+cat > "$PREWARM_UNIT" <<PREWARM_UNIT
+[Unit]
+Description=Warm Frappe before an Atlas memory snapshot
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$PREWARM_SCRIPT
+TimeoutStartSec=4min
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+PREWARM_UNIT
+
+systemctl daemon-reload
+systemctl enable --quiet "$(basename "$PREWARM_UNIT")"
 
 # Build litter only.
 swapoff /swapfile
