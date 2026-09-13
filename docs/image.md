@@ -51,7 +51,8 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 5. Runs `pilot setup production`.
 6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. It comes last because it puts the host in the awaiting-bootstrap state, where the pending screen replaces the site the step above probes.
-8. Removes the swap file and the build caches.
+8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. A failed prewarm is logged and never prevents a normal boot.
+9. Removes the swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
@@ -97,5 +98,7 @@ While tracking is off, nothing is created and nothing is retired.
 Cargo snapshots with `cache_image` and `memory_snapshot`. Atlas accepts both from tenant 0 only.
 
 `cache_image` tells every host in the region to download the artifacts ahead of the first boot. `memory_snapshot` records the build machine's shape at Atlas as the warm-start template, so a tenant VM of that shape starts from memory instead of a cold boot.
+
+Before it captures that template, Atlas boots a temporary guest for about five minutes. The image's `pilot-prewarm.service` uses that period to load Frappe in the web worker. It calls the loopback upstream rather than nginx because a newly baked image is awaiting Central bootstrap and nginx serves the pending screen in that state.
 
 Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_VCPUS`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.
