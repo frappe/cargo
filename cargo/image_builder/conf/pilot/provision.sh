@@ -100,6 +100,11 @@ probe_site
 # probed above. It rewrites nginx itself now that production is up.
 as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern 'site-*.$WILDCARD_DOMAIN'"
 
+# The admin API answers on its own Gunicorn bind. The prewarm reaches it there, past nginx,
+# for the same reason it reaches the site on the loopback upstream.
+ADMIN_UPSTREAM="http://$(sed -n 's/^bind = "\(.*\)"$/\1/p' "/home/$BENCH_USER/pilot/benches/$BENCH/config/admin-gunicorn.conf.py")"
+[ "$ADMIN_UPSTREAM" != "http://" ]
+
 # Atlas boots a separate guest for five minutes before it captures the warm image. The
 # Central pending screen would intercept nginx during that boot, so warm the Frappe web
 # worker through its loopback upstream instead. The authenticated warmup logs out before
@@ -110,7 +115,9 @@ cat > "$PREWARM_SCRIPT" <<PREWARM_SCRIPT
 set -u
 
 site="$SITE"
+bench="$BENCH"
 upstream="http://127.0.0.1:8000"
+admin="$ADMIN_UPSTREAM"
 bench_user="$BENCH_USER"
 marker="$PREWARM_MARKER"
 attempts=12
@@ -166,6 +173,24 @@ login_and_warm_desk() {
 	return "\$result"
 }
 
+# The admin is socket activated, so the first caller after boot pays its whole import.
+# Warming it here leaves it started in the snapshot. The open probe starts the worker; a
+# throwaway site token then warms the authenticated read path, which is what a caller
+# reaches for first. That token carries no jti, so it registers no session and the mint
+# leaves nothing behind.
+warm_admin() {
+	local status token
+	status="\$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "\$admin/api/v1/auth/session" || true)"
+	[ "\$status" = "200" ] || return 1
+
+	token="\$(su - "\$bench_user" -c "pilot -b '\$bench' admin issue-site-token '\$site' --ttl 60" | tail -n 1)"
+	[ -n "\$token" ] || return 1
+
+	status="\$(curl -sS -m 30 -o /dev/null -w '%{http_code}' \\
+		-H "Authorization: Bearer \$token" "\$admin/api/v1/sites/\$site" || true)"
+	[ "\$status" = "200" ]
+}
+
 password_is_set=false
 for _ in \$(seq 1 "\$attempts"); do
 	if [ "\$password_is_set" = false ]; then
@@ -178,7 +203,8 @@ for _ in \$(seq 1 "\$attempts"); do
 		password_is_set=true
 	fi
 
-	if request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk; then
+	if request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk &&
+		warm_admin; then
 		logger -t pilot-prewarm "Frappe is warm"
 		exit 0
 	fi
