@@ -161,8 +161,8 @@ login_and_warm_desk() {
 	cookies="\$(mktemp)"
 	result=1
 	status="\$(curl -sS -m 10 -o "\$body" -c "\$cookies" -w '%{http_code}' -X POST \\
-		-H 'Content-Type: application/json' -H 'Accept: application/json' \\
-		--data "{\\\"usr\\\":\\\"Administrator\\\",\\\"pwd\\\":\\\"\$password\\\"}" \\
+		-H 'Content-Type: application/json' -H 'Accept: application/json' -H "Host: \$site" \\
+		--data "{\\"usr\\":\\"Administrator\\",\\"pwd\\":\\"\$password\\"}" \\
 		"\$upstream/api/method/login" || true)"
 	if [ "\$status" = "200" ] && grep -q 'Logged In' "\$body"; then
 		status="\$(curl -sS -m 10 -o "\$body" -b "\$cookies" -w '%{http_code}' -H "Host: \$site" "\$upstream/desk" || true)"
