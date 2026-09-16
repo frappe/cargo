@@ -39,9 +39,7 @@ class UnitTestCommands(UnitTestCase):
 		with patch("cargo.commands.frappe") as frappe:
 			set_pilot_release_tracking(context, enabled=False)
 
-		frappe.db.set_single_value.assert_called_once_with(
-			"Cargo Settings", "track_pilot_releases", False
-		)
+		frappe.db.set_single_value.assert_called_once_with("Cargo Settings", "track_pilot_releases", False)
 
 	def test_release_tracking_requires_a_site(self):
 		with self.assertRaises(SiteNotSpecifiedError):
