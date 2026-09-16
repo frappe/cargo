@@ -13,9 +13,10 @@ API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
-# Atlas names an image by a generated id, so the one to boot on is found by what it holds.
-BASE_OPERATING_SYSTEM = "Ubuntu"
-BASE_OPERATING_SYSTEM_VERSION = "24.04"
+# Atlas names an image by a generated id, so the one to boot on is found by its tags.
+BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
+# A Pilot image bakes on the base image, so it carries the same operating system.
+PILOT_IMAGE_OS_TAGS = {key: BASE_IMAGE_TAGS[key] for key in ("os", "os_version")}
 # The most a list route returns in one page.
 IMAGE_PAGE_LIMIT = 100
 # Reaches the mesh and the internet, without a public address of its own.
@@ -130,6 +131,7 @@ class AtlasClient:
 		image_type: Literal["machine", "system"] = "machine",
 		cache_image: bool = False,
 		memory_snapshot: bool = False,
+		tags: dict[str, str] | None = None,
 	) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""
 		created = self.call(
@@ -140,6 +142,7 @@ class AtlasClient:
 				"image_type": image_type,
 				"cache_image": cache_image,
 				"memory_snapshot": memory_snapshot,
+				"tags": tags or {},
 			},
 		)
 		if not isinstance(created, dict) or not created.get("id"):
@@ -151,29 +154,19 @@ class AtlasClient:
 		"""Retire an image. Atlas archives one a machine still uses and reclaims it later."""
 		self.call("DELETE", f"/images/{image_id}")
 
-	def find_system_image(self, operating_system: str, version: str) -> str | None:
-		"""The id of the System image for this operating system, or None.
+	def find_system_image(self, tags: dict[str, str]) -> str | None:
+		"""The id of the newest available System image carrying every tag, or None.
 
-		Atlas names an image by a generated id, so the one to build on is found by what
-		it holds. The route returns enabled images only."""
-		offset = 0
-		while True:
-			page = self.call("GET", f"/images?image_type=system&offset={offset}&limit={IMAGE_PAGE_LIMIT}")
-			items = page.get("items") or []
-			for image in items:
-				if (
-					image.get("operating_system") == operating_system
-					and image.get("operating_system_version") == version
-					and image.get("status") == "available"
-				):
-					return image["id"]
+		Atlas names an image by a generated id, so the one to build on is found by its
+		tags. Atlas matches the tags and returns enabled images newest first, so one
+		page holds every candidate."""
+		tag_filter = ",".join(f"{key}:{value}" for key, value in tags.items())
+		page = self.call("GET", f"/images?image_type=system&tag={tag_filter}&limit={IMAGE_PAGE_LIMIT}")
+		for image in page.get("items") or []:
+			if image.get("status") == "available":
+				return image["id"]
 
-			# An empty page ends the walk whatever `has_more` says, so a wrong flag
-			# cannot spin here forever.
-			if not items or not page.get("has_more"):
-				return None
-
-			offset += len(items)
+		return None
 
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""
@@ -182,13 +175,11 @@ class AtlasClient:
 
 def base_image_id() -> str:
 	"""The system image every Cargo machine boots on. Throws when Atlas has none."""
-	image_id = AtlasClient.from_settings().find_system_image(
-		BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION
-	)
+	image_id = AtlasClient.from_settings().find_system_image(BASE_IMAGE_TAGS)
 	if not image_id:
 		frappe.throw(
-			frappe._("Atlas has no available {0} {1} system image.").format(
-				BASE_OPERATING_SYSTEM, BASE_OPERATING_SYSTEM_VERSION
+			frappe._("Atlas has no available system image tagged {0}.").format(
+				", ".join(f"{key}:{value}" for key, value in BASE_IMAGE_TAGS.items())
 			)
 		)
 

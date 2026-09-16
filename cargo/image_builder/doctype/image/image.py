@@ -4,7 +4,13 @@
 import frappe
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import DEAD_STATES, RUNNING_STATE, AtlasClient, AtlasNotFound
+from cargo.atlas_client import (
+	DEAD_STATES,
+	PILOT_IMAGE_OS_TAGS,
+	RUNNING_STATE,
+	AtlasClient,
+	AtlasNotFound,
+)
 from cargo.image_builder.builder import (
 	PING_TIMEOUT,
 	PROVISION_TIMEOUT,
@@ -69,6 +75,16 @@ class Image(WorkflowBuilder):
 	@property
 	def builder(self) -> Builder:
 		return Builder(self.atlas_name)
+
+	@property
+	def image_tags(self) -> dict[str, str]:
+		"""What the snapshot is labelled with at Atlas, so a search finds it by version."""
+		return {
+			"purpose": "pilot",
+			"pilot_version": self.pilot_version,
+			"frappe_version": self.frappe_version,
+			**PILOT_IMAGE_OS_TAGS,
+		}
 
 	@property
 	def provision_environment(self) -> dict[str, str]:
@@ -161,7 +177,7 @@ class Image(WorkflowBuilder):
 		"""Photograph the machine, then destroy it either way"""
 		builder = self.builder
 		try:
-			snapshot = builder.snapshot_build_machine(vm_id)
+			snapshot = builder.snapshot_build_machine(vm_id, self.image_tags)
 		finally:
 			builder.destroy_build_machine(vm_id)
 

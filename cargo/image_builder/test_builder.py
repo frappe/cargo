@@ -79,8 +79,9 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 	def test_a_built_image_is_snapshotted_as_a_system_image(self):
 		client = Mock()
+		tags = {"purpose": "pilot", "pilot_version": "1.2.3"}
 		with patch.object(Builder, "client", new=property(lambda _: client)):
-			self.builder.snapshot_build_machine("vm-1")
+			self.builder.snapshot_build_machine("vm-1", tags)
 
 		client.create_snapshot.assert_called_once_with(
 			"vm-1",
@@ -88,4 +89,5 @@ class IntegrationTestBuilder(IntegrationTestCase):
 			image_type="system",
 			cache_image=True,
 			memory_snapshot=True,
+			tags=tags,
 		)
