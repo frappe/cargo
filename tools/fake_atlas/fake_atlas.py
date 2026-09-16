@@ -372,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
 			"current_state": vm["state"],
 			"desired_state": "running",
 			"error": None,
-			"compute": {"vcpus": 1, "memory_mib": 1024, "sleep_after_idle_seconds": 0},
+			"compute": {"cpu_millicores": 1000, "memory_mib": 1024, "sleep_after_idle_seconds": 0},
 			"disk": {"size_mib": 10240, "used_mib": 0, "iops": 0, "throughput_mibps": 0},
 			"network": {
 				"egress": "uplink",

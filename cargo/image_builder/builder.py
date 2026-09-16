@@ -10,7 +10,7 @@ from cargo.ssh import SshError, run_over_ssh, script
 # Atlas records the snapshotted machine's shape as the warm-start template, so this is the
 # shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
 # on its own, which is why the provision script runs on temporary swap.
-BUILD_VCPUS = 1
+BUILD_CPU_MILLICORES = 1000
 BUILD_MEMORY_MIB = 1024
 BUILD_DISK_MIB = 8 * 1024
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
@@ -105,7 +105,7 @@ class Builder:
 		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
 		return self.client.create_vm(
 			image_id=base_image_id(),
-			vcpus=BUILD_VCPUS,
+			cpu_millicores=BUILD_CPU_MILLICORES,
 			memory_mib=BUILD_MEMORY_MIB,
 			disk_mib=BUILD_DISK_MIB,
 			public_key=public_key,

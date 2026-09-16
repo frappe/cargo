@@ -101,4 +101,4 @@ Cargo snapshots with `cache_image` and `memory_snapshot`. Atlas accepts both fro
 
 Before it captures that template, Atlas boots a temporary guest for about five minutes. The image's `pilot-prewarm.service` uses that period to load Frappe in the web worker. It calls the loopback upstream rather than nginx because a newly baked image is awaiting Central bootstrap and nginx serves the pending screen in that state.
 
-Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_VCPUS`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.
+Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_CPU_MILLICORES`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.

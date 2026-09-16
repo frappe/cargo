@@ -6,6 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.atlas_client import MILLICORES_PER_CORE
 from cargo.client_models import TELEMETRY
 from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 from cargo.telemetry.spawn import (
@@ -179,7 +180,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 			ensure_telemetry()
 
 		asked = atlas.create_vm.call_args.kwargs
-		self.assertEqual(asked["vcpus"], CONFIG[TELEMETRY]["cpu"])
+		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu"] * MILLICORES_PER_CORE)
 		self.assertTrue(self.auto_server().machine)
 
 	def test_the_next_run_asks_for_nothing_more(self):
