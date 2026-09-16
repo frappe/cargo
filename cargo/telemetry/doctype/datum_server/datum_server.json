@@ -1,7 +1,6 @@
 {
  "actions": [],
  "allow_bulk_edit": 1,
- "autoname": "DATUM-.####.",
  "creation": "2026-09-16 16:46:40.395422",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -205,12 +204,12 @@
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
+ "issingle": 1,
  "links": [],
  "modified": "2026-09-16 17:33:36.542554",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
- "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

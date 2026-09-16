@@ -32,6 +32,8 @@ PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 DATUM_USER = "datum"
 MAX_PORT = 65535
 SECRET_LENGTH = 32
+CLICKHOUSE_PASSWORDS = ("clickhouse_password", "insights_password", "default_password")
+WEBHOOK_NAME = "datum_server"
 WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
 REPORTED_STATUSES = ("Active", "Failed")
 
@@ -90,24 +92,20 @@ class DatumServer(WorkflowBuilder):
 		if cint(self.timeout_seconds) < 1:
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
 
-	def before_insert(self) -> None:
-		"""Every ClickHouse password this host uses. Generated once and kept here, because
-		the install writes them into ClickHouse itself -- nothing to keep in step later.
+	def before_save(self) -> None:
+		"""Every ClickHouse password this host uses, generated once -- the install writes them
+		into ClickHouse itself. Hex, so none carries the `--` or quotes datum-migrate refuses.
 
-		Hex, so none can carry the `--` or quotes datum-migrate refuses."""
-		if not self.clickhouse_password:
-			self.clickhouse_password = frappe.generate_hash(length=SECRET_LENGTH)
+		A Single is saved rather than inserted, so this cannot live in `before_insert`."""
+		for field in CLICKHOUSE_PASSWORDS:
+			if not self.get(field):
+				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
 
-		if not self.insights_password:
-			self.insights_password = frappe.generate_hash(length=SECRET_LENGTH)
-
-		if not self.default_password:
-			self.default_password = frappe.generate_hash(length=SECRET_LENGTH)
-
-	def after_insert(self) -> None:
+	def on_update(self) -> None:
 		"""Central hands pilots this host's URL to ship metrics and logs to, so it has to hear
 		when the host comes up or goes down."""
-		configure_telemetry_webhook(self)
+		if not frappe.db.exists("Webhook", WEBHOOK_NAME):
+			configure_telemetry_webhook(self)
 
 	@frappe.whitelist()
 	def create_telemetry_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> str:
@@ -287,7 +285,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
 
 	secret = settings.get_password("central_webhook_secret", raise_exception=True)
-	name = f"datum_server-{server.name}"
+	name = WEBHOOK_NAME
 	webhook: Webhook = (
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)
