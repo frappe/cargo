@@ -22,8 +22,8 @@ from cargo.testing import use_test_settings
 CONFIG = {
 	"storage_node_count": 3,
 	"replication_factor": 3,
-	GATEWAY: {"cpu": 2, "ram_gb": 4, "disk_gb": 20},
-	STORAGE: {"cpu": 2, "ram_gb": 4, "disk_gb": 100},
+	GATEWAY: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 20},
+	STORAGE: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 100},
 }
 
 

@@ -140,12 +140,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Ensure webhook for this cluster is configured"""
 		configure_storage_cluster_webhook(self)
 
-	def add_node(self, role: Role, cpu: int, ram_gb: int, disk_gb: int) -> Machine:
+	def add_node(self, role: Role, cpu_millicores: int, ram_gb: int, disk_gb: int) -> Machine:
 		"""Ask Atlas for one machine and put it in this cluster. Throws, rolling the row back.
 
 		Atlas names an image by a generated id, so an empty `base_image` is resolved rather
 		than sent as a name Atlas cannot know."""
-		spec = NodeSpec(role=role, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+		spec = NodeSpec(role=role, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 		machine: Machine = MachineDoc.request(
 			self,
 			spec,
@@ -159,18 +159,18 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return machine
 
 	@frappe.whitelist()
-	def add_gateway_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
+	def add_gateway_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
 		"""Can add a gateway node to this cluster? Throws if not."""
 		can_add_gateway_node(self)
 
-		self.add_node(GATEWAY, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+		self.add_node(GATEWAY, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 
 	@frappe.whitelist()
-	def add_storage_node(self, cpu: int, ram_gb: int, disk_gb: int) -> None:
+	def add_storage_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
 		"""Add a storage node to this cluster."""
 		can_add_storage_node(self)
 
-		self.add_node(STORAGE, cpu=cpu, ram_gb=ram_gb, disk_gb=disk_gb)
+		self.add_node(STORAGE, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 
 	@frappe.whitelist()
 	def setup(self) -> None:

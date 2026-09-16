@@ -6,7 +6,6 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.atlas_client import MILLICORES_PER_CORE
 from cargo.client_models import TELEMETRY
 from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 from cargo.telemetry.spawn import (
@@ -23,7 +22,7 @@ PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY--
 CONFIG = {
 	"repository": "https://github.com/frappe/datum",
 	"version": "develop",
-	TELEMETRY: {"cpu": 2, "ram_gb": 4, "disk_gb": 100},
+	TELEMETRY: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 100},
 }
 
 
@@ -57,7 +56,7 @@ class IntegrationTestTelemetryConfig(IntegrationTestCase):
 		self.assertTrue(self.refused({key: value for key, value in CONFIG.items() if key != TELEMETRY}))
 
 	def test_a_machine_size_that_cannot_be_rented_is_refused(self):
-		for field in ("cpu", "ram_gb", "disk_gb"):
+		for field in ("cpu_millicores", "ram_gb", "disk_gb"):
 			for value in (0, -1, "2", None):
 				with self.subTest(field=field, value=value):
 					self.assertTrue(self.refused({**CONFIG, TELEMETRY: {**CONFIG[TELEMETRY], field: value}}))
@@ -180,7 +179,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 			ensure_telemetry()
 
 		asked = atlas.create_vm.call_args.kwargs
-		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu"] * MILLICORES_PER_CORE)
+		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu_millicores"])
 		self.assertTrue(self.auto_server().machine)
 
 	def test_the_next_run_asks_for_nothing_more(self):

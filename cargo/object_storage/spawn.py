@@ -10,7 +10,14 @@ from frappe.utils.file_lock import LockTimeoutError
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import GATEWAY, STORAGE, Role
-from cargo.spawn import has_required_settings, machine_status, report, spawn_config, spawn_lock
+from cargo.spawn import (
+	has_required_settings,
+	machine_status,
+	report,
+	spawn_config,
+	spawn_lock,
+	validate_node_size,
+)
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -79,13 +86,7 @@ def validate_config(config: dict) -> None:
 		)
 
 	for role in (GATEWAY, STORAGE):
-		size = config.get(role)
-		if not isinstance(size, dict):
-			frappe.throw(_("{0} must hold cpu, ram_gb and disk_gb.").format(role))
-
-		for field in ("cpu", "ram_gb", "disk_gb"):
-			if not isinstance(size.get(field), int) or size[field] < 1:
-				frappe.throw(_("{0}.{1} must be a whole number of at least 1.").format(role, field))
+		validate_node_size(config.get(role), role)
 
 
 def create_cluster(config: dict) -> ObjectStorageCluster:
@@ -129,7 +130,12 @@ def fill_machines(cluster: ObjectStorageCluster, config: dict) -> bool:
 	for role in missing_slots(cluster, config):
 		size = config[role]
 		try:
-			cluster.add_node(role, cpu=size["cpu"], ram_gb=size["ram_gb"], disk_gb=size["disk_gb"])
+			cluster.add_node(
+				role,
+				cpu_millicores=size["cpu_millicores"],
+				ram_gb=size["ram_gb"],
+				disk_gb=size["disk_gb"],
+			)
 		except Exception:
 			frappe.log_error(title=f"{cluster.name} could not add a {role} machine")
 			return False

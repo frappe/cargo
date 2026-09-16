@@ -18,7 +18,7 @@ class NodeSpec:
 	"""What one role's machines look like."""
 
 	role: Role
-	cpu: int
+	cpu_millicores: int
 	ram_gb: int
 	disk_gb: int
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 import typing
 
 import frappe
+from frappe import _
 from frappe.utils.synchronization import filelock
+
+from cargo.atlas_client import MAXIMUM_CPU_MILLICORES, MINIMUM_CPU_MILLICORES
 
 if typing.TYPE_CHECKING:
 	from collections.abc import Callable
@@ -60,3 +63,20 @@ def report(doc: Document, reason: str) -> None:
 
 def machine_status(name: str) -> str:
 	return frappe.db.get_value("Machine", name, "status")
+
+
+def validate_node_size(size: object, role: str) -> None:
+	"""A machine shape Atlas will accept. Throws, naming what is wrong."""
+	if not isinstance(size, dict):
+		frappe.throw(_("{0} must hold cpu_millicores, ram_gb and disk_gb.").format(role))
+
+	for field in ("cpu_millicores", "ram_gb", "disk_gb"):
+		if not isinstance(size.get(field), int) or isinstance(size[field], bool) or size[field] < 1:
+			frappe.throw(_("{0}.{1} must be a whole number of at least 1.").format(role, field))
+
+	if not MINIMUM_CPU_MILLICORES <= size["cpu_millicores"] <= MAXIMUM_CPU_MILLICORES:
+		frappe.throw(
+			_("{0}.cpu_millicores must be between {1} and {2}.").format(
+				role, MINIMUM_CPU_MILLICORES, MAXIMUM_CPU_MILLICORES
+			)
+		)

@@ -13,7 +13,9 @@ API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
-MILLICORES_PER_CORE = 1000
+# Atlas accepts this range; 1000 millicores is one core.
+MINIMUM_CPU_MILLICORES = 100
+MAXIMUM_CPU_MILLICORES = 32_000
 # Atlas names an image by a generated id, so the one to boot on is found by its tags.
 BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
 # A Pilot image bakes on the base image, so it carries the same operating system.
