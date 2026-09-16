@@ -110,7 +110,7 @@ class DatumServer(WorkflowBuilder):
 		configure_telemetry_webhook(self)
 
 	@frappe.whitelist()
-	def create_telemetry_node(self, cpu: int, ram_gb: int, disk_gb: int) -> str:
+	def create_telemetry_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> str:
 		"""Add a telemetry node requesting from atlas."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
@@ -119,7 +119,12 @@ class DatumServer(WorkflowBuilder):
 
 		machine = Machine.request(
 			self,
-			NodeSpec(role=TELEMETRY, cpu=cint(cpu), ram_gb=cint(ram_gb), disk_gb=cint(disk_gb)),
+			NodeSpec(
+				role=TELEMETRY,
+				cpu_millicores=cint(cpu_millicores),
+				ram_gb=cint(ram_gb),
+				disk_gb=cint(disk_gb),
+			),
 			base_image=self.base_image,
 		)
 		self.machine = machine.name

@@ -41,8 +41,8 @@ Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` 
 "default_storage_cluster_config": {
   "storage_node_count": 3,
   "replication_factor": 3,
-  "gateway": {"cpu": 2, "ram_gb": 4, "disk_gb": 20},
-  "storage": {"cpu": 2, "ram_gb": 4, "disk_gb": 100}
+  "gateway": {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 20},
+  "storage": {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 100}
 }
 ```
 

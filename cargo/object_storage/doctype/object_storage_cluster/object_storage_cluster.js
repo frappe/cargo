@@ -208,7 +208,14 @@ function show_release_dialog(frm, machines) {
 function ask_for_machine(frm, method, title, disk_description, disk_default) {
 	frappe.prompt(
 		[
-			{ fieldname: "cpu", label: __("vCPUs"), fieldtype: "Int", default: 2, reqd: 1 },
+			{
+				fieldname: "cpu_millicores",
+				label: __("CPU (millicores)"),
+				description: __("1000 millicores equals one CPU core."),
+				fieldtype: "Int",
+				default: 2000,
+				reqd: 1,
+			},
 			{ fieldname: "ram_gb", label: __("RAM (GB)"), fieldtype: "Int", default: 4, reqd: 1 },
 			{
 				fieldname: "disk_gb",

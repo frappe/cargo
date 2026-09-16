@@ -35,7 +35,7 @@ One machine per call. Cargo asks for them one at a time and tracks each as its o
 | Send | What it is |
 |---|---|
 | `image_id` | What to boot, e.g. `ubuntu-24.04`, or a snapshot Cargo made earlier |
-| `vcpus` | Cores |
+| `cpu_millicores` | CPU entitlement. 1000 millicores equals one core. Cargo works in cores and multiplies by 1000 |
 | `memory_mib` | Memory. Cargo works in GB and multiplies by 1024 |
 | `disk_mib` | Disk, likewise |
 | `ssh_keys` | A list of one: root's public key. Cargo keeps the private half |

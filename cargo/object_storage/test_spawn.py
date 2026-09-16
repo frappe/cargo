@@ -22,8 +22,8 @@ from cargo.testing import use_test_settings
 CONFIG = {
 	"storage_node_count": 3,
 	"replication_factor": 3,
-	GATEWAY: {"cpu": 2, "ram_gb": 4, "disk_gb": 20},
-	STORAGE: {"cpu": 2, "ram_gb": 4, "disk_gb": 100},
+	GATEWAY: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 20},
+	STORAGE: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 100},
 }
 
 
@@ -177,10 +177,10 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 			ensure_cluster()
 
 		sizes = {
-			(call.kwargs["vcpus"], call.kwargs["memory_mib"], call.kwargs["disk_mib"])
+			(call.kwargs["cpu_millicores"], call.kwargs["memory_mib"], call.kwargs["disk_mib"])
 			for call in client.create_vm.call_args_list
 		}
-		self.assertEqual(sizes, {(2, 4 * 1024, 20 * 1024), (2, 4 * 1024, 100 * 1024)})
+		self.assertEqual(sizes, {(2000, 4 * 1024, 20 * 1024), (2000, 4 * 1024, 100 * 1024)})
 
 	def test_the_base_image_comes_from_atlas_and_not_a_name(self):
 		client = self.atlas(image_id="img-42")

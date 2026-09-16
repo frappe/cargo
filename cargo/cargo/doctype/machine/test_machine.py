@@ -80,7 +80,9 @@ class IntegrationTestMachine(IntegrationTestCase):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			atlas.from_settings.return_value.create_vm.return_value = {"id": "vm-00003"}
 			machine = Machine.request(
-				self.cluster, NodeSpec(role="gateway", cpu=2, ram_gb=4, disk_gb=20), base_image="img-1"
+				self.cluster,
+				NodeSpec(role="gateway", cpu_millicores=2000, ram_gb=4, disk_gb=20),
+				base_image="img-1",
 			)
 
 		self.assertEqual(machine.status, "Pending")

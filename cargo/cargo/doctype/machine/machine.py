@@ -91,7 +91,7 @@ class Machine(Document):
 		try:
 			created = client.create_vm(
 				image_id=base_image,
-				vcpus=spec.cpu,
+				cpu_millicores=spec.cpu_millicores,
 				memory_mib=spec.ram_gb * MIB_PER_GB,
 				disk_mib=spec.disk_gb * MIB_PER_GB,
 				public_key=self.ssh_public_key,

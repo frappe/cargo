@@ -10,7 +10,14 @@ from frappe.utils.file_lock import LockTimeoutError
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY
-from cargo.spawn import has_required_settings, machine_status, report, spawn_config, spawn_lock
+from cargo.spawn import (
+	has_required_settings,
+	machine_status,
+	report,
+	spawn_config,
+	spawn_lock,
+	validate_node_size,
+)
 
 if typing.TYPE_CHECKING:
 	from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
@@ -52,13 +59,7 @@ def validate_config(config: dict) -> None:
 		if not isinstance(config.get(field), str) or not config[field].strip():
 			frappe.throw(_("{0} must be set.").format(field))
 
-	size = config.get(TELEMETRY)
-	if not isinstance(size, dict):
-		frappe.throw(_("{0} must hold cpu, ram_gb and disk_gb.").format(TELEMETRY))
-
-	for field in ("cpu", "ram_gb", "disk_gb"):
-		if not isinstance(size.get(field), int) or size[field] < 1:
-			frappe.throw(_("{0}.{1} must be a whole number of at least 1.").format(TELEMETRY, field))
+	validate_node_size(config.get(TELEMETRY), TELEMETRY)
 
 
 def build_server(config: dict) -> None:
@@ -114,7 +115,11 @@ def fill_machine(server: DatumServer, config: dict) -> bool:
 
 	size = config[TELEMETRY]
 	try:
-		server.create_telemetry_node(cpu=size["cpu"], ram_gb=size["ram_gb"], disk_gb=size["disk_gb"])
+		server.create_telemetry_node(
+			cpu_millicores=size["cpu_millicores"],
+			ram_gb=size["ram_gb"],
+			disk_gb=size["disk_gb"],
+		)
 	except Exception:
 		frappe.log_error(title=f"{server.name} could not add its machine")
 		return False
