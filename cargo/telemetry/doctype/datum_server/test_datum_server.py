@@ -130,10 +130,10 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertEqual(environment["DATUM_CLICKHOUSE_USER"], "datum")
 		self.assertEqual(environment["DATUM_TIMEOUT"], "30")
 
-	def test_the_clickhouse_password_is_decrypted(self):
-		environment = self.environment(oidc_issuer="https://central.test", clickhouse_password="ch")
+	def test_the_datum_user_password_is_decrypted(self):
+		environment = self.environment(oidc_issuer="https://central.test", datum_user_password="ch")
 
-		self.assertEqual(environment["DATUM_CLICKHOUSE_PASSWORD"], "ch")
+		self.assertEqual(environment["DATUM_USER_PASSWORD"], "ch")
 
 	def test_the_install_needs_which_datum_to_install(self):
 		"""`environment` is what datum runs on; the repo and version are how it got there."""
@@ -150,7 +150,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		"""An empty variable is not the same as an unset one: datum treats "" as configured."""
 		self.assertNotIn("DATUM_JWT_PUBLIC_KEY_FILE", self.environment(oidc_issuer="https://central.test"))
 
-	def test_every_clickhouse_password_is_generated_and_distinct(self):
+	def test_every_user_password_is_generated_and_distinct(self):
 		"""The install writes all three into ClickHouse, so nothing has to be kept in step."""
 		doc = self.server(oidc_issuer="https://central.test")
 		doc.insert()
@@ -158,7 +158,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 		secrets = {
 			field: doc.get_password(field)
-			for field in ("clickhouse_password", "insights_password", "default_password")
+			for field in ("datum_user_password", "insights_user_password", "default_user_password")
 		}
 
 		self.assertTrue(all(secrets.values()))
@@ -180,7 +180,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 			}
 		).save()
 
-		for field in ("clickhouse_password", "insights_password", "default_password"):
+		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
 			with self.subTest(field=field):
 				self.assertTrue(server.get_password(field))
 
@@ -190,8 +190,8 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		datum = doc.get_password("clickhouse_password")
-		insights = doc.get_password("insights_password")
+		datum = doc.get_password("datum_user_password")
+		insights = doc.get_password("insights_user_password")
 
 		self.assertTrue(datum and insights)
 		self.assertNotEqual(datum, insights)
@@ -204,7 +204,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
-		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DATUM_DEFAULT_PASSWORD"])
+		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DEFAULT_USER_PASSWORD"])
 
 
 class IntegrationTestTelemetryWebhook(IntegrationTestCase):

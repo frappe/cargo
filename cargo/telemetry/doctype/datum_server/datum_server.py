@@ -32,7 +32,7 @@ PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 DATUM_USER = "datum"
 MAX_PORT = 65535
 SECRET_LENGTH = 32
-CLICKHOUSE_PASSWORDS = ("clickhouse_password", "insights_password", "default_password")
+USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
 WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
 REPORTED_STATUSES = ("Active", "Failed")
@@ -52,11 +52,11 @@ class DatumServer(WorkflowBuilder):
 		auto_spawn: DF.Check
 		base_image: DF.Data
 		clickhouse_host: DF.Data
-		clickhouse_password: DF.Password | None
 		clickhouse_port: DF.Int
-		default_password: DF.Password | None
+		datum_user_password: DF.Password | None
+		default_user_password: DF.Password | None
 		error: DF.SmallText | None
-		insights_password: DF.Password | None
+		insights_user_password: DF.Password | None
 		machine: DF.Link | None
 		oidc_issuer: DF.Data | None
 		public_key: DF.Code | None
@@ -97,7 +97,7 @@ class DatumServer(WorkflowBuilder):
 		into ClickHouse itself. Hex, so none carries the `--` or quotes datum-migrate refuses.
 
 		A Single is saved rather than inserted, so this cannot live in `before_insert`."""
-		for field in CLICKHOUSE_PASSWORDS:
+		for field in USER_PASSWORDS:
 			if not self.get(field):
 				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
 
@@ -255,9 +255,9 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_CLICKHOUSE_HOST": self.clickhouse_host,
 			"DATUM_CLICKHOUSE_PORT": str(self.clickhouse_port),
 			"DATUM_CLICKHOUSE_USER": DATUM_USER,
-			"DATUM_CLICKHOUSE_PASSWORD": self.get_password("clickhouse_password", raise_exception=False),
-			"DATUM_INSIGHTS_PASSWORD": self.get_password("insights_password", raise_exception=False),
-			"DATUM_DEFAULT_PASSWORD": self.get_password("default_password", raise_exception=False),
+			"DATUM_USER_PASSWORD": self.get_password("datum_user_password", raise_exception=False),
+			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
+			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
 			"DATUM_OIDC_ISSUER": self.oidc_issuer,
 			# This is for the fastapi server to read.

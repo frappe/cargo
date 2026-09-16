@@ -18,10 +18,10 @@
   "clickhouse_section",
   "clickhouse_host",
   "clickhouse_port",
-  "default_password",
+  "default_user_password",
   "column_break_clickhouse",
-  "clickhouse_password",
-  "insights_password",
+  "datum_user_password",
+  "insights_user_password",
   "timeout_seconds",
   "token_verification_section",
   "oidc_issuer",
@@ -114,9 +114,9 @@
   },
   {
    "description": "The `default` superuser, set by the install. Only the migration uses it, to create the other two users.",
-   "fieldname": "default_password",
+   "fieldname": "default_user_password",
    "fieldtype": "Password",
-   "label": "ClickHouse Admin Password",
+   "label": "Default User Password",
    "read_only": 1
   },
   {
@@ -125,14 +125,14 @@
   },
   {
    "description": "The `datum` user, which the API writes as. Generated here and created by the migration.",
-   "fieldname": "clickhouse_password",
+   "fieldname": "datum_user_password",
    "fieldtype": "Password",
    "label": "Datum User Password",
    "read_only": 1
   },
   {
    "description": "The `insights` user, which Insights reads ClickHouse with directly. Datum never uses it.",
-   "fieldname": "insights_password",
+   "fieldname": "insights_user_password",
    "fieldtype": "Password",
    "label": "Insights User Password",
    "read_only": 1

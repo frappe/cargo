@@ -19,7 +19,7 @@ SECRETS = {
 	"central_webhook_secret": "test-webhook-secret",
 	"proxy_token": "test-proxy-token",
 }
-DATUM_SECRETS = ("clickhouse_password", "insights_password", "default_password")
+DATUM_SECRETS = ("datum_user_password", "insights_user_password", "default_user_password")
 
 
 def use_test_settings() -> None:
