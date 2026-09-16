@@ -112,15 +112,18 @@ class Builder:
 			hostname=self.atlas_name,
 		)["id"]
 
-	def snapshot_build_machine(self, vm_id: str) -> str:
+	def snapshot_build_machine(self, vm_id: str, tags: dict[str, str]) -> str:
 		"""Photograph the baked machine. This is the image. Both flags are what lets a host
-		cache the artifacts and build a warm template, so a tenant VM starts from memory."""
+		cache the artifacts and build a warm template, so a tenant VM starts from memory.
+
+		The tags say what the image is, so a later search finds it without the id."""
 		return self.client.create_snapshot(
 			vm_id,
 			self.atlas_name,
 			image_type="system",
 			cache_image=True,
 			memory_snapshot=True,
+			tags=tags,
 		)
 
 	def destroy_build_machine(self, vm_id: str) -> bool:
