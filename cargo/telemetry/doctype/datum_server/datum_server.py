@@ -7,12 +7,14 @@ import typing
 
 import frappe
 from frappe import _
-from frappe.model.document import Document
 from frappe.utils import cint
 
 from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
+from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, run_over_ssh, script
+from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
+from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
 	from frappe.integrations.doctype.webhook.webhook import Webhook
@@ -30,7 +32,7 @@ WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
 REPORTED_STATUSES = ("Active", "Failed")
 
 
-class DatumServer(Document):
+class DatumServer(WorkflowBuilder):
 	"""One datum host: the machine it runs on, and what it was built with."""
 
 	# begin: auto-generated types
@@ -121,35 +123,17 @@ class DatumServer(Document):
 
 	@frappe.whitelist()
 	def setup(self) -> None:
-		"""Install datum on the machine and start it. Streams to `setup_log` as it runs."""
+		"""Install datum on this host's machine, and route to it once it answers."""
 		machine_status = frappe.db.get_value("Machine", self.machine, "status")
 		if machine_status != "Running":
 			frappe.throw(_("Machine must be running to set up datum."), frappe.ValidationError)
 
 		self.mark("Setting Up")
-		frappe.enqueue_doc(
-			"Datum Server",
-			self.name,
-			method="setup_machine",
-			queue="long",
-			timeout=SETUP_TIMEOUT,
-			enqueue_after_commit=True,
-		)
+		self._setup.run_as_workflow()
 
-	def sync_machines(self) -> None:
-		"""What this host's machine settling means for it. Its state is already recorded;
-		`sync_pending_machines` calls this once it changes."""
-		status = frappe.db.get_value("Machine", self.machine, "status")
-
-		if status in DEAD_STATES:
-			return self.mark("Failed")
-
-	def mark(self, status: str) -> None:
-		self.status = status
-		self.save()
-
-	def setup_machine(self) -> None:
-		"""Install datum on the machine and start it. Streams to `setup_log` as it runs."""
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def start_setup_on_machine(self) -> bool:
+		"""Install datum on the machine. Streams to `setup_log` as it runs."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
@@ -167,9 +151,47 @@ class DatumServer(Document):
 					title=f"{self.name} failed to set up",
 					message=frappe.get_traceback(with_context=True),
 				)
-				return self.mark("Failed")
+				self.mark("Failed", "datum did not install. See the Setup Log.")
+				return False
 
-		self.mark("Active")
+		return True
+
+	@task
+	def publish_proxy_routes(self) -> bool:
+		"""Point this region's telemetry domain at the host."""
+		try:
+			client = ProxyClient.from_settings()
+			wildcard_domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
+			machine_address = frappe.get_value("Machine", self.machine, "address")
+			if not wildcard_domain:
+				frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
+			client.map_domain(f"telemetry-svc.{wildcard_domain}", machine_address)
+		except (ProxyError, frappe.ValidationError) as error:
+			self.mark("Failed", _("Proxy route setup failed: {0}").format(error))
+			return False
+
+		return True
+
+	@flow
+	def _setup(self) -> None:
+		if not self.start_setup_on_machine():
+			return
+
+		if self.publish_proxy_routes():
+			self.mark("Active")
+
+	def sync_machines(self) -> None:
+		"""What this host's machine settling means for it. Its state is already recorded;
+		`sync_pending_machines` calls this once it changes."""
+		status = frappe.db.get_value("Machine", self.machine, "status")
+
+		if status in DEAD_STATES:
+			return self.mark("Failed")
+
+	def mark(self, status: str, error: str | None = None) -> None:
+		self.status = status
+		self.error = error
+		self.save()
 
 	def environment(self, key_file: str = PUBLIC_KEY_FILE) -> dict[str, str]:
 		"""What datum runs on. `key_file` is where the PEM was written on the host."""

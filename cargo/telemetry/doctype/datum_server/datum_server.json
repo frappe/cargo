@@ -2,6 +2,7 @@
  "actions": [],
  "allow_bulk_edit": 1,
  "allow_rename": 0,
+ "autoname": "DATUM-.####.",
  "creation": "2026-09-09 13:23:56.118338",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -11,6 +12,7 @@
   "machine",
   "column_break_host",
   "status",
+  "error",
   "repository",
   "version",
   "clickhouse_section",
@@ -36,20 +38,20 @@
   },
   {
    "default": "ubuntu-22.04",
+   "description": "What Atlas boots the machine from. install.sh expects a Debian or Ubuntu image: it installs with apt.",
    "fieldname": "base_image",
    "fieldtype": "Data",
    "label": "Base Image",
-   "reqd": 1,
-   "description": "What Atlas boots the machine from. install.sh expects a Debian or Ubuntu image: it installs with apt."
+   "reqd": 1
   },
   {
+   "description": "The VM datum runs on, built by Atlas. Set when the node is requested.",
    "fieldname": "machine",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Machine",
    "options": "Machine",
-   "read_only": 1,
-   "in_list_view": 1,
-   "description": "The VM datum runs on, built by Atlas. Set when the node is requested."
+   "read_only": 1
   },
   {
    "fieldname": "column_break_host",
@@ -57,14 +59,21 @@
   },
   {
    "default": "Draft",
+   "description": "Draft \u2014 no machine yet, or it is still booting.\nSetting Up \u2014 installing datum on the machine.\nActive \u2014 datum is running and answering.\nFailed \u2014 the machine died, or the last install did not finish. See the Setup Log.",
    "fieldname": "status",
    "fieldtype": "Select",
-   "label": "Status",
-   "options": "Draft\nSetting Up\nActive\nFailed",
-   "read_only": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "description": "Draft \u2014 no machine yet, or it is still booting.\nSetting Up \u2014 installing datum on the machine.\nActive \u2014 datum is running and answering.\nFailed \u2014 the machine died, or the last install did not finish. See the Setup Log."
+   "label": "Status",
+   "options": "Draft\nSetting Up\nActive\nFailed",
+   "read_only": 1
+  },
+  {
+   "depends_on": "error",
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error",
+   "read_only": 1
   },
   {
    "description": "DATUM_REPOSITORY. Cloned onto the host at install.",
@@ -104,10 +113,10 @@
    "reqd": 1
   },
   {
+   "description": "The `default` superuser, set by the install. Only the migration uses it, to create the other two users.",
    "fieldname": "default_password",
    "fieldtype": "Password",
    "label": "ClickHouse Admin Password",
-   "description": "The `default` superuser, set by the install. Only the migration uses it, to create the other two users.",
    "read_only": 1
   },
   {
@@ -163,18 +172,18 @@
    "label": "Public Key (PEM)"
   },
   {
+   "collapsible": 1,
+   "depends_on": "setup_log",
    "fieldname": "section_break_setup",
    "fieldtype": "Section Break",
-   "label": "Setup",
-   "depends_on": "setup_log",
-   "collapsible": 1
+   "label": "Setup"
   },
   {
+   "depends_on": "setup_log",
    "fieldname": "setup_log",
    "fieldtype": "Code",
    "label": "Setup Log",
-   "read_only": 1,
-   "depends_on": "setup_log"
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -184,6 +193,7 @@
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {
@@ -203,7 +213,5 @@
  "rows_threshold_for_grid_search": 20,
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "autoname": "DATUM-.####.",
- "naming_rule": "Expression (old style)"
+ "states": []
 }

@@ -1,12 +1,20 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+from unittest.mock import Mock, patch
+
 import frappe
 from frappe.integrations.doctype.webhook.webhook import get_webhook_data
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
 
-from cargo.telemetry.doctype.datum_server.datum_server import PUBLIC_KEY_FILE, WEBHOOK_ENDPOINT
+from cargo.client_models import TELEMETRY
+from cargo.proxy_client import ProxyClient, ProxyError
+from cargo.telemetry.doctype.datum_server.datum_server import (
+	PUBLIC_KEY_FILE,
+	WEBHOOK_ENDPOINT,
+	DatumServer,
+)
 from cargo.testing import SETTINGS, use_test_settings
 
 PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
@@ -233,3 +241,99 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 
 		with self.assertRaises(frappe.ValidationError):
 			self.insert_server()
+
+
+class IntegrationTestTelemetryRouting(IntegrationTestCase):
+	"""A host is Active only once the region's telemetry domain points at it."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		use_test_settings()
+		self.addCleanup(frappe.db.rollback)
+		self.server = frappe.get_doc(
+			{
+				"doctype": "Datum Server",
+				"clickhouse_host": "clickhouse.internal",
+				"repository": "https://github.com/frappe/datum",
+				"version": "develop",
+				"public_key": PEM,
+			}
+		).insert()
+		self.machine = frappe.get_doc(
+			{
+				"doctype": "Machine",
+				"reference_doctype": self.server.doctype,
+				"reference_name": self.server.name,
+				"role": TELEMETRY,
+				"disk_size_gb": 20,
+				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
+				"address": "fdaa:1::9",
+				"status": "Running",
+			}
+		).insert()
+		self.server.db_set("machine", self.machine.name)
+		self.server.reload()
+
+	def proxy(self, **behaviour):
+		client = Mock(**behaviour)
+
+		return patch.object(ProxyClient, "from_settings", return_value=client), client
+
+	def test_a_proxy_that_refuses_leaves_the_reason_on_the_host(self):
+		patched, _client = self.proxy(map_domain=Mock(side_effect=ProxyError("proxy unreachable")))
+		with patched:
+			self.assertFalse(self.server.publish_proxy_routes())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Failed")
+		self.assertIn("proxy unreachable", self.server.error)
+
+	def test_a_region_with_no_domain_publishes_nothing(self):
+		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+		patched, client = self.proxy()
+
+		with patched:
+			self.assertFalse(self.server.publish_proxy_routes())
+
+		client.map_domain.assert_not_called()
+		self.server.reload()
+		self.assertEqual(self.server.status, "Failed")
+
+	def test_the_domain_is_pointed_at_this_host(self):
+		patched, client = self.proxy()
+		with patched:
+			self.assertTrue(self.server.publish_proxy_routes())
+
+		client.map_domain.assert_called_once_with(
+			f"telemetry-svc.{SETTINGS['wildcard_domain']}", self.machine.address
+		)
+
+	def test_an_install_that_failed_is_never_routed_to(self):
+		with (
+			patch.object(DatumServer, "start_setup_on_machine", return_value=False),
+			patch.object(DatumServer, "publish_proxy_routes") as published,
+		):
+			self.server._setup()
+
+		published.assert_not_called()
+
+	def test_a_host_is_active_once_both_steps_land(self):
+		with (
+			patch.object(DatumServer, "start_setup_on_machine", return_value=True),
+			patch.object(DatumServer, "publish_proxy_routes", return_value=True),
+		):
+			self.server._setup()
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Active")
+
+	def test_a_host_whose_routes_failed_is_not_active(self):
+		with (
+			patch.object(DatumServer, "start_setup_on_machine", return_value=True),
+			patch.object(DatumServer, "publish_proxy_routes", return_value=False),
+		):
+			self.server._setup()
+
+		self.server.reload()
+		self.assertNotEqual(self.server.status, "Active")
