@@ -179,7 +179,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 			ensure_telemetry()
 
 		asked = atlas.create_vm.call_args.kwargs
-		self.assertEqual(asked["vcpus"], CONFIG[TELEMETRY]["cpu"])
+		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu"] * 1000)
 		self.assertTrue(self.auto_server().machine)
 
 	def test_the_next_run_asks_for_nothing_more(self):

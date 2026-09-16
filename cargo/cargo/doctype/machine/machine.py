@@ -10,7 +10,13 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
+from cargo.atlas_client import (
+	DEAD_STATES,
+	MIB_PER_GB,
+	MILLICORES_PER_VCPU,
+	RUNNING_STATE,
+	AtlasNotFound,
+)
 from cargo.client_models import NodeSpec
 from cargo.ssh import create_keypair
 
@@ -91,7 +97,7 @@ class Machine(Document):
 		try:
 			created = client.create_vm(
 				image_id=base_image,
-				vcpus=spec.cpu,
+				cpu_millicores=spec.cpu * MILLICORES_PER_VCPU,
 				memory_mib=spec.ram_gb * MIB_PER_GB,
 				disk_mib=spec.disk_gb * MIB_PER_GB,
 				public_key=self.ssh_public_key,

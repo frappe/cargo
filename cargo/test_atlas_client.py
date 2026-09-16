@@ -45,7 +45,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		with self.call(response(201, {"id": "vm-9"})) as request:
 			created = self.client.create_vm(
 				image_id="ubuntu-24.04",
-				vcpus=2,
+				cpu_millicores=2000,
 				memory_mib=4096,
 				disk_mib=20480,
 				public_key="ssh-ed25519 AAAA",
@@ -55,7 +55,8 @@ class UnitTestAtlasClient(UnitTestCase):
 
 		self.assertEqual(created["id"], "vm-9")
 		body = request.call_args.kwargs["json"]
-		self.assertEqual(body["vcpus"], 2)
+		self.assertEqual(body["cpu_millicores"], 2000)
+		self.assertNotIn("vcpus", body)
 		self.assertEqual(body["ssh_keys"], ["ssh-ed25519 AAAA"])
 		self.assertEqual(body["metadata"], {"role": "storage"})
 		# No public address is asked for: machines are reached over the mesh.
@@ -66,7 +67,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):
 			self.client.create_vm(
 				image_id="ubuntu-24.04",
-				vcpus=1,
+				cpu_millicores=1000,
 				memory_mib=1024,
 				disk_mib=1024,
 				public_key="key",

@@ -13,6 +13,8 @@ API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
+# Atlas sizes a machine in millicores, so a whole core is a thousand of them.
+MILLICORES_PER_VCPU = 1000
 # Atlas names an image by a generated id, so the one to boot on is found by its tags.
 BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
 # A Pilot image bakes on the base image, so it carries the same operating system.
@@ -88,7 +90,7 @@ class AtlasClient:
 		self,
 		*,
 		image_id: str,
-		vcpus: int,
+		cpu_millicores: float,
 		memory_mib: int,
 		disk_mib: int,
 		public_key: str,
@@ -101,7 +103,7 @@ class AtlasClient:
 			"/virtual-machines",
 			{
 				"image_id": image_id,
-				"vcpus": vcpus,
+				"cpu_millicores": cpu_millicores,
 				"memory_mib": memory_mib,
 				"disk_mib": disk_mib,
 				"ssh_keys": [public_key],
