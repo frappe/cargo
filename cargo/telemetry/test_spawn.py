@@ -22,7 +22,6 @@ PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY--
 CONFIG = {
 	"repository": "https://github.com/frappe/datum",
 	"version": "develop",
-	"clickhouse_host": "clickhouse.internal",
 	TELEMETRY: {"cpu": 2, "ram_gb": 4, "disk_gb": 100},
 }
 
@@ -132,7 +131,7 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 		server = self.auto_server()
 		self.assertEqual(server.status, "Draft")
 		self.assertEqual(server.repository, CONFIG["repository"])
-		self.assertEqual(server.clickhouse_host, CONFIG["clickhouse_host"])
+		self.assertEqual(server.clickhouse_host, "127.0.0.1")
 
 	def test_the_server_is_built_once_and_not_again(self):
 		with self.configured():

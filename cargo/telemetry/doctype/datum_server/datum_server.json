@@ -97,12 +97,12 @@
    "label": "ClickHouse"
   },
   {
-   "description": "DATUM_CLICKHOUSE_HOST",
+   "default": "127.0.0.1",
+   "description": "DATUM_CLICKHOUSE_HOST. The install puts ClickHouse on this machine, so it answers on loopback.",
    "fieldname": "clickhouse_host",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Host",
-   "reqd": 1
+   "label": "Host"
   },
   {
    "default": "8123",

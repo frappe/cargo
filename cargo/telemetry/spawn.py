@@ -17,7 +17,7 @@ if typing.TYPE_CHECKING:
 
 CONFIG_KEY = "default_telemetry_config"
 LOCK_NAME = "telemetry-spawn"
-DATUM_FIELDS = ("repository", "version", "clickhouse_host")
+DATUM_FIELDS = ("repository", "version")
 # Setting up again rents no machine, so a transient fault is worth another run. Three is
 # where saying so beats trying again.
 MAX_SETUP_ATTEMPTS = 3
