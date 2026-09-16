@@ -7,19 +7,25 @@ import typing
 
 import frappe
 from frappe import _
-from frappe.model.document import Document
 from frappe.utils import cint
 
 from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
+from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, run_over_ssh, script
+from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
+from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
 	from frappe.integrations.doctype.webhook.webhook import Webhook
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
-CONF = ("telemetry", "conf", "install.sh")
+CONF = ("telemetry", "conf", "datum", "install.sh")
+NGINX_CONF = ("telemetry", "conf", "nginx", "install.sh")
+DATUM_PORT = 8000
+TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
+TELEMETRY_SITE_NAMES = ("telemetry-svc", "telemetry-read-svc")
 SETUP_TIMEOUT = 30 * 60
 PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
@@ -30,7 +36,7 @@ WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
 REPORTED_STATUSES = ("Active", "Failed")
 
 
-class DatumServer(Document):
+class DatumServer(WorkflowBuilder):
 	"""One datum host: the machine it runs on, and what it was built with."""
 
 	# begin: auto-generated types
@@ -41,11 +47,13 @@ class DatumServer(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		auto_spawn: DF.Check
 		base_image: DF.Data
 		clickhouse_host: DF.Data
 		clickhouse_password: DF.Password | None
 		clickhouse_port: DF.Int
 		default_password: DF.Password | None
+		error: DF.SmallText | None
 		insights_password: DF.Password | None
 		machine: DF.Link | None
 		oidc_issuer: DF.Data | None
@@ -121,35 +129,17 @@ class DatumServer(Document):
 
 	@frappe.whitelist()
 	def setup(self) -> None:
-		"""Install datum on the machine and start it. Streams to `setup_log` as it runs."""
+		"""Install datum on this host's machine, and route to it once it answers."""
 		machine_status = frappe.db.get_value("Machine", self.machine, "status")
 		if machine_status != "Running":
 			frappe.throw(_("Machine must be running to set up datum."), frappe.ValidationError)
 
 		self.mark("Setting Up")
-		frappe.enqueue_doc(
-			"Datum Server",
-			self.name,
-			method="setup_machine",
-			queue="long",
-			timeout=SETUP_TIMEOUT,
-			enqueue_after_commit=True,
-		)
+		self._setup.run_as_workflow()
 
-	def sync_machines(self) -> None:
-		"""What this host's machine settling means for it. Its state is already recorded;
-		`sync_pending_machines` calls this once it changes."""
-		status = frappe.db.get_value("Machine", self.machine, "status")
-
-		if status in DEAD_STATES:
-			return self.mark("Failed")
-
-	def mark(self, status: str) -> None:
-		self.status = status
-		self.save()
-
-	def setup_machine(self) -> None:
-		"""Install datum on the machine and start it. Streams to `setup_log` as it runs."""
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def start_setup_on_machine(self) -> bool:
+		"""Install datum on the machine. Streams to `setup_log` as it runs."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
@@ -167,9 +157,94 @@ class DatumServer(Document):
 					title=f"{self.name} failed to set up",
 					message=frappe.get_traceback(with_context=True),
 				)
-				return self.mark("Failed")
+				self.mark("Failed", "datum did not install. See the Setup Log.")
+				return False
 
-		self.mark("Active")
+		return True
+
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def configure_routing(self) -> bool:
+		"""Put nginx on port 80 in front of datum and ClickHouse."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				run_over_ssh(
+					machine.address,
+					script(*NGINX_CONF, environment=self.nginx_environment()),
+					machine.get_password("ssh_private_key"),
+					timeout=SETUP_TIMEOUT,
+					on_output=log.write,
+				)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} could not be routed to",
+					message=frappe.get_traceback(with_context=True),
+				)
+				self.mark("Failed", "nginx did not come up. See the Setup Log.")
+				return False
+
+		return True
+
+	def nginx_environment(self) -> dict[str, str]:
+		"""What the host needs to route its two subdomains."""
+		return {
+			"WILDCARD_DOMAIN": self.wildcard_domain,
+			"DATUM_PORT": DATUM_PORT,
+			"CLICKHOUSE_PORT": self.clickhouse_port,
+			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
+		}
+
+	@property
+	def wildcard_domain(self) -> str:
+		domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
+		if not domain:
+			frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
+
+		return domain
+
+	@property
+	def proxy_domains(self) -> tuple[str, ...]:
+		return tuple(f"{site_name}.{self.wildcard_domain}" for site_name in TELEMETRY_SITE_NAMES)
+
+	@task
+	def publish_proxy_routes(self) -> bool:
+		"""Point this region's telemetry domain at the host."""
+		try:
+			client = ProxyClient.from_settings()
+			machine_address = frappe.db.get_value("Machine", self.machine, "address")
+			for domain in self.proxy_domains:
+				client.map_domain(domain, machine_address)
+		except (ProxyError, frappe.ValidationError) as error:
+			self.mark("Failed", _("Proxy route setup failed: {0}").format(str(error)))
+			return False
+
+		return True
+
+	@flow
+	def _setup(self) -> None:
+		if not self.start_setup_on_machine():
+			return
+
+		if not self.configure_routing():
+			return
+
+		if self.publish_proxy_routes():
+			self.mark("Active")
+
+	def sync_machines(self) -> None:
+		"""What this host's machine settling means for it. Its state is already recorded;
+		`sync_pending_machines` calls this once it changes."""
+		status = frappe.db.get_value("Machine", self.machine, "status")
+
+		if status in DEAD_STATES:
+			return self.mark("Failed")
+
+	def mark(self, status: str, error: str | None = None) -> None:
+		self.status = status
+		self.error = error
+		self.save()
 
 	def environment(self, key_file: str = PUBLIC_KEY_FILE) -> dict[str, str]:
 		"""What datum runs on. `key_file` is where the PEM was written on the host."""
@@ -196,6 +271,7 @@ class DatumServer(Document):
 			**self.environment(key_file),
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
+			"DATUM_PORT": DATUM_PORT,
 		}
 
 
