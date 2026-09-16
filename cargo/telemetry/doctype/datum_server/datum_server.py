@@ -21,7 +21,11 @@ if typing.TYPE_CHECKING:
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
-CONF = ("telemetry", "conf", "install.sh")
+CONF = ("telemetry", "conf", "datum", "install.sh")
+NGINX_CONF = ("telemetry", "conf", "nginx", "install.sh")
+DATUM_PORT = 8000
+TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
+TELEMETRY_SITE_NAMES = ("telemetry-svc", "telemetry-read-svc")
 SETUP_TIMEOUT = 30 * 60
 PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
@@ -156,16 +160,60 @@ class DatumServer(WorkflowBuilder):
 
 		return True
 
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def configure_routing(self) -> bool:
+		"""Put nginx on port 80 in front of datum and ClickHouse."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				run_over_ssh(
+					machine.address,
+					script(*NGINX_CONF, environment=self.nginx_environment()),
+					machine.get_password("ssh_private_key"),
+					timeout=SETUP_TIMEOUT,
+					on_output=log.write,
+				)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} could not be routed to",
+					message=frappe.get_traceback(with_context=True),
+				)
+				self.mark("Failed", "nginx did not come up. See the Setup Log.")
+				return False
+
+		return True
+
+	def nginx_environment(self) -> dict[str, str]:
+		"""What the host needs to route its two subdomains."""
+		return {
+			"WILDCARD_DOMAIN": self.wildcard_domain,
+			"DATUM_PORT": DATUM_PORT,
+			"CLICKHOUSE_PORT": self.clickhouse_port,
+			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
+		}
+
+	@property
+	def wildcard_domain(self) -> str:
+		domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
+		if not domain:
+			frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
+
+		return domain
+
+	@property
+	def proxy_domains(self) -> tuple[str, ...]:
+		return tuple(f"{site_name}.{self.wildcard_domain}" for site_name in TELEMETRY_SITE_NAMES)
+
 	@task
 	def publish_proxy_routes(self) -> bool:
 		"""Point this region's telemetry domain at the host."""
 		try:
 			client = ProxyClient.from_settings()
-			wildcard_domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
-			machine_address = frappe.get_value("Machine", self.machine, "address")
-			if not wildcard_domain:
-				frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
-			client.map_domain(f"telemetry-svc.{wildcard_domain}", machine_address)
+			machine_address = frappe.db.get_value("Machine", self.machine, "address")
+			for domain in self.proxy_domains:
+				client.map_domain(domain, machine_address)
 		except (ProxyError, frappe.ValidationError) as error:
 			self.mark("Failed", _("Proxy route setup failed: {0}").format(error))
 			return False
@@ -175,6 +223,9 @@ class DatumServer(WorkflowBuilder):
 	@flow
 	def _setup(self) -> None:
 		if not self.start_setup_on_machine():
+			return
+
+		if not self.configure_routing():
 			return
 
 		if self.publish_proxy_routes():
@@ -218,6 +269,7 @@ class DatumServer(WorkflowBuilder):
 			**self.environment(key_file),
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
+			"DATUM_PORT": DATUM_PORT,
 		}
 
 
