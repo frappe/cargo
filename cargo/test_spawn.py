@@ -23,7 +23,7 @@ LOCK_NAME = "test-spawn"
 
 
 def refuse(config: dict) -> None:
-	frappe.throw("nope")
+	raise frappe.ValidationError("a config spawn_config must reject")
 
 
 def accept(config: dict) -> None:

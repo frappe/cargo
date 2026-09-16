@@ -217,7 +217,7 @@ class DatumServer(WorkflowBuilder):
 			for domain in self.proxy_domains:
 				client.map_domain(domain, machine_address)
 		except (ProxyError, frappe.ValidationError) as error:
-			self.mark("Failed", _("Proxy route setup failed: {0}").format(error))
+			self.mark("Failed", _("Proxy route setup failed: {0}").format(str(error)))
 			return False
 
 		return True
