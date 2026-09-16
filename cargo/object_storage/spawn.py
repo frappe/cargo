@@ -7,10 +7,10 @@ import typing
 import frappe
 from frappe import _
 from frappe.utils.file_lock import LockTimeoutError
-from frappe.utils.synchronization import filelock
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import GATEWAY, STORAGE, Role
+from cargo.spawn import has_required_settings, machine_status, report, spawn_config, spawn_lock
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -18,26 +18,22 @@ if typing.TYPE_CHECKING:
 	)
 
 CONFIG_KEY = "default_storage_cluster_config"
-# Renting a machine is the expensive half of this, so two runs must not overlap.
 LOCK_NAME = "object-storage-spawn"
 # Setting up again rents no machine, so a transient fault is worth another run. A broken
 # gateway is not, and three runs is where saying so beats trying again.
 MAX_SETUP_ATTEMPTS = 3
-# Without these a cluster cannot be inserted, set up, or reported to Central.
-REQUIRED_SETTINGS = ("region", "wildcard_domain", "atlas_url", "central_url", "proxy_url")
-REQUIRED_SECRETS = ("atlas_token", "central_webhook_secret", "proxy_token")
 
 
 def ensure_cluster() -> None:
 	"""Give this region one object storage cluster and keep it moving.
 
 	Off until `default_storage_cluster_config` is in site config. Scheduled in `hooks.py`."""
-	config = spawn_config()
+	config = spawn_config(CONFIG_KEY, validate_config)
 	if not config or not has_required_settings():
 		return
 
 	try:
-		with filelock(LOCK_NAME, timeout=0):
+		with spawn_lock(LOCK_NAME):
 			build_cluster(config)
 	except LockTimeoutError:
 		# Another run holds it and is already doing this work. Nothing here is urgent enough
@@ -47,12 +43,14 @@ def ensure_cluster() -> None:
 
 def build_cluster(config: dict) -> None:
 	"""One step towards the region having a cluster that serves."""
-	cluster = auto_cluster()
-	if not cluster:
+	name = frappe.db.exists("Object Storage Cluster", {"auto_spawn": 1})
+	if not name:
 		if not frappe.db.count("Object Storage Cluster"):
 			create_cluster(config)
 
 		return
+
+	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
 
 	# A setup run is already under way, and it owns the cluster until it ends.
 	if cluster.status == "Setting Up":
@@ -60,21 +58,6 @@ def build_cluster(config: dict) -> None:
 
 	if fill_machines(cluster, config):
 		advance(cluster)
-
-
-def spawn_config() -> dict | None:
-	"""The cluster to build, from site config. Absent means this region builds none."""
-	config = frappe.conf.get(CONFIG_KEY)
-	if not config:
-		return None
-
-	try:
-		validate_config(config)
-	except frappe.ValidationError as error:
-		frappe.log_error(title=f"{CONFIG_KEY} is not usable", message=str(error))
-		return None
-
-	return config
 
 
 def validate_config(config: dict) -> None:
@@ -103,25 +86,6 @@ def validate_config(config: dict) -> None:
 		for field in ("cpu", "ram_gb", "disk_gb"):
 			if not isinstance(size.get(field), int) or size[field] < 1:
 				frappe.throw(_("{0}.{1} must be a whole number of at least 1.").format(role, field))
-
-
-def has_required_settings() -> bool:
-	"""A half provisioned host is quiet rather than noisy: it is still being installed.
-
-	A Password field reads back empty from the document, so the secrets are asked for by
-	name rather than counted with the rest."""
-	settings = frappe.get_cached_doc("Cargo Settings")
-	if not all(settings.get(field) for field in REQUIRED_SETTINGS):
-		return False
-
-	return all(settings.get_password(field, raise_exception=False) for field in REQUIRED_SECRETS)
-
-
-def auto_cluster() -> ObjectStorageCluster | None:
-	"""The cluster Cargo made, if it made one."""
-	name = frappe.db.exists("Object Storage Cluster", {"auto_spawn": 1})
-
-	return frappe.get_doc("Object Storage Cluster", name) if name else None
 
 
 def create_cluster(config: dict) -> ObjectStorageCluster:
@@ -198,13 +162,3 @@ def advance(cluster: ObjectStorageCluster) -> None:
 
 	cluster.db_set("auto_setup_attempts", cluster.auto_setup_attempts + 1)
 	cluster.setup()
-
-
-def report(cluster: ObjectStorageCluster, reason: str) -> None:
-	"""Say why the cluster is stuck, once rather than on every run."""
-	if cluster.error != reason:
-		cluster.db_set("error", reason)
-
-
-def machine_status(name: str) -> str:
-	return frappe.db.get_value("Machine", name, "status")

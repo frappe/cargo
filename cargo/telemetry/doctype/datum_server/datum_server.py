@@ -47,11 +47,13 @@ class DatumServer(WorkflowBuilder):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		auto_spawn: DF.Check
 		base_image: DF.Data
 		clickhouse_host: DF.Data
 		clickhouse_password: DF.Password | None
 		clickhouse_port: DF.Int
 		default_password: DF.Password | None
+		error: DF.SmallText | None
 		insights_password: DF.Password | None
 		machine: DF.Link | None
 		oidc_issuer: DF.Data | None

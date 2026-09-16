@@ -1,9 +1,8 @@
 {
  "actions": [],
  "allow_bulk_edit": 1,
- "allow_rename": 0,
  "autoname": "DATUM-.####.",
- "creation": "2026-09-09 13:23:56.118338",
+ "creation": "2026-09-16 16:46:40.395422",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -15,6 +14,8 @@
   "error",
   "repository",
   "version",
+  "auto_spawn",
+  "auto_setup_attempts",
   "clickhouse_section",
   "clickhouse_host",
   "clickhouse_port",
@@ -184,16 +185,32 @@
    "fieldtype": "Code",
    "label": "Setup Log",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Was this datum server auto spawned?",
+   "fieldname": "auto_spawn",
+   "fieldtype": "Check",
+   "label": "Auto Spawn"
+  },
+  {
+   "default": "0",
+   "depends_on": "auto_spawn",
+   "description": "Setup runs Cargo started by itself. It stops trying once the budget is spent.",
+   "fieldname": "auto_setup_attempts",
+   "fieldtype": "Int",
+   "label": "Auto Setup Attempts",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-09 15:43:20.144691",
+ "modified": "2026-09-16 17:33:36.542554",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

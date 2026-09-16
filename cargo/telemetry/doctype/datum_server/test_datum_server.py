@@ -11,6 +11,7 @@ from frappe.utils.password import remove_encrypted_password
 from cargo.client_models import TELEMETRY
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
+	DATUM_PORT,
 	PUBLIC_KEY_FILE,
 	WEBHOOK_ENDPOINT,
 	DatumServer,
@@ -300,40 +301,91 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
 
-	def test_the_domain_is_pointed_at_this_host(self):
+	def test_both_domains_are_pointed_at_this_host(self):
 		patched, client = self.proxy()
 		with patched:
 			self.assertTrue(self.server.publish_proxy_routes())
 
-		client.map_domain.assert_called_once_with(
-			f"telemetry-svc.{SETTINGS['wildcard_domain']}", self.machine.address
+		domain = SETTINGS["wildcard_domain"]
+		self.assertEqual(
+			[call.args for call in client.map_domain.call_args_list],
+			[
+				(f"telemetry-svc.{domain}", self.machine.address),
+				(f"telemetry-read-svc.{domain}", self.machine.address),
+			],
+		)
+
+	def steps(self, installed=True, routed=True, published=True):
+		return (
+			patch.object(DatumServer, "start_setup_on_machine", return_value=installed),
+			patch.object(DatumServer, "configure_routing", return_value=routed),
+			patch.object(DatumServer, "publish_proxy_routes", return_value=published),
 		)
 
 	def test_an_install_that_failed_is_never_routed_to(self):
-		with (
-			patch.object(DatumServer, "start_setup_on_machine", return_value=False),
-			patch.object(DatumServer, "publish_proxy_routes") as published,
-		):
+		install, routing, publishing = self.steps(installed=False)
+		with install, routing as configured, publishing as published:
+			self.server._setup()
+
+		configured.assert_not_called()
+		published.assert_not_called()
+
+	def test_a_host_nginx_would_not_serve_is_never_published(self):
+		install, routing, publishing = self.steps(routed=False)
+		with install, routing, publishing as published:
 			self.server._setup()
 
 		published.assert_not_called()
+		self.server.reload()
+		self.assertNotEqual(self.server.status, "Active")
 
-	def test_a_host_is_active_once_both_steps_land(self):
-		with (
-			patch.object(DatumServer, "start_setup_on_machine", return_value=True),
-			patch.object(DatumServer, "publish_proxy_routes", return_value=True),
-		):
+	def test_a_host_is_active_once_every_step_lands(self):
+		install, routing, publishing = self.steps()
+		with install, routing, publishing:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Active")
 
 	def test_a_host_whose_routes_failed_is_not_active(self):
-		with (
-			patch.object(DatumServer, "start_setup_on_machine", return_value=True),
-			patch.object(DatumServer, "publish_proxy_routes", return_value=False),
-		):
+		install, routing, publishing = self.steps(published=False)
+		with install, routing, publishing:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Active")
+
+	def test_nginx_is_told_both_ports_and_who_may_name_the_client(self):
+		environment = self.server.nginx_environment()
+
+		self.assertEqual(environment["DATUM_PORT"], DATUM_PORT)
+		self.assertEqual(environment["CLICKHOUSE_PORT"], self.server.clickhouse_port)
+		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
+		self.assertIn("fd00::/8", environment["TRUSTED_PROXIES"])
+
+	def test_a_region_with_no_domain_is_never_routed(self):
+		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
+			self.server.nginx_environment()
+
+	def test_the_nginx_script_is_the_one_run(self):
+		with patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh") as ran:
+			self.assertTrue(self.server.configure_routing())
+
+		sent = ran.call_args.args[1]
+		self.assertIn("server_name telemetry-svc.${WILDCARD_DOMAIN}", sent)
+		self.assertIn("server_name telemetry-read-svc.${WILDCARD_DOMAIN}", sent)
+		self.assertIn(f"export DATUM_PORT={DATUM_PORT}", sent)
+
+	def test_a_host_nginx_refuses_says_so(self):
+		with patch(
+			"cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh",
+			side_effect=RuntimeError("nginx -t failed"),
+		):
+			self.assertFalse(self.server.configure_routing())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Failed")
+		self.assertIn("nginx", self.server.error)
