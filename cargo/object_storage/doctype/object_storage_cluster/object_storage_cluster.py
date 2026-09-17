@@ -29,6 +29,8 @@ if typing.TYPE_CHECKING:
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
 WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
+SENDER_HEADER = "X-Sender"
+SENDER = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 S3_SITE_NAME = "s3-svc"
@@ -507,7 +509,6 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 			"condition": f"doc.status in {REPORTED_STATUSES}",
 			"webhook_json": frappe.as_json(
 				{
-					"sender": "cargo:storage",
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "storage",
@@ -515,6 +516,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"service_endpoint": cluster.service_endpoint,
 				}
 			),
+			"webhook_headers": [{"key": SENDER_HEADER, "value": SENDER}],
 			"enable_security": True,
 			"webhook_secret": secret,
 			"enabled": True,

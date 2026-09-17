@@ -37,6 +37,8 @@ SECRET_LENGTH = 32
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
 WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
+SENDER_HEADER = "X-Sender"
+SENDER = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 
 
@@ -308,7 +310,6 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			"condition": f"doc.status in {REPORTED_STATUSES}",
 			"webhook_json": frappe.as_json(
 				{
-					"sender": "cargo:telemetry",
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "telemetry",
@@ -316,6 +317,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 					"service_endpoint": server.service_endpoint,
 				}
 			),
+			"webhook_headers": [{"key": SENDER_HEADER, "value": SENDER}],
 			"enable_security": True,
 			"webhook_secret": secret,
 			"enabled": True,

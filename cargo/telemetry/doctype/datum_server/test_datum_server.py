@@ -4,7 +4,7 @@
 from unittest.mock import Mock, patch
 
 import frappe
-from frappe.integrations.doctype.webhook.webhook import get_webhook_data
+from frappe.integrations.doctype.webhook.webhook import get_webhook_data, get_webhook_headers
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
 
@@ -13,6 +13,8 @@ from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
 	DATUM_PORT,
 	PUBLIC_KEY_FILE,
+	SENDER,
+	SENDER_HEADER,
 	WEBHOOK_ENDPOINT,
 	WEBHOOK_NAME,
 	DatumServer,
@@ -280,6 +282,12 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		self.assertEqual(report["service"], "telemetry")
 		self.assertEqual(report["status"], "Available")
 		self.assertEqual(report["service_endpoint"], f"https://telemetry-svc.{SETTINGS['wildcard_domain']}")
+
+	def test_the_delivery_names_cargo_as_its_sender(self):
+		"""Central serves one endpoint for every plane, and routes on this header."""
+		server = self.insert_server()
+
+		self.assertEqual(get_webhook_headers(server, self.webhook())[SENDER_HEADER], SENDER)
 
 	def test_a_failed_host_reports_itself_unavailable(self):
 		server = self.insert_server()
