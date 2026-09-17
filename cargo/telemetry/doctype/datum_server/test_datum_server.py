@@ -167,8 +167,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertTrue(all(value.isalnum() for value in secrets.values()))
 
 	def test_a_host_saved_rather_than_inserted_still_gets_its_secrets(self):
-		"""A Single loads with no `__islocal`, so `save()` takes the update path and a
-		`before_insert` would never run -- the install would get empty passwords."""
+		"""A Single takes the update path; a `before_insert` would leave empty passwords."""
 		self.addCleanup(frappe.db.rollback)
 		server = frappe.get_single("Datum Server")
 		server.update(
@@ -238,8 +237,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		self.assertTrue(webhook.enable_security)
 
 	def test_a_host_saved_rather_than_inserted_still_gets_its_webhook(self):
-		"""A Single loads with no `__islocal`, so `save()` takes the update path and an
-		`after_insert` would never run."""
+		"""A Single takes the update path, where an `after_insert` would never run."""
 		frappe.get_single("Datum Server").update(
 			{
 				"clickhouse_host": "clickhouse.internal",
@@ -250,6 +248,18 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		).save()
 
 		self.assertTrue(frappe.db.exists("Webhook", WEBHOOK_NAME))
+
+	def test_the_blank_host_installing_the_app_leaves_reports_nothing(self):
+		"""`init_singles` writes it blank at install, before Cargo Settings has a Central."""
+		frappe.db.set_single_value("Cargo Settings", "central_url", "")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		blank = frappe.new_doc("Datum Server")
+		blank.flags.ignore_mandatory = True
+		blank.flags.ignore_validate = True
+		blank.save()
+
+		self.assertFalse(frappe.db.exists("Webhook", WEBHOOK_NAME))
 
 	def test_only_a_settled_host_is_reported(self):
 		self.insert_server()

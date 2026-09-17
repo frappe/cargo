@@ -93,17 +93,18 @@ class DatumServer(WorkflowBuilder):
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
 
 	def before_save(self) -> None:
-		"""Every ClickHouse password this host uses, generated once -- the install writes them
-		into ClickHouse itself. Hex, so none carries the `--` or quotes datum-migrate refuses.
-
-		A Single is saved rather than inserted, so this cannot live in `before_insert`."""
+		"""Passwords the install writes into ClickHouse. Hex, so none carries what
+		datum-migrate refuses. Here and not in `before_insert`, which a Single never runs."""
 		for field in USER_PASSWORDS:
 			if not self.get(field):
 				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
 
 	def on_update(self) -> None:
-		"""Central hands pilots this host's URL to ship metrics and logs to, so it has to hear
-		when the host comes up or goes down."""
+		"""Tell Central when the host settles. Install writes this Single blank, and an empty
+		one is no host."""
+		if not self.repository:
+			return
+
 		if not frappe.db.exists("Webhook", WEBHOOK_NAME):
 			configure_telemetry_webhook(self)
 
