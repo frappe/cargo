@@ -22,6 +22,8 @@ BENCH_GID="${BENCH_GID:-1000}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
+# Off leaves an initialised bench with no site on it.
+HAS_SITE="${HAS_SITE:-1}"
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 
@@ -71,7 +73,10 @@ as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$F
 as_bench_user "grep -q '^branch = \"$FRAPPE_VERSION\"' '$bench_toml'"
 
 as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
-as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
+
+if [ "$HAS_SITE" = 1 ]; then
+	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
+fi
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
 as_bench_user "pilot --yes -b '$BENCH' setup production"
@@ -94,7 +99,10 @@ probe_site() {
 	return 1
 }
 
-probe_site
+# A siteless image has nothing to answer the probe, so the nginx check above is all it promises.
+if [ "$HAS_SITE" = 1 ]; then
+	probe_site
+fi
 
 # Last: this hands the host to Central, and the pending screen then replaces the site
 # probed above. It rewrites nginx itself now that production is up.
@@ -116,6 +124,7 @@ set -u
 
 site="$SITE"
 bench="$BENCH"
+has_site="$HAS_SITE"
 upstream="http://127.0.0.1:8000"
 admin="$ADMIN_UPSTREAM"
 bench_user="$BENCH_USER"
@@ -127,8 +136,7 @@ if [ ! -e "\$marker" ]; then
 	exit 0
 fi
 
-# The password never reaches disk. The marker makes this a one-time action: Atlas captures
-# its removal with the warm guest, so resumed tenants do not reset Administrator on boot.
+# The password never reaches disk, and a siteless image never reads it.
 password="\$(head -c 24 /dev/urandom | base64 | tr -d '\\n')aA1#"
 
 set_temporary_password() {
@@ -183,6 +191,9 @@ warm_admin() {
 	status="\$(curl -sS -m 30 -o /dev/null -w '%{http_code}' "\$admin/api/v1/auth/session" || true)"
 	[ "\$status" = "200" ] || return 1
 
+	# The read path below is per site, so a siteless image stops at the open probe.
+	[ "\$has_site" = 1 ] || return 0
+
 	token="\$(su - "\$bench_user" -c "pilot -b '\$bench' admin issue-site-token '\$site' --ttl 60" | tail -n 1)"
 	[ -n "\$token" ] || return 1
 
@@ -191,20 +202,27 @@ warm_admin() {
 	[ "\$status" = "200" ]
 }
 
+warm_site() {
+	[ "\$has_site" = 1 ] || return 0
+	request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk
+}
+
 password_is_set=false
 for _ in \$(seq 1 "\$attempts"); do
-	if [ "\$password_is_set" = false ]; then
+	if [ "\$has_site" = 1 ] && [ "\$password_is_set" = false ]; then
 		if ! set_temporary_password; then
 			sleep "\$delay"
 			continue
 		fi
-		rm -f "\$marker"
-		sync
 		password_is_set=true
 	fi
 
-	if request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk &&
-		warm_admin; then
+	# The marker makes this a one-time action: Atlas captures its removal with the warm
+	# guest, so resumed tenants do not reset Administrator on boot.
+	rm -f "\$marker"
+	sync
+
+	if warm_site && warm_admin; then
 		logger -t pilot-prewarm "Frappe is warm"
 		exit 0
 	fi

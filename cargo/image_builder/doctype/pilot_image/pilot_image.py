@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+from itertools import product
+
 import frappe
 from frappe.utils import now_datetime
 
@@ -27,11 +29,12 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 SNAPSHOT_TIMEOUT = 1800
 FRAPPE_VERSIONS = ("version-16", "develop")
+SITE_VARIANTS = (1, 0)
 TRACKED_PILOT_VERSIONS = 3
 BUILDING_STATUSES = ("Provisioning", "Building", "Snapshotting")
 
 
-class Image(WorkflowBuilder):
+class PilotImage(WorkflowBuilder):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 
@@ -44,6 +47,7 @@ class Image(WorkflowBuilder):
 		built_at: DF.Datetime | None
 		error: DF.LongText | None
 		frappe_version: DF.Literal["version-16", "develop"]
+		has_site: DF.Check
 		pilot_version: DF.Data
 		snapshot_id: DF.Data | None
 		ssh_private_key: DF.Password | None
@@ -56,10 +60,11 @@ class Image(WorkflowBuilder):
 
 	def validate(self) -> None:
 		if frappe.db.exists(
-			"Image",
+			"Pilot Image",
 			{
 				"pilot_version": self.pilot_version,
 				"frappe_version": self.frappe_version,
+				"has_site": self.has_site,
 				"name": ("!=", self.name),
 			},
 		):
@@ -83,6 +88,7 @@ class Image(WorkflowBuilder):
 			"purpose": "pilot",
 			"pilot_version": self.pilot_version,
 			"frappe_version": self.frappe_version,
+			"has_site": str(int(self.has_site)),
 			**PILOT_IMAGE_OS_TAGS,
 		}
 
@@ -94,6 +100,7 @@ class Image(WorkflowBuilder):
 			"VERSION": self.pilot_version,
 			"FRAPPE_VERSION": self.frappe_version,
 			"WILDCARD_DOMAIN": self.wildcard_domain,
+			"HAS_SITE": str(int(self.has_site)),
 		}
 
 	@property
@@ -152,8 +159,6 @@ class Image(WorkflowBuilder):
 	def run_provision_script(self, address: str) -> None:
 		"""Install onto the build machine"""
 		private_key = self.get_password("ssh_private_key")
-		# Atlas calls a machine running before it has booted, so the first SSH attempt of a
-		# build would otherwise time out against a machine that is only seconds old.
 		self.builder.wait_until_reachable(address, private_key)
 
 		with OutputLog(self, "build_log") as log:
@@ -233,12 +238,12 @@ class Image(WorkflowBuilder):
 def sync_build_machines() -> None:
 	"""Walk every image still waiting on Atlas. Scheduled in `hooks.py`."""
 	waiting = frappe.get_all(
-		"Image",
+		"Pilot Image",
 		filters={"status": "Provisioning", "temporary_vm_id": ["is", "set"]},
 		pluck="name",
 	)
 	for name in waiting:
-		image: Image = frappe.get_doc("Image", name)
+		image: PilotImage = frappe.get_doc("Pilot Image", name)
 		image.sync_build_vm()
 
 
@@ -256,23 +261,22 @@ def sync_pilot_releases() -> None:
 
 
 def ensure_release(pilot_version: str) -> list[str]:
-	"""One record per Frappe version. Returns those still waiting for a machine.
+	"""One record per Frappe version and site variant. Returns those waiting for a machine.
 
 	A build that never started leaves the image in Draft, so the next run picks it up.
 	A Failed image is left alone, because retrying it hourly would rent a machine hourly."""
 	waiting = []
-	for frappe_version in FRAPPE_VERSIONS:
-		name = frappe.db.exists("Image", {"pilot_version": pilot_version, "frappe_version": frappe_version})
+	for frappe_version, has_site in product(FRAPPE_VERSIONS, SITE_VARIANTS):
+		identity = {
+			"pilot_version": pilot_version,
+			"frappe_version": frappe_version,
+			"has_site": has_site,
+		}
+		name = frappe.db.exists("Pilot Image", identity)
 		if not name:
-			name = (
-				frappe.get_doc(
-					{"doctype": "Image", "pilot_version": pilot_version, "frappe_version": frappe_version}
-				)
-				.insert()
-				.name
-			)
+			name = frappe.get_doc({"doctype": "Pilot Image", **identity}).insert().name
 
-		if frappe.db.get_value("Image", name, "status") == "Draft":
+		if frappe.db.get_value("Pilot Image", name, "status") == "Draft":
 			waiting.append(name)
 
 	return waiting
@@ -281,9 +285,9 @@ def ensure_release(pilot_version: str) -> list[str]:
 def enqueue_build(name: str) -> None:
 	"""One job per image, so each rented machine lands in a transaction of its own."""
 	frappe.enqueue(
-		"cargo.image_builder.doctype.image.image.build_image",
+		"cargo.image_builder.doctype.pilot_image.pilot_image.build_image",
 		queue="short",
-		job_id=f"cargo||image||build||{name}",
+		job_id=f"cargo||pilot_image||build||{name}",
 		deduplicate=True,
 		enqueue_after_commit=True,
 		name=name,
@@ -292,7 +296,7 @@ def enqueue_build(name: str) -> None:
 
 def build_image(name: str) -> None:
 	"""Rent a machine for one image. Its own job, so one failure cannot undo another."""
-	image: Image = frappe.get_doc("Image", name)
+	image: PilotImage = frappe.get_doc("Pilot Image", name)
 	if image.status != "Draft":
 		return
 
@@ -306,18 +310,22 @@ def retire_old_releases() -> None:
 		return
 
 	stale = frappe.get_all(
-		"Image",
+		"Pilot Image",
 		filters={"pilot_version": ("not in", keep), "status": ("not in", BUILDING_STATUSES)},
 		pluck="name",
 	)
 	for name in stale:
-		image: Image = frappe.get_doc("Image", name)
+		image: PilotImage = frappe.get_doc("Pilot Image", name)
 		image.retire()
 
 
 def on_doctype_update() -> None:
-	"""The pair is the identity, so the database holds it, not only `validate`."""
-	frappe.db.add_unique("Image", ["pilot_version", "frappe_version"], constraint_name="unique_image_pair")
+	"""The three together are the identity, so the database holds them, not only `validate`."""
+	frappe.db.add_unique(
+		"Pilot Image",
+		["pilot_version", "frappe_version", "has_site"],
+		constraint_name="unique_pilot_image_variant",
+	)
 
 
 def tracked_pilot_versions() -> list[str]:
@@ -326,7 +334,7 @@ def tracked_pilot_versions() -> list[str]:
 	A version is placed by the first image Cargo made for it, so building one again
 	later does not move it."""
 	first_seen: list[str] = []
-	for version in frappe.get_all("Image", order_by="creation asc", pluck="pilot_version"):
+	for version in frappe.get_all("Pilot Image", order_by="creation asc", pluck="pilot_version"):
 		if version not in first_seen:
 			first_seen.append(version)
 
