@@ -4,7 +4,7 @@
 from unittest.mock import Mock, patch
 
 import frappe
-from frappe.integrations.doctype.webhook.webhook import get_webhook_data
+from frappe.integrations.doctype.webhook.webhook import get_webhook_data, get_webhook_headers
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
 
@@ -13,6 +13,9 @@ from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
 	DATUM_PORT,
 	PUBLIC_KEY_FILE,
+	REGION_HEADER,
+	SENDER,
+	SENDER_HEADER,
 	WEBHOOK_ENDPOINT,
 	WEBHOOK_NAME,
 	DatumServer,
@@ -278,7 +281,26 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 
 		self.assertEqual(report["region"], SETTINGS["region"])
 		self.assertEqual(report["service"], "telemetry")
-		self.assertEqual(report["status"], "Active")
+		self.assertEqual(report["status"], "Available")
+		self.assertEqual(report["service_endpoint"], f"https://telemetry-svc.{SETTINGS['wildcard_domain']}")
+
+	def test_the_delivery_names_cargo_as_its_sender(self):
+		"""Central serves one endpoint for every plane, and routes on this header."""
+		server = self.insert_server()
+
+		headers = get_webhook_headers(server, self.webhook())
+
+		self.assertEqual(headers[SENDER_HEADER], SENDER)
+		self.assertEqual(headers[REGION_HEADER], SETTINGS["region"])
+
+	def test_a_failed_host_reports_itself_unavailable(self):
+		server = self.insert_server()
+		server.db_set("status", "Failed")
+		server.reload()
+
+		report = get_webhook_data(server, self.webhook())
+
+		self.assertEqual(report["status"], "Not Available")
 
 	def test_a_cargo_with_no_webhook_secret_will_not_save_the_host(self):
 		"""Nothing may post to Central unauthenticated, so the host is refused."""

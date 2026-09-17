@@ -24,6 +24,9 @@ from frappe.utils.password import (
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	CLUSTER_SECRETS,
+	REGION_HEADER,
+	SENDER,
+	SENDER_HEADER,
 	WEBHOOK_ENDPOINT,
 	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
@@ -388,7 +391,26 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 		self.assertEqual(report["region"], self.settings.region)
 		self.assertEqual(report["region_id"], self.settings.region_id)
 		self.assertEqual(report["service"], "storage")
-		self.assertEqual(report["status"], "Active")
+		self.assertEqual(report["status"], "Available")
+		self.assertEqual(report["service_endpoint"], f"https://s3-svc.{self.settings.wildcard_domain}")
+
+	def test_the_delivery_names_cargo_as_its_sender(self):
+		"""Central serves one endpoint for every plane, and routes on this header."""
+		cluster = self.insert_cluster()
+
+		headers = get_webhook_headers(cluster, self.webhook_of(cluster))
+
+		self.assertEqual(headers[SENDER_HEADER], SENDER)
+		self.assertEqual(headers[REGION_HEADER], self.settings.region)
+
+	def test_a_failed_cluster_reports_itself_unavailable(self):
+		cluster = self.insert_cluster()
+		cluster.db_set("status", "Failed")
+		cluster.reload()
+
+		report = get_webhook_data(cluster, self.webhook_of(cluster))
+
+		self.assertEqual(report["status"], "Not Available")
 
 	def test_a_cargo_with_no_webhook_secret_makes_no_cluster(self):
 		"""Nothing may post to Central unauthenticated, so the cluster does not get made."""

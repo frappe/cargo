@@ -28,10 +28,15 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
-WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook"
+WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
+SENDER_HEADER = "X-Sender"
+REGION_HEADER = "X-Region"
+SENDER = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
-PROXY_SITE_NAMES = ("s3-svc", "s3-admin-svc")
+S3_SITE_NAME = "s3-svc"
+S3_ADMIN_SITE_NAME = "s3-admin-svc"
+PROXY_SITE_NAMES = (S3_SITE_NAME, S3_ADMIN_SITE_NAME)
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -117,12 +122,21 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return Setup(self)
 
 	@property
-	def proxy_domains(self) -> tuple[str, ...]:
-		wildcard_domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
-		if not wildcard_domain:
+	def wildcard_domain(self) -> str:
+		domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain", cache=True)
+		if not domain:
 			frappe.throw(_("Wildcard Domain must be set in Cargo Settings."))
 
-		return tuple(f"{site_name}.{wildcard_domain}" for site_name in PROXY_SITE_NAMES)
+		return domain
+
+	@property
+	def proxy_domains(self) -> tuple[str, ...]:
+		return tuple(f"{site_name}.{self.wildcard_domain}" for site_name in PROXY_SITE_NAMES)
+
+	@property
+	def service_endpoint(self) -> str:
+		"""The S3 URL users reach this cluster at, served by nginx on the gateway."""
+		return f"https://{S3_SITE_NAME}.{self.wildcard_domain}"
 
 	def validate(self) -> None:
 		if self.status == "Active":
@@ -486,8 +500,6 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)
 	webhook.name = name
-	# TODO:  Once the proxy is layouted we can simply add a field in osc for gateway node address (domain)
-	# And that is going to be our service_endpoint.
 	webhook.update(
 		{
 			"webhook_doctype": cluster.doctype,
@@ -501,10 +513,14 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "storage",
-					"status": "{{ doc.status }}",
-					"service_endpoint": "<TBD>",
+					"status": "{{ 'Available' if doc.status == 'Active' else 'Not Available' }}",
+					"service_endpoint": cluster.service_endpoint,
 				}
 			),
+			"webhook_headers": [
+				{"key": SENDER_HEADER, "value": SENDER},
+				{"key": REGION_HEADER, "value": settings.region},
+			],
 			"enable_security": True,
 			"webhook_secret": secret,
 			"enabled": True,

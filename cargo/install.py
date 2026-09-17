@@ -32,7 +32,7 @@ def after_install() -> None:
 
 	missing = [name for name in ENROLMENT_VARS if not os.getenv(name)]
 	if missing:
-		frappe.throw(_("Set {0} before installing Cargo.").format(", ".join(missing)))
+		print(_("Set {0} before installing Cargo.").format(", ".join(missing)))
 
 	record_upstreams()
 	complete_setup_wizard()
