@@ -25,7 +25,9 @@ CONF = ("telemetry", "conf", "datum", "install.sh")
 NGINX_CONF = ("telemetry", "conf", "nginx", "install.sh")
 DATUM_PORT = 8000
 TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
-TELEMETRY_SITE_NAMES = ("telemetry-svc", "telemetry-read-svc")
+TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
+TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
+TELEMETRY_SITE_NAMES = (TELEMETRY_WRITE_SITE_NAME, TELEMETRY_READ_SITE_NAME)
 SETUP_TIMEOUT = 30 * 60
 PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
@@ -34,7 +36,7 @@ MAX_PORT = 65535
 SECRET_LENGTH = 32
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
-WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
+WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
 REPORTED_STATUSES = ("Active", "Failed")
 
 
@@ -212,6 +214,11 @@ class DatumServer(WorkflowBuilder):
 	def proxy_domains(self) -> tuple[str, ...]:
 		return tuple(f"{site_name}.{self.wildcard_domain}" for site_name in TELEMETRY_SITE_NAMES)
 
+	@property
+	def service_endpoint(self) -> str:
+		"""The URL pilots ship metrics and logs to, served by nginx on this host."""
+		return f"https://{TELEMETRY_WRITE_SITE_NAME}.{self.wildcard_domain}"
+
 	@task
 	def publish_proxy_routes(self) -> bool:
 		"""Point this region's telemetry domain at the host."""
@@ -291,8 +298,6 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)
 	webhook.name = name
-	# TODO: Once the proxy is laid out, this host's public URL (a domain) becomes its
-	# service_endpoint -- the URL pilots ship metrics and logs to.
 	webhook.update(
 		{
 			"webhook_doctype": server.doctype,
@@ -307,7 +312,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 					"region_id": settings.region_id,
 					"service": "telemetry",
 					"status": "{{ doc.status }}",
-					"service_endpoint": "<TBD>",
+					"service_endpoint": server.service_endpoint,
 				}
 			),
 			"enable_security": True,
