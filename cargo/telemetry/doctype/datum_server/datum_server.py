@@ -38,6 +38,7 @@ USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user
 WEBHOOK_NAME = "datum_server"
 WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
 SENDER_HEADER = "X-Sender"
+REGION_HEADER = "X-Region"
 SENDER = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 
@@ -317,7 +318,10 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 					"service_endpoint": server.service_endpoint,
 				}
 			),
-			"webhook_headers": [{"key": SENDER_HEADER, "value": SENDER}],
+			"webhook_headers": [
+				{"key": SENDER_HEADER, "value": SENDER},
+				{"key": REGION_HEADER, "value": settings.region},
+			],
 			"enable_security": True,
 			"webhook_secret": secret,
 			"enabled": True,

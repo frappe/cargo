@@ -30,6 +30,7 @@ SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
 WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
 SENDER_HEADER = "X-Sender"
+REGION_HEADER = "X-Region"
 SENDER = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
@@ -516,7 +517,10 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 					"service_endpoint": cluster.service_endpoint,
 				}
 			),
-			"webhook_headers": [{"key": SENDER_HEADER, "value": SENDER}],
+			"webhook_headers": [
+				{"key": SENDER_HEADER, "value": SENDER},
+				{"key": REGION_HEADER, "value": settings.region},
+			],
 			"enable_security": True,
 			"webhook_secret": secret,
 			"enabled": True,

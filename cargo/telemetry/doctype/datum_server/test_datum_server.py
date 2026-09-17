@@ -13,6 +13,7 @@ from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
 	DATUM_PORT,
 	PUBLIC_KEY_FILE,
+	REGION_HEADER,
 	SENDER,
 	SENDER_HEADER,
 	WEBHOOK_ENDPOINT,
@@ -287,7 +288,10 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		"""Central serves one endpoint for every plane, and routes on this header."""
 		server = self.insert_server()
 
-		self.assertEqual(get_webhook_headers(server, self.webhook())[SENDER_HEADER], SENDER)
+		headers = get_webhook_headers(server, self.webhook())
+
+		self.assertEqual(headers[SENDER_HEADER], SENDER)
+		self.assertEqual(headers[REGION_HEADER], SETTINGS["region"])
 
 	def test_a_failed_host_reports_itself_unavailable(self):
 		server = self.insert_server()
