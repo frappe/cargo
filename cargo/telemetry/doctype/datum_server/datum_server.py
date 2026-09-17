@@ -308,10 +308,11 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			"condition": f"doc.status in {REPORTED_STATUSES}",
 			"webhook_json": frappe.as_json(
 				{
+					"sender": "cargo:telemetry",
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "telemetry",
-					"status": "{{ doc.status }}",
+					"status": "{{ 'Available' if doc.status == 'Active' else 'Not Available' }}",
 					"service_endpoint": server.service_endpoint,
 				}
 			),

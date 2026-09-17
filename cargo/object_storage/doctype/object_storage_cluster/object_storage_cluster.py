@@ -507,10 +507,11 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 			"condition": f"doc.status in {REPORTED_STATUSES}",
 			"webhook_json": frappe.as_json(
 				{
+					"sender": "cargo:storage",
 					"region": settings.region,
 					"region_id": settings.region_id,
 					"service": "storage",
-					"status": "{{ doc.status }}",
+					"status": "{{ 'Available' if doc.status == 'Active' else 'Not Available' }}",
 					"service_endpoint": cluster.service_endpoint,
 				}
 			),

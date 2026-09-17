@@ -388,8 +388,17 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 		self.assertEqual(report["region"], self.settings.region)
 		self.assertEqual(report["region_id"], self.settings.region_id)
 		self.assertEqual(report["service"], "storage")
-		self.assertEqual(report["status"], "Active")
+		self.assertEqual(report["status"], "Available")
 		self.assertEqual(report["service_endpoint"], f"https://s3-svc.{self.settings.wildcard_domain}")
+
+	def test_a_failed_cluster_reports_itself_unavailable(self):
+		cluster = self.insert_cluster()
+		cluster.db_set("status", "Failed")
+		cluster.reload()
+
+		report = get_webhook_data(cluster, self.webhook_of(cluster))
+
+		self.assertEqual(report["status"], "Not Available")
 
 	def test_a_cargo_with_no_webhook_secret_makes_no_cluster(self):
 		"""Nothing may post to Central unauthenticated, so the cluster does not get made."""

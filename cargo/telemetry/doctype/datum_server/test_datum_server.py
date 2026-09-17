@@ -278,8 +278,17 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 
 		self.assertEqual(report["region"], SETTINGS["region"])
 		self.assertEqual(report["service"], "telemetry")
-		self.assertEqual(report["status"], "Active")
+		self.assertEqual(report["status"], "Available")
 		self.assertEqual(report["service_endpoint"], f"https://telemetry-svc.{SETTINGS['wildcard_domain']}")
+
+	def test_a_failed_host_reports_itself_unavailable(self):
+		server = self.insert_server()
+		server.db_set("status", "Failed")
+		server.reload()
+
+		report = get_webhook_data(server, self.webhook())
+
+		self.assertEqual(report["status"], "Not Available")
 
 	def test_a_cargo_with_no_webhook_secret_will_not_save_the_host(self):
 		"""Nothing may post to Central unauthenticated, so the host is refused."""
