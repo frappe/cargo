@@ -6,11 +6,13 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-An **Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`.
+A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`. `has_site` says whether a site is baked in.
 
-Every image carries the same bench `default-bench` and the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
+Every image carries the same bench `default-bench`, and one with `has_site` carries the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
-One pair is one image, so a Pilot release has two images.
+Turn `has_site` off to bake an initialised bench with no site on it. The image is then verified by nginx coming back at boot alone, and its prewarm warms only the admin API, so it boots warm but colder than a site image.
+
+The three together are the identity, in `validate` and in a unique database constraint, so the same release and Frappe version can exist once with a site and once without.
 
 ## Requirements
 
@@ -20,7 +22,7 @@ Use Pilot `v0.0.32-pre-alpha` or later. Earlier releases have no Central bootstr
 
 ## Build sequence
 
-Select **Build** on an Image.
+Select **Build** on a Pilot Image.
 
 ```text
 build            -> keypair, Atlas VM (Provisioning)
@@ -47,11 +49,11 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
 3. Runs the Pilot installer as root, then as the bench user.
-4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site.
+4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site. `HAS_SITE=0` stops after the bench is initialised.
 5. Runs `pilot setup production`.
-6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image.
+6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image. Without a site there is nothing to answer it, so only the nginx check runs.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. It comes last because it puts the host in the awaiting-bootstrap state, where the pending screen replaces the site the step above probes.
-8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. A failed prewarm is logged and never prevents a normal boot.
+8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. Without a site it makes no password and warms the admin API only. A failed prewarm is logged and never prevents a normal boot.
 9. Removes the swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
@@ -84,8 +86,8 @@ Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Setting
 An hourly job then:
 
 1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
-2. Creates an image for `version-16` and `develop` if they are absent, and builds each one.
-3. Retires everything outside the newest 3 Pilot versions, which keeps 6 images.
+2. Creates the four images a release needs if they are absent -- `version-16` and `develop`, each with a site and without one -- and builds each one.
+3. Retires everything outside the newest 3 Pilot versions, which keeps 12 images.
 
 A version is newest by the time Cargo first created an image for it.
 
@@ -101,4 +103,4 @@ Cargo snapshots with `cache_image` and `memory_snapshot`. Atlas accepts both fro
 
 Before it captures that template, Atlas boots a temporary guest for about five minutes. The image's `pilot-prewarm.service` uses that period to load Frappe in the web worker. It calls the loopback upstream rather than nginx because a newly baked image is awaiting Central bootstrap and nginx serves the pending screen in that state.
 
-Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_CPU_MILLICORES`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.
+Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_CPU_MILLICORES`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/doctype/pilot_image/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.
