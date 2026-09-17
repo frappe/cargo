@@ -66,12 +66,12 @@ def build_server(config: dict) -> None:
 	"""One step towards the region having a datum host that serves."""
 	server: DatumServer = frappe.get_single("Datum Server")
 
-	# The region's one host always exists, so an empty one has simply never been filled in.
+	# The Single always exists; an empty one was never filled in.
 	if not server.repository:
 		provision(server, config)
 		return
 
-	# Filled in by hand, and left to whoever filled it in.
+	# Filled in by hand: left alone.
 	if not server.auto_spawn:
 		return
 
@@ -84,11 +84,8 @@ def build_server(config: dict) -> None:
 
 
 def provision(server: DatumServer, config: dict) -> None:
-	"""Fill the host in from site config. The machine is asked for on the next run, so a
-	failure here leaves a record to carry on from rather than a rented machine with no owner.
-
-	Datum checks tokens against Central's keys, so the issuer is where this Cargo reaches
-	Central -- a host with neither issuer nor key answers 401 to everything."""
+	"""Fill the host in from site config; the machine comes on the next run. The issuer is
+	Central, whose keys datum checks tokens against."""
 	server.update(
 		{
 			"auto_spawn": 1,

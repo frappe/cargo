@@ -37,8 +37,8 @@ def use_test_settings() -> None:
 
 
 def reset_datum_server() -> None:
-	"""Clear the region's datum host between tests. It is a Single, so there is no row to
-	delete, and its secrets live apart from the values they belong to."""
+	"""Clear the datum host between tests: a Single has no row to delete, and its secrets
+	live apart."""
 	frappe.db.delete("Singles", {"doctype": "Datum Server"})
 	for field in DATUM_SECRETS:
 		remove_encrypted_password("Datum Server", "Datum Server", field)
