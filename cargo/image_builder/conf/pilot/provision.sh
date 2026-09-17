@@ -6,6 +6,8 @@ export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
 : "${FRAPPE_VERSION:?FRAPPE_VERSION is required}"
+: "${PROXY_SUBNET:?PROXY_SUBNET is required}"
+: "${DOMAIN_PROVIDER:?DOMAIN_PROVIDER is required}"
 
 # Every image carries the same bench and site. Both are reached through a hostname alias,
 # so neither has to be unique or to resolve anywhere.
@@ -15,6 +17,7 @@ ADMIN_DOMAIN="admin.local"
 PREWARM_SCRIPT="/usr/local/lib/pilot/prewarm-frappe.sh"
 PREWARM_UNIT="/etc/systemd/system/pilot-prewarm.service"
 PREWARM_MARKER="/var/lib/pilot/prewarm-pending"
+PROVIDER_SCRIPT="/usr/bin/bench-domain-provider"
 
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1000}"
@@ -255,6 +258,15 @@ PREWARM_UNIT
 
 systemctl daemon-reload
 systemctl enable --quiet "$(basename "$PREWARM_UNIT")"
+
+# Pilot asks this provider where a custom domain routes. Cargo bakes the zone and the
+# proxy subnet into it, because neither changes for a VM of this image.
+printf '%s' "$DOMAIN_PROVIDER" > "$PROVIDER_SCRIPT"
+chmod 755 "$PROVIDER_SCRIPT"
+
+# A silent miss would ship a provider that routes nothing.
+"$PROVIDER_SCRIPT" wildcard-domains | grep -q "$WILDCARD_DOMAIN"
+"$PROVIDER_SCRIPT" proxy-servers | grep -q "$PROXY_SUBNET"
 
 # Build litter only.
 swapoff /swapfile

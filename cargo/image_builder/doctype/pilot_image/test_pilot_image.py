@@ -49,6 +49,15 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(environment["VERSION"], version)
 		self.assertEqual(environment["FRAPPE_VERSION"], "version-16")
 		self.assertEqual(environment["WILDCARD_DOMAIN"], WILDCARD_DOMAIN)
+		self.assertEqual(environment["PROXY_SUBNET"], f"fdaa:{SETTINGS['region_id']:x}::/64")
+
+	def test_an_image_bakes_its_region_into_the_domain_provider(self):
+		provider = self.image(self.release()).domain_provider
+
+		self.assertIn(f'["*.{WILDCARD_DOMAIN}"]', provider)
+		self.assertIn(f'["fdaa:{SETTINGS["region_id"]:x}::/64"]', provider)
+		self.assertNotIn("__WILDCARD_DOMAIN__", provider)
+		self.assertNotIn("__PROXY_SUBNET__", provider)
 
 	def test_an_image_tells_the_script_whether_to_make_a_site(self):
 		with_site = self.image(self.release())
@@ -105,6 +114,16 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_a_build_without_a_wildcard_domain_stops_before_it_rents_a_machine(self):
 		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		with patch("cargo.image_builder.doctype.pilot_image.builder.AtlasClient") as atlas:
+			with self.assertRaises(frappe.ValidationError):
+				self.image(self.release()).build()
+
+		atlas.from_settings.assert_not_called()
+
+	def test_a_build_without_a_region_stops_before_it_rents_a_machine(self):
+		frappe.db.set_single_value("Cargo Settings", "region_id", 0)
 		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
 
 		with patch("cargo.image_builder.doctype.pilot_image.builder.AtlasClient") as atlas:
