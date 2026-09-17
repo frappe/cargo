@@ -51,6 +51,14 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(environment["WILDCARD_DOMAIN"], WILDCARD_DOMAIN)
 		self.assertEqual(environment["PROXY_SUBNET"], f"fdaa:{SETTINGS['region_id']:x}::/64")
 
+	def test_an_image_bakes_its_region_into_the_domain_provider(self):
+		provider = self.image(self.release()).domain_provider
+
+		self.assertIn(f'["*.{WILDCARD_DOMAIN}"]', provider)
+		self.assertIn(f'["fdaa:{SETTINGS["region_id"]:x}::/64"]', provider)
+		self.assertNotIn("__WILDCARD_DOMAIN__", provider)
+		self.assertNotIn("__PROXY_SUBNET__", provider)
+
 	def test_an_image_tells_the_script_whether_to_make_a_site(self):
 		with_site = self.image(self.release())
 		without_site = self.image(self.release(), has_site=0)

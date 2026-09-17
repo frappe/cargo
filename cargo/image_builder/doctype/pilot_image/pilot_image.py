@@ -20,7 +20,7 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	Builder,
 )
 from cargo.image_builder.doctype.pilot_image.releases import latest_pilot_release
-from cargo.ssh import OutputLog, create_keypair
+from cargo.ssh import OutputLog, create_keypair, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -32,6 +32,7 @@ FRAPPE_VERSIONS = ("version-16", "develop")
 SITE_VARIANTS = (1, 0)
 TRACKED_PILOT_VERSIONS = 3
 BUILDING_STATUSES = ("Provisioning", "Building", "Snapshotting")
+DOMAIN_PROVIDER = ("image_builder", "conf", "pilot", "domain_provider.py")
 
 
 class PilotImage(WorkflowBuilder):
@@ -101,6 +102,7 @@ class PilotImage(WorkflowBuilder):
 			"FRAPPE_VERSION": self.frappe_version,
 			"WILDCARD_DOMAIN": self.wildcard_domain,
 			"PROXY_SUBNET": self.proxy_subnet,
+			"DOMAIN_PROVIDER": self.domain_provider,
 			"HAS_SITE": str(int(self.has_site)),
 		}
 
@@ -118,6 +120,14 @@ class PilotImage(WorkflowBuilder):
 		"""The tenant-0 subnet holding every edge proxy. A mesh address is
 		fdaa:<region>:<tenant>:<VM>, so one tenant of one region is a /64."""
 		return f"fdaa:{self.region_id:x}::/64"
+
+	@property
+	def domain_provider(self) -> str:
+		"""The provider the image installs, with this region's values baked in."""
+		source = script(*DOMAIN_PROVIDER)
+		return source.replace("__WILDCARD_DOMAIN__", f"*.{self.wildcard_domain}").replace(
+			"__PROXY_SUBNET__", self.proxy_subnet
+		)
 
 	@frappe.whitelist()
 	def build(self) -> None:
