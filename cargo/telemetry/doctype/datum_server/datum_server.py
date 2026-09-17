@@ -32,6 +32,8 @@ PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 DATUM_USER = "datum"
 MAX_PORT = 65535
 SECRET_LENGTH = 32
+USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
+WEBHOOK_NAME = "datum_server"
 WEBHOOK_ENDPOINT = "/api/method/central.api.cargo_webhooks.telemetry_webhook"
 REPORTED_STATUSES = ("Active", "Failed")
 
@@ -50,11 +52,11 @@ class DatumServer(WorkflowBuilder):
 		auto_spawn: DF.Check
 		base_image: DF.Data
 		clickhouse_host: DF.Data
-		clickhouse_password: DF.Password | None
 		clickhouse_port: DF.Int
-		default_password: DF.Password | None
+		datum_user_password: DF.Password | None
+		default_user_password: DF.Password | None
 		error: DF.SmallText | None
-		insights_password: DF.Password | None
+		insights_user_password: DF.Password | None
 		machine: DF.Link | None
 		oidc_issuer: DF.Data | None
 		public_key: DF.Code | None
@@ -90,24 +92,21 @@ class DatumServer(WorkflowBuilder):
 		if cint(self.timeout_seconds) < 1:
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
 
-	def before_insert(self) -> None:
-		"""Every ClickHouse password this host uses. Generated once and kept here, because
-		the install writes them into ClickHouse itself -- nothing to keep in step later.
+	def before_save(self) -> None:
+		"""Passwords the install writes into ClickHouse. Hex, so none carries what
+		datum-migrate refuses. Here and not in `before_insert`, which a Single never runs."""
+		for field in USER_PASSWORDS:
+			if not self.get(field):
+				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
 
-		Hex, so none can carry the `--` or quotes datum-migrate refuses."""
-		if not self.clickhouse_password:
-			self.clickhouse_password = frappe.generate_hash(length=SECRET_LENGTH)
+	def on_update(self) -> None:
+		"""Tell Central when the host settles. Install writes this Single blank, and an empty
+		one is no host."""
+		if not self.repository:
+			return
 
-		if not self.insights_password:
-			self.insights_password = frappe.generate_hash(length=SECRET_LENGTH)
-
-		if not self.default_password:
-			self.default_password = frappe.generate_hash(length=SECRET_LENGTH)
-
-	def after_insert(self) -> None:
-		"""Central hands pilots this host's URL to ship metrics and logs to, so it has to hear
-		when the host comes up or goes down."""
-		configure_telemetry_webhook(self)
+		if not frappe.db.exists("Webhook", WEBHOOK_NAME):
+			configure_telemetry_webhook(self)
 
 	@frappe.whitelist()
 	def create_telemetry_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> str:
@@ -257,9 +256,9 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_CLICKHOUSE_HOST": self.clickhouse_host,
 			"DATUM_CLICKHOUSE_PORT": str(self.clickhouse_port),
 			"DATUM_CLICKHOUSE_USER": DATUM_USER,
-			"DATUM_CLICKHOUSE_PASSWORD": self.get_password("clickhouse_password", raise_exception=False),
-			"DATUM_INSIGHTS_PASSWORD": self.get_password("insights_password", raise_exception=False),
-			"DATUM_DEFAULT_PASSWORD": self.get_password("default_password", raise_exception=False),
+			"DATUM_USER_PASSWORD": self.get_password("datum_user_password", raise_exception=False),
+			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
+			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
 			"DATUM_OIDC_ISSUER": self.oidc_issuer,
 			# This is for the fastapi server to read.
@@ -287,7 +286,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
 
 	secret = settings.get_password("central_webhook_secret", raise_exception=True)
-	name = f"datum_server-{server.name}"
+	name = WEBHOOK_NAME
 	webhook: Webhook = (
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)

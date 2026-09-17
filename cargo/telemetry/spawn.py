@@ -64,14 +64,16 @@ def validate_config(config: dict) -> None:
 
 def build_server(config: dict) -> None:
 	"""One step towards the region having a datum host that serves."""
-	name = frappe.db.exists("Datum Server", {"auto_spawn": 1})
-	if not name:
-		if not frappe.db.count("Datum Server"):
-			create_server(config)
+	server: DatumServer = frappe.get_single("Datum Server")
 
+	# The Single always exists; an empty one was never filled in.
+	if not server.repository:
+		provision(server, config)
 		return
 
-	server: DatumServer = frappe.get_doc("Datum Server", name)
+	# Filled in by hand: left alone.
+	if not server.auto_spawn:
+		return
 
 	# A setup run is already under way, and it owns the host until it ends.
 	if server.status == "Setting Up":
@@ -81,20 +83,16 @@ def build_server(config: dict) -> None:
 		advance(server)
 
 
-def create_server(config: dict) -> DatumServer:
-	"""One host, on its defaults. The machine is asked for on the next run, so a failure here
-	leaves a record to carry on from rather than a rented machine with no owner.
-
-	Datum checks tokens against Central's keys, so the issuer is where this Cargo reaches
-	Central -- a host with neither issuer nor key answers 401 to everything."""
-	return frappe.get_doc(
+def provision(server: DatumServer, config: dict) -> None:
+	"""Fill the host in from site config; the machine comes on the next run. The issuer is
+	Central, whose keys datum checks tokens against."""
+	server.update(
 		{
-			"doctype": "Datum Server",
 			"auto_spawn": 1,
 			"oidc_issuer": frappe.db.get_single_value("Cargo Settings", "central_url"),
 			**{field: config[field] for field in DATUM_FIELDS},
 		}
-	).insert(ignore_permissions=True)
+	).save(ignore_permissions=True)
 
 
 def fill_machine(server: DatumServer, config: dict) -> bool:

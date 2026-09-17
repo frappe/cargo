@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils.password import set_encrypted_password
+from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
 SETTINGS = {
 	"central_url": "http://central.test",
@@ -19,6 +19,7 @@ SECRETS = {
 	"central_webhook_secret": "test-webhook-secret",
 	"proxy_token": "test-proxy-token",
 }
+DATUM_SECRETS = ("datum_user_password", "insights_user_password", "default_user_password")
 
 
 def use_test_settings() -> None:
@@ -33,3 +34,13 @@ def use_test_settings() -> None:
 		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, field)
 
 	frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+
+def reset_datum_server() -> None:
+	"""Clear the datum host between tests: a Single has no row to delete, and its secrets
+	live apart."""
+	frappe.db.delete("Singles", {"doctype": "Datum Server"})
+	for field in DATUM_SECRETS:
+		remove_encrypted_password("Datum Server", "Datum Server", field)
+
+	frappe.clear_document_cache("Datum Server", "Datum Server")

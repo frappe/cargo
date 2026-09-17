@@ -9,9 +9,9 @@ export DEBIAN_FRONTEND=noninteractive
 : "${DATUM_REPOSITORY:?DATUM_REPOSITORY is required}"
 : "${DATUM_VERSION:?DATUM_VERSION is required}"
 : "${DATUM_CLICKHOUSE_USER:?set it to the user datum-api connects as}"
-: "${DATUM_CLICKHOUSE_PASSWORD:?set it to the password for the datum user}"
-: "${DATUM_INSIGHTS_PASSWORD:?set it to the password for the insights user}"
-: "${DATUM_DEFAULT_PASSWORD:?set it to the password for the ClickHouse default user}"
+: "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
+: "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
+: "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
 
 if [ -z "${DATUM_JWT_PUBLIC_KEY_FILE:-}" ] && [ -z "${DATUM_OIDC_ISSUER:-}" ]; then
 	echo "set DATUM_JWT_PUBLIC_KEY_FILE or DATUM_OIDC_ISSUER, or every call is a 401" >&2
@@ -87,7 +87,7 @@ cat > "$CLICKHOUSE_ACCESS" <<CLICKHOUSE_USERS
         <default>
             <access_management>1</access_management>
             <password remove="remove"/>
-            <password_sha256_hex>$(printf '%s' "$DATUM_DEFAULT_PASSWORD" | sha256sum | cut -d' ' -f1)</password_sha256_hex>
+            <password_sha256_hex>$(printf '%s' "$DEFAULT_USER_PASSWORD" | sha256sum | cut -d' ' -f1)</password_sha256_hex>
         </default>
     </users>
 </clickhouse>
@@ -99,7 +99,7 @@ chmod 600 "$CLICKHOUSE_ACCESS"
 systemctl enable --quiet clickhouse-server
 systemctl restart clickhouse-server
 
-wait_for 60 "clickhouse" clickhouse-client --password "$DATUM_DEFAULT_PASSWORD" --query "SELECT 1"
+wait_for 60 "clickhouse" clickhouse-client --password "$DEFAULT_USER_PASSWORD" --query "SELECT 1"
 
 # --- datum -------------------------------------------------------------------------------
 if ! "$UV" --version > /dev/null 2>&1; then
@@ -152,7 +152,7 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 	echo "DATUM_CLICKHOUSE_HOST=${DATUM_CLICKHOUSE_HOST:-127.0.0.1}"
 	echo "DATUM_CLICKHOUSE_PORT=$CLICKHOUSE_PORT"
 	echo "DATUM_CLICKHOUSE_USER=$DATUM_CLICKHOUSE_USER"
-	echo "DATUM_CLICKHOUSE_PASSWORD=$DATUM_CLICKHOUSE_PASSWORD"
+	echo "DATUM_USER_PASSWORD=$DATUM_USER_PASSWORD"
 	echo "DATUM_TIMEOUT=${DATUM_TIMEOUT:-30}"
 	[ -n "${DATUM_OIDC_ISSUER:-}" ] && echo "DATUM_OIDC_ISSUER=$DATUM_OIDC_ISSUER"
 	[ -n "${DATUM_JWT_PUBLIC_KEY:-}" ] && echo "DATUM_JWT_PUBLIC_KEY_FILE=$DATUM_JWT_PUBLIC_KEY_FILE"
@@ -160,8 +160,8 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.
 as_user "set -a; . /etc/datum.env; set +a; $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate \
-	--insights-user-password $(printf '%q' "$DATUM_INSIGHTS_PASSWORD") \
-	--default-user-password $(printf '%q' "$DATUM_DEFAULT_PASSWORD")"
+	--insights-user-password $(printf '%q' "$INSIGHTS_USER_PASSWORD") \
+	--default-user-password $(printf '%q' "$DEFAULT_USER_PASSWORD")"
 
 cat > /etc/systemd/system/datum.service <<DATUM_UNIT
 [Unit]

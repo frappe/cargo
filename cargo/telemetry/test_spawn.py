@@ -15,7 +15,7 @@ from cargo.telemetry.spawn import (
 	ensure_telemetry,
 	validate_config,
 )
-from cargo.testing import SETTINGS, use_test_settings
+from cargo.testing import SETTINGS, reset_datum_server, use_test_settings
 
 PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
 
@@ -81,8 +81,8 @@ class SpawnTestCase(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
-		for doctype in ("Machine", "Datum Server"):
-			frappe.db.delete(doctype)
+		frappe.db.delete("Machine")
+		reset_datum_server()
 
 	def configured(self, config: dict | None = CONFIG):
 		return patch.dict(frappe.local.conf, {CONFIG_KEY: config})
@@ -96,11 +96,8 @@ class SpawnTestCase(IntegrationTestCase):
 
 		return client.return_value
 
-	def servers(self) -> list[str]:
-		return frappe.get_all("Datum Server", pluck="name")
-
-	def auto_server(self):
-		return frappe.get_doc("Datum Server", {"auto_spawn": 1})
+	def host(self) -> DatumServer:
+		return frappe.get_single("Datum Server")
 
 	def machine_of(self, server, status: str = "Running") -> str:
 		machine = frappe.get_doc(
@@ -122,32 +119,37 @@ class SpawnTestCase(IntegrationTestCase):
 
 
 class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
-	"""Which hosts build a datum server, and how many they build."""
+	"""What the region's one host is filled in with, and when it is left alone."""
 
-	def test_a_fresh_host_builds_one_server(self):
+	def test_a_fresh_region_fills_its_host_in(self):
 		with self.configured():
 			ensure_telemetry()
 
-		server = self.auto_server()
+		server = self.host()
 		self.assertEqual(server.status, "Draft")
 		self.assertEqual(server.repository, CONFIG["repository"])
 		self.assertEqual(server.clickhouse_host, "127.0.0.1")
+		self.assertTrue(server.auto_spawn)
 
-	def test_the_server_is_built_once_and_not_again(self):
+	def test_a_host_already_filled_in_is_not_written_over(self):
+		"""The Single always exists, so a later run must not take site config as the truth."""
 		with self.configured():
 			ensure_telemetry()
+
+		with self.configured({**CONFIG, "version": "some-other-branch"}):
 			ensure_telemetry()
 
-		self.assertEqual(len(self.servers()), 1)
+		self.assertEqual(self.host().version, CONFIG["version"])
 
 	def test_datum_checks_tokens_against_this_cargo_central(self):
 		"""Neither an issuer nor a key means datum answers 401 to everything."""
 		with self.configured():
 			ensure_telemetry()
 
-		self.assertEqual(self.auto_server().oidc_issuer, SETTINGS["central_url"])
+		self.assertEqual(self.host().oidc_issuer, SETTINGS["central_url"])
 
-	def test_a_server_added_by_hand_is_never_joined_by_a_second(self):
+	def test_a_host_filled_in_by_hand_is_left_alone(self):
+		"""Auto spawn stays off unless Cargo turned it on, so a hand-built host keeps its own."""
 		frappe.get_doc(
 			{
 				"doctype": "Datum Server",
@@ -157,11 +159,12 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 				"public_key": PEM,
 			}
 		).insert()
+		atlas = self.atlas()
 
 		with self.configured():
 			ensure_telemetry()
 
-		self.assertEqual(len(self.servers()), 1)
+		atlas.create_vm.assert_not_called()
 
 
 class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
@@ -171,7 +174,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 		super().setUp()
 		with self.configured():
 			ensure_telemetry()
-		self.server = self.auto_server()
+		self.server = self.host()
 
 	def test_a_machine_is_asked_for_at_the_size_the_config_says(self):
 		atlas = self.atlas()
@@ -180,7 +183,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 
 		asked = atlas.create_vm.call_args.kwargs
 		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu_millicores"])
-		self.assertTrue(self.auto_server().machine)
+		self.assertTrue(self.host().machine)
 
 	def test_the_next_run_asks_for_nothing_more(self):
 		atlas = self.atlas()
@@ -198,7 +201,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 			ensure_telemetry()
 
 		setup.assert_not_called()
-		self.assertIn("did not come up", self.auto_server().error)
+		self.assertIn("did not come up", self.host().error)
 
 
 class IntegrationTestTelemetrySpawnSetup(SpawnTestCase):
@@ -208,7 +211,7 @@ class IntegrationTestTelemetrySpawnSetup(SpawnTestCase):
 		super().setUp()
 		with self.configured():
 			ensure_telemetry()
-		self.server = self.auto_server()
+		self.server = self.host()
 
 	def run_once(self):
 		with self.configured(), patch.object(DatumServer, "setup") as setup:
@@ -243,7 +246,7 @@ class IntegrationTestTelemetrySpawnSetup(SpawnTestCase):
 		self.server.db_set("status", "Failed")
 
 		self.run_once().assert_called_once()
-		self.assertEqual(self.auto_server().auto_setup_attempts, 1)
+		self.assertEqual(self.host().auto_setup_attempts, 1)
 
 	def test_trying_again_stops_once_the_budget_is_spent(self):
 		self.machine_of(self.server)

@@ -14,6 +14,7 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	DATUM_PORT,
 	PUBLIC_KEY_FILE,
 	WEBHOOK_ENDPOINT,
+	WEBHOOK_NAME,
 	DatumServer,
 )
 from cargo.testing import SETTINGS, use_test_settings
@@ -129,10 +130,10 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertEqual(environment["DATUM_CLICKHOUSE_USER"], "datum")
 		self.assertEqual(environment["DATUM_TIMEOUT"], "30")
 
-	def test_the_clickhouse_password_is_decrypted(self):
-		environment = self.environment(oidc_issuer="https://central.test", clickhouse_password="ch")
+	def test_the_datum_user_password_is_decrypted(self):
+		environment = self.environment(oidc_issuer="https://central.test", datum_user_password="ch")
 
-		self.assertEqual(environment["DATUM_CLICKHOUSE_PASSWORD"], "ch")
+		self.assertEqual(environment["DATUM_USER_PASSWORD"], "ch")
 
 	def test_the_install_needs_which_datum_to_install(self):
 		"""`environment` is what datum runs on; the repo and version are how it got there."""
@@ -149,7 +150,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		"""An empty variable is not the same as an unset one: datum treats "" as configured."""
 		self.assertNotIn("DATUM_JWT_PUBLIC_KEY_FILE", self.environment(oidc_issuer="https://central.test"))
 
-	def test_every_clickhouse_password_is_generated_and_distinct(self):
+	def test_every_user_password_is_generated_and_distinct(self):
 		"""The install writes all three into ClickHouse, so nothing has to be kept in step."""
 		doc = self.server(oidc_issuer="https://central.test")
 		doc.insert()
@@ -157,7 +158,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 		secrets = {
 			field: doc.get_password(field)
-			for field in ("clickhouse_password", "insights_password", "default_password")
+			for field in ("datum_user_password", "insights_user_password", "default_user_password")
 		}
 
 		self.assertTrue(all(secrets.values()))
@@ -165,14 +166,31 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		# datum-migrate refuses a password carrying `--` or a quote.
 		self.assertTrue(all(value.isalnum() for value in secrets.values()))
 
+	def test_a_host_saved_rather_than_inserted_still_gets_its_secrets(self):
+		"""A Single takes the update path; a `before_insert` would leave empty passwords."""
+		self.addCleanup(frappe.db.rollback)
+		server = frappe.get_single("Datum Server")
+		server.update(
+			{
+				"clickhouse_host": "clickhouse.internal",
+				"repository": "https://github.com/frappe/datum",
+				"version": "develop",
+				"public_key": PEM,
+			}
+		).save()
+
+		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+			with self.subTest(field=field):
+				self.assertTrue(server.get_password(field))
+
 	def test_the_two_clickhouse_users_get_their_own_passwords(self):
 		"""Nobody types these: datum-migrate creates both users with what is generated here."""
 		doc = self.server(oidc_issuer="https://central.test")
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		datum = doc.get_password("clickhouse_password")
-		insights = doc.get_password("insights_password")
+		datum = doc.get_password("datum_user_password")
+		insights = doc.get_password("insights_user_password")
 
 		self.assertTrue(datum and insights)
 		self.assertNotEqual(datum, insights)
@@ -185,7 +203,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
-		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DATUM_DEFAULT_PASSWORD"])
+		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DEFAULT_USER_PASSWORD"])
 
 
 class IntegrationTestTelemetryWebhook(IntegrationTestCase):
@@ -207,18 +225,45 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 			}
 		).insert()
 
-	def webhook_of(self, server):
-		return frappe.get_doc("Webhook", f"datum_server-{server.name}")
+	def webhook(self):
+		return frappe.get_doc("Webhook", WEBHOOK_NAME)
 
 	def test_a_new_host_gets_a_webhook_pointed_at_central(self):
-		webhook = self.webhook_of(self.insert_server())
+		self.insert_server()
+		webhook = self.webhook()
 
 		self.assertEqual(webhook.webhook_doctype, "Datum Server")
 		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
 		self.assertTrue(webhook.enable_security)
 
+	def test_a_host_saved_rather_than_inserted_still_gets_its_webhook(self):
+		"""A Single takes the update path, where an `after_insert` would never run."""
+		frappe.get_single("Datum Server").update(
+			{
+				"clickhouse_host": "clickhouse.internal",
+				"repository": "https://github.com/frappe/datum",
+				"version": "develop",
+				"public_key": PEM,
+			}
+		).save()
+
+		self.assertTrue(frappe.db.exists("Webhook", WEBHOOK_NAME))
+
+	def test_the_blank_host_installing_the_app_leaves_reports_nothing(self):
+		"""`init_singles` writes it blank at install, before Cargo Settings has a Central."""
+		frappe.db.set_single_value("Cargo Settings", "central_url", "")
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+		blank = frappe.new_doc("Datum Server")
+		blank.flags.ignore_mandatory = True
+		blank.flags.ignore_validate = True
+		blank.save()
+
+		self.assertFalse(frappe.db.exists("Webhook", WEBHOOK_NAME))
+
 	def test_only_a_settled_host_is_reported(self):
-		condition = self.webhook_of(self.insert_server()).condition
+		self.insert_server()
+		condition = self.webhook().condition
 
 		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Active")}))
 		self.assertTrue(frappe.safe_eval(condition, eval_locals={"doc": frappe._dict(status="Failed")}))
@@ -229,14 +274,14 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		server.db_set("status", "Active")
 		server.reload()
 
-		report = get_webhook_data(server, self.webhook_of(server))
+		report = get_webhook_data(server, self.webhook())
 
 		self.assertEqual(report["region"], SETTINGS["region"])
 		self.assertEqual(report["service"], "telemetry")
 		self.assertEqual(report["status"], "Active")
 
-	def test_a_cargo_with_no_webhook_secret_makes_no_host(self):
-		"""Nothing may post to Central unauthenticated, so the host does not get made."""
+	def test_a_cargo_with_no_webhook_secret_will_not_save_the_host(self):
+		"""Nothing may post to Central unauthenticated, so the host is refused."""
 		remove_encrypted_password("Cargo Settings", "Cargo Settings", "central_webhook_secret")
 		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
 
