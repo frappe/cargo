@@ -100,7 +100,7 @@ Cargo calls Atlas with `Authorization: Bearer <atlas_token>` and `X-Tenant-ID: 0
 
 The Proxy token has audience `atlas-proxy:<region-id>`, subject `cargo`, scope `site:*`, a `constraints.site.suffix` value of `-svc`, no tenant claim, and a 365-day lifetime. Cargo also refuses to call the Proxy for a site name without this suffix.
 
-Inbound Cargo API tokens use the `X-Cargo-Access-Token` header. Cargo verifies them with the merged Atlas key set and requires the audience `atlas-cargo:<region-id>`. Cargo issuer validation is deferred.
+Inbound Cargo API tokens use the `X-Cargo-Access-Token` header. Cargo verifies them with the merged Atlas key set and requires the audience `atlas-cargo:<region-id>`, the Ed25519 (`EdDSA`) algorithm, and a key ID namespaced to the issuer the token declares -- `central:` or `atlas:<region-id>:`. Cargo holds no verification secret of its own. Read [the Central contract](central-contract.md#central-calling-cargo).
 
 ## Validation
 

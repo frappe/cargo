@@ -3,7 +3,7 @@
 		"repos": ["frappe/frappe", "frappe/pilot", "frappe/central", "frappe/atlas"]
 	},
 
-	"ignorePatterns": "tools/fake_atlas/**",
+	"ignorePatterns": "tools/fake_atlas/**,tools/fake_proxy/**",
 
 	"instructions": "Cargo is a Frappe app that provisions and configures the machines behind Frappe Cloud's shared services. Resolve framework behaviour against frappe/frappe rather than guessing: whitelisted methods, DocType controllers and hooks, autoname and naming series, get_password and Password-field encryption, frappe.enqueue and background jobs, and validate_auth in frappe/auth.py all have exact semantics there.\n\nCargo only talks to three first-party systems, all owned by the same team and deployed together: frappe/pilot (provisions the host Cargo itself runs on), frappe/central (the control plane that issues Cargo's tokens and the secrets a deployment runs on) and frappe/atlas (supplies virtual machines). Treat these as trusted infrastructure, not third-party or user-controlled input. Reaching them over HTTPS, installing pilot from its published release, and acting on their responses is the intended design, not a supply-chain weakness -- a compromise of frappe/pilot or frappe/central already owns everything Cargo could protect, so it is outside the threat model of a Cargo change.\n\nThe boundaries worth reviewing are the ones Cargo actually defends: the machines it SSHes into and the configuration it renders onto them; the tokens it holds and which upstream each one opens; anything reachable from a whitelisted endpoint; and whether a failed step leaves a deployment or Central in a state a retry cannot repair.",
 

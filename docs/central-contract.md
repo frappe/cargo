@@ -54,7 +54,25 @@ X-Cargo-Access-Token: <the Cargo Instance's cargo_access_token>
 JSON in, JSON out, unwrapped from Frappe's `{"message": ...}`. Every call takes the same two
 fields: `name`, the bucket, and `region`.
 
-Cargo verifies the token against the merged key set at its configured `JWKS_URL`. The token audience must be exactly `atlas-cargo:<region-id>`. Cargo does not check the issuer yet. A later change will restrict the issuer to `central` or `atlas:<region-id>`.
+Cargo verifies the token against the merged key set at its configured `JWKS_URL`, and holds no
+verification secret of its own. Every check below must pass, in this order:
+
+| Check | Rule |
+|---|---|
+| Algorithm | The header `alg` is `EdDSA`, and so is the algorithm of the key it resolves to. Checked before the key set is fetched. |
+| Key ID | `kid` starts with `central:` or `atlas:<region-id>:`, and names a key on the set. |
+| Issuer | `iss` equals the issuer that `kid` namespace belongs to. |
+| Audience | `aud` is exactly `atlas-cargo:<region-id>`. |
+| Claims | `iss`, `sub`, `aud`, `iat` and `exp` are all present, and `exp` is in the future. |
+
+The key set carries both planes' keys, so a valid signature alone does not say who signed. The
+key ID decides which issuer a token may claim to be, and `iss` is held to it -- otherwise Central
+could sign a token claiming to be Atlas, or the reverse.
+
+A failed check answers the same way whatever failed: `AuthenticationError`, no detail.
+
+Atlas already mints this audience for its own bucket call, with subject `atlas` and a 5-minute
+lifetime. Central does not mint it yet, so no Central call gets past the audience check today.
 
 It travels in `X-Cargo-Access-Token` rather than `Authorization`, because Frappe rejects an
 unrecognised `Authorization` header with a 401 before the endpoint is reached.

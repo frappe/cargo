@@ -32,7 +32,7 @@ jobs:
         run: |
           pip install semgrep
           semgrep ci --config ./frappe-semgrep-rules/rules --config r/python.lang.correctness \
-            --exclude 'tools/fake_atlas'
+            --exclude 'tools/fake_atlas' --exclude 'tools/fake_proxy'
 
   deps-vulnerable-check:
     name: 'Vulnerable Dependency Check'
