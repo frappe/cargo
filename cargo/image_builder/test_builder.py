@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.image_builder.builder import Builder
+from cargo.image_builder.doctype.pilot_image.builder import Builder
 from cargo.ssh import SshError
 
 
@@ -18,45 +18,57 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 	def ping(self, *returncodes):
 		return patch(
-			"cargo.image_builder.builder.subprocess.run",
+			"cargo.image_builder.doctype.pilot_image.builder.subprocess.run",
 			side_effect=[Mock(returncode=code) for code in returncodes],
 		)
 
 	def test_a_machine_that_answers_at_once_is_not_waited_for(self):
-		with self.ping(0), patch("cargo.image_builder.builder.time.sleep") as sleep:
+		with self.ping(0), patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep") as sleep:
 			self.assertTrue(self.builder.is_answering_ping("fdaa:1::1d"))
 
 		sleep.assert_not_called()
 
 	def test_a_machine_still_booting_is_pinged_again(self):
-		with self.ping(1, 1, 0), patch("cargo.image_builder.builder.time.sleep"):
+		with self.ping(1, 1, 0), patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"):
 			self.assertTrue(self.builder.is_answering_ping("fdaa:1::1d"))
 
 	def test_a_machine_that_never_answers_gives_up(self):
-		with patch("cargo.image_builder.builder.subprocess.run", return_value=Mock(returncode=1)):
-			with patch("cargo.image_builder.builder.time.monotonic", side_effect=[0, 999, 999]):
-				with patch("cargo.image_builder.builder.time.sleep"):
+		with patch(
+			"cargo.image_builder.doctype.pilot_image.builder.subprocess.run", return_value=Mock(returncode=1)
+		):
+			with patch(
+				"cargo.image_builder.doctype.pilot_image.builder.time.monotonic", side_effect=[0, 999, 999]
+			):
+				with patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"):
 					self.assertFalse(self.builder.is_answering_ping("fdaa:1::1d"))
 
 	def test_sshd_that_is_not_up_yet_is_tried_again(self):
 		with patch(
-			"cargo.image_builder.builder.run_over_ssh", side_effect=[SshError("refused"), "up 1 min"]
+			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh",
+			side_effect=[SshError("refused"), "up 1 min"],
 		) as run:
-			with patch("cargo.image_builder.builder.time.sleep"):
+			with patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"):
 				self.assertTrue(self.builder.is_accepting_ssh("fdaa:1::1d", "key"))
 
 		self.assertEqual(run.call_count, 2)
 
 	def test_a_local_failure_keeps_its_own_error(self):
 		"""A missing ssh binary says more than a readiness timeout, so it is not retried."""
-		with patch("cargo.image_builder.builder.run_over_ssh", side_effect=FileNotFoundError("ssh")):
+		with patch(
+			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh",
+			side_effect=FileNotFoundError("ssh"),
+		):
 			with self.assertRaises(FileNotFoundError):
 				self.builder.is_accepting_ssh("fdaa:1::1d", "key")
 
 	def test_a_machine_that_never_accepts_ssh_gives_up(self):
-		with patch("cargo.image_builder.builder.run_over_ssh", side_effect=SshError("timed out")):
-			with patch("cargo.image_builder.builder.time.monotonic", side_effect=[0, 999, 999]):
-				with patch("cargo.image_builder.builder.time.sleep"):
+		with patch(
+			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh", side_effect=SshError("timed out")
+		):
+			with patch(
+				"cargo.image_builder.doctype.pilot_image.builder.time.monotonic", side_effect=[0, 999, 999]
+			):
+				with patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"):
 					self.assertFalse(self.builder.is_accepting_ssh("fdaa:1::1d", "key"))
 
 	def test_a_machine_that_never_reaches_the_mesh_stops_the_build(self):
@@ -72,7 +84,7 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 	def test_a_baked_machine_is_flushed_before_it_is_photographed(self):
 		"""Atlas snapshots a paused disk, so what is only in the page cache is lost."""
-		with patch("cargo.image_builder.builder.run_over_ssh") as run:
+		with patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh") as run:
 			self.builder.flush_build_machine("fdaa:1::1d", "key")
 
 		self.assertEqual(run.call_args.args[1], "sync")

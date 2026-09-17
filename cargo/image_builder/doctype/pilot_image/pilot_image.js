@@ -1,7 +1,7 @@
 // Copyright (c) 2026, Aradhya-Tripathi and contributors
 // For license information, please see license.txt
 
-frappe.ui.form.on("Image", {
+frappe.ui.form.on("Pilot Image", {
 	refresh(frm) {
 		if (frm.is_new()) return;
 
@@ -65,6 +65,10 @@ frappe.ui.form.on("Image", {
 			Failed: __("The last build failed. See Error below."),
 		};
 		if (headlines[frm.doc.status]) frm.dashboard.set_headline(headlines[frm.doc.status]);
+
+		if (!frm.doc.has_site) {
+			frm.dashboard.add_indicator(__("No site baked in"), "blue");
+		}
 
 		if (frm.doc.temporary_vm_id) {
 			frm.dashboard.add_indicator(

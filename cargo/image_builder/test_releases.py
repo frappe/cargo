@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
-from cargo.image_builder.releases import latest_pilot_release
+from cargo.image_builder.doctype.pilot_image.releases import latest_pilot_release
 
 
 def response(payload) -> Mock:
@@ -17,7 +17,7 @@ def response(payload) -> Mock:
 
 class UnitTestReleases(UnitTestCase):
 	def get(self, answer: Mock):
-		return patch("cargo.image_builder.releases.requests.get", return_value=answer)
+		return patch("cargo.image_builder.doctype.pilot_image.releases.requests.get", return_value=answer)
 
 	def test_the_newest_prerelease_is_the_latest_release(self):
 		payload = [

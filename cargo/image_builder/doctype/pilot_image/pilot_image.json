@@ -10,6 +10,7 @@
   "section_break_identity",
   "pilot_version",
   "frappe_version",
+  "has_site",
   "column_break_identity",
   "status",
   "error",
@@ -28,7 +29,7 @@
   {
    "fieldname": "section_break_identity",
    "fieldtype": "Section Break",
-   "label": "Image"
+   "label": "Pilot Image"
   },
   {
    "description": "The Pilot release inside this image, such as v0.0.32-pre-alpha.",
@@ -49,6 +50,16 @@
    "label": "Frappe Version",
    "options": "version-16\ndevelop",
    "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "1",
+   "description": "Bake a site into the image. Without it the machine carries an initialised bench and no site.",
+   "fieldname": "has_site",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Has Site",
    "set_only_once": 1
   },
   {
@@ -139,10 +150,10 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-12 10:00:00.000000",
+ "modified": "2026-09-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
- "name": "Image",
+ "name": "Pilot Image",
  "owner": "Administrator",
  "permissions": [
   {
