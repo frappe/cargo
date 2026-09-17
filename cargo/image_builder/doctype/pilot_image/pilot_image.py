@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+import json
 from itertools import product
 
 import frappe
@@ -125,8 +126,8 @@ class PilotImage(WorkflowBuilder):
 	def domain_provider(self) -> str:
 		"""The provider the image installs, with this region's values baked in."""
 		source = script(*DOMAIN_PROVIDER)
-		return source.replace("__WILDCARD_DOMAIN__", f"*.{self.wildcard_domain}").replace(
-			"__PROXY_SUBNET__", self.proxy_subnet
+		return source.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.wildcard_domain}")).replace(
+			'"__PROXY_SUBNET__"', json.dumps(self.proxy_subnet)
 		)
 
 	@frappe.whitelist()

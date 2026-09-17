@@ -91,7 +91,7 @@ def run(arguments: argparse.Namespace) -> int:
 	elif arguments.command == "deregister":
 		try:
 			call("deregister_domain", "POST", arguments.domain)
-		except (urllib.error.HTTPError, OSError, ValueError) as error:
+		except (OSError, ValueError, KeyError, TypeError) as error:
 			print(f"Warning: could not release {arguments.domain}: {error}", file=sys.stderr)
 	elif arguments.command == "proxy-servers":
 		print(json.dumps(PROXY_SERVERS))
