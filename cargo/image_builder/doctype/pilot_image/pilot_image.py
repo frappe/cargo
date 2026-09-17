@@ -100,6 +100,7 @@ class PilotImage(WorkflowBuilder):
 			"VERSION": self.pilot_version,
 			"FRAPPE_VERSION": self.frappe_version,
 			"WILDCARD_DOMAIN": self.wildcard_domain,
+			"PROXY_SUBNET": self.proxy_subnet,
 			"HAS_SITE": str(int(self.has_site)),
 		}
 
@@ -107,6 +108,16 @@ class PilotImage(WorkflowBuilder):
 	def wildcard_domain(self) -> str:
 		"""The zone every VM hostname sits under. The aliases are built from it."""
 		return frappe.db.get_single_value("Cargo Settings", "wildcard_domain") or ""
+
+	@property
+	def region_id(self) -> int:
+		return int(frappe.db.get_single_value("Cargo Settings", "region_id") or 0)
+
+	@property
+	def proxy_subnet(self) -> str:
+		"""The tenant-0 subnet holding every edge proxy. A mesh address is
+		fdaa:<region>:<tenant>:<VM>, so one tenant of one region is a /64."""
+		return f"fdaa:{self.region_id:x}::/64"
 
 	@frappe.whitelist()
 	def build(self) -> None:
@@ -117,6 +128,9 @@ class PilotImage(WorkflowBuilder):
 		# Checked before a machine is rented: without it the image reaches nothing.
 		if not self.wildcard_domain:
 			frappe.throw(frappe._("Set the wildcard domain in Cargo Settings before building."))
+
+		if not self.region_id:
+			frappe.throw(frappe._("Set the region ID in Cargo Settings before building."))
 
 		self.build_log = None
 		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
