@@ -27,6 +27,9 @@ ENROLMENT_VARS = (
 def after_install() -> None:
 	"""Take the upstreams setup.sh passed in. CI installs the app with none, so it skips
 	this."""
+	if os.getenv("CI"):
+		return
+
 	missing = [name for name in ENROLMENT_VARS if not os.getenv(name)]
 	if missing:
 		print(_("Set {0} before installing Cargo.").format(", ".join(missing)))
