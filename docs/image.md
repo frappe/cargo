@@ -48,7 +48,7 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
-3. Runs the Pilot installer as root, then as the bench user.
+3. Runs the Pilot installer as root, installs `tzdata-legacy` for the deprecated zone aliases such as `Asia/Calcutta`, then runs the installer as the bench user.
 4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site. `HAS_SITE=0` stops after the bench is initialised.
 5. Runs `pilot setup production`.
 6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image. Without a site there is nothing to answer it, so only the nginx check runs.
