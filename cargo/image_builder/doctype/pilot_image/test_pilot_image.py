@@ -266,3 +266,52 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			self.assertFalse(image.retire())
 
 		self.assertTrue(frappe.db.exists("Pilot Image", image.name))
+
+	def building_image(self, status: str = "Building") -> PilotImage:
+		"""An image part way through a build, with a machine rented for it."""
+		image = self.image(self.release())
+		image.db_set({"status": status, "temporary_vm_id": "vm-stuck", "ssh_public_key": "ssh-ed25519 AAAA"})
+		image.reload()
+
+		return image
+
+	def test_a_stuck_build_can_be_stopped_and_stops_renting(self):
+		"""What this exists for: the machine is what costs money, so it goes first."""
+		image = self.building_image()
+
+		with patch.object(PilotImage, "builder") as builder:
+			builder.destroy_build_machine.return_value = True
+			image.stop_build()
+
+		builder.destroy_build_machine.assert_called_once_with("vm-stuck")
+		self.assertEqual(image.status, "Failed")
+		self.assertIsNone(image.temporary_vm_id)
+		self.assertIn("stopped by", image.error)
+
+	def test_a_machine_atlas_will_not_destroy_keeps_its_keys(self):
+		"""The keypair still opens that machine, so it is kept until the machine is gone."""
+		image = self.building_image()
+
+		with patch.object(PilotImage, "builder") as builder:
+			builder.destroy_build_machine.return_value = False
+			image.stop_build()
+
+		self.assertEqual(image.status, "Failed")
+		self.assertEqual(image.temporary_vm_id, "vm-stuck")
+		self.assertEqual(image.ssh_public_key, "ssh-ed25519 AAAA")
+
+	def test_every_building_status_can_be_stopped(self):
+		for status in ("Provisioning", "Building", "Snapshotting"):
+			with self.subTest(status=status), patch.object(PilotImage, "builder") as builder:
+				builder.destroy_build_machine.return_value = True
+				image = self.building_image(status)
+				image.stop_build()
+
+				self.assertEqual(image.status, "Failed")
+
+	def test_an_image_that_is_not_building_cannot_be_stopped(self):
+		"""Draft, Available and Failed rent nothing, so there is nothing to stop."""
+		image = self.image(self.release())
+
+		with self.assertRaises(frappe.ValidationError):
+			image.stop_build()

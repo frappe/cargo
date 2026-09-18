@@ -56,6 +56,24 @@ frappe.ui.form.on("Pilot Image", {
 			}).addClass(first ? "btn-primary" : "");
 		}
 
+		if (["Provisioning", "Building", "Snapshotting"].includes(frm.doc.status)) {
+			frm.add_custom_button(__("Stop Building"), () => {
+				frappe.confirm(
+					__(
+						"Destroy the build machine and mark this image Failed. For a build that is stuck; a step already running cannot be interrupted."
+					),
+					() =>
+						frm.call("stop_build").then(() => {
+							frappe.show_alert({
+								message: __("Build stopped. The machine has been destroyed."),
+								indicator: "orange",
+							});
+							frm.reload_doc();
+						})
+				);
+			}).addClass("btn-danger");
+		}
+
 		const headlines = {
 			Draft: __("Nothing built yet."),
 			Provisioning: __("Waiting for the build machine to boot."),

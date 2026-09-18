@@ -202,6 +202,18 @@ class PilotImage(WorkflowBuilder):
 		self.drop_ssh_keys()
 		self.mark("Snapshotting")
 
+	@frappe.whitelist()
+	def stop_build(self) -> None:
+		"""Give up on a build that is not moving, and destroy the machine it rented."""
+		if self.status not in BUILDING_STATUSES:
+			frappe.throw(frappe._("This image is not building."))
+
+		if not self.temporary_vm_id or self.builder.destroy_build_machine(self.temporary_vm_id):
+			self.temporary_vm_id = None
+			self.drop_ssh_keys()
+
+		self.mark("Failed", error=f"Build stopped by {frappe.session.user}.")
+
 	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
 	def take_snapshot(self, vm_id: str) -> None:
 		"""Photograph the machine, then destroy it either way"""
