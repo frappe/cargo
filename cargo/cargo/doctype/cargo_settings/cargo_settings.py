@@ -20,6 +20,8 @@ class CargoSettings(Document):
 		atlas_url: DF.Data
 		cargo_url: DF.Data
 		central_url: DF.Data
+		central_webhook_url: DF.Data | None
+		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
 		jwks_url: DF.Data
 		proxy_token: DF.Password

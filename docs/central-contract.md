@@ -12,6 +12,35 @@ Cargo's side is `cargo/object_storage/api/bucket.py` and the webhook built in
 `cargo/object_storage/doctype/object_storage_cluster/object_storage_cluster.py`. Central's
 side is `central/api/cargo_webhooks.py` and `central/integrations/cargo_client.py`.
 
+## Central enrolling Cargo
+
+Before Cargo reports anything it has to be told where, and with which secret. Central owns
+both, so Central sets them:
+
+```
+POST {cargo_url}/api/method/cargo.api.webhooks.configure
+X-Cargo-Access-Token: <a token for atlas-cargo:<region-id>>
+
+{"request_url": "https://central.example.com/api/method/central.api.state_delivery.receive",
+ "webhook_secret": "a-shared-secret",
+ "enabled": true}
+```
+
+One receiver and one secret serve every service this region runs, so Cargo stores them on
+Cargo Settings and nothing else. Each delivery reads them when it is built, and knows
+nothing about how they got there. A repeated call refreshes a rotated secret.
+
+`enabled: false` stops the reports and keeps the receiver, so turning them back on needs no
+second handover.
+
+```json
+{"request_url": "https://central.example.com/api/method/central.api.state_delivery.receive", "enabled": true}
+```
+
+Until this call lands, `central_webhook_url` is empty and a host refuses to configure a
+delivery rather than pointing one at a guess. A delivery built before a later call keeps
+the old receiver until it is next built.
+
 ## Cargo reporting in
 
 A **Frappe Webhook**, created against the cluster when the cluster is created, firing

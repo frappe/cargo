@@ -8,8 +8,10 @@
   "region",
   "region_id",
   "central_url",
+  "central_webhook_url",
   "cargo_url",
   "central_webhook_secret",
+  "central_webhook_enabled",
   "jwks_url",
   "column_break_atlas",
   "atlas_url",
@@ -33,6 +35,14 @@
    "label": "Central URL",
    "options": "URL",
    "reqd": 1
+  },
+  {
+   "description": "Where this region's deliveries are sent. Central sets it when it enrols this Cargo; until then nothing reports.",
+   "fieldname": "central_webhook_url",
+   "fieldtype": "Data",
+   "label": "Central Webhook URL",
+   "options": "URL",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_atlas",
@@ -67,6 +77,14 @@
    "in_list_view": 1,
    "label": "Central Webhook Secret",
    "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Whether this region reports to Central at all. Central turns it off without withdrawing the receiver.",
+   "fieldname": "central_webhook_enabled",
+   "fieldtype": "Check",
+   "label": "Central Webhook Enabled",
+   "read_only": 1
   },
   {
    "description": "Bearer token for the Atlas tenant API.",

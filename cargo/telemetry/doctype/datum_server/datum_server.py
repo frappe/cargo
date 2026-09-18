@@ -35,7 +35,6 @@ MAX_PORT = 65535
 SECRET_LENGTH = 32
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
-WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
 SENDER_HEADER = "X-Sender"
 REGION_HEADER = "X-Region"
 SENDER = "cargo"
@@ -296,8 +295,10 @@ class DatumServer(WorkflowBuilder):
 def configure_telemetry_webhook(server: DatumServer) -> None:
 	"""Point a Frappe Webhook at Central so this host reports its own status changes."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-	if not settings.central_url:
-		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
+	if not settings.central_webhook_url:
+		raise frappe.ValidationError(
+			_("Central has not enrolled this Cargo yet, so there is nowhere to report to.")
+		)
 
 	secret = settings.get_password("central_webhook_secret", raise_exception=True)
 	name = WEBHOOK_NAME
@@ -309,7 +310,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		{
 			"webhook_doctype": server.doctype,
 			"webhook_docevent": "on_update",
-			"request_url": settings.central_url.rstrip("/") + WEBHOOK_ENDPOINT,
+			"request_url": settings.central_webhook_url,
 			"request_method": "POST",
 			"request_structure": "JSON",
 			"condition": f"doc.status in {REPORTED_STATUSES}",
@@ -328,7 +329,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			],
 			"enable_security": True,
 			"webhook_secret": secret,
-			"enabled": True,
+			"enabled": settings.central_webhook_enabled,
 		}
 	)
 	webhook.save(ignore_permissions=True)

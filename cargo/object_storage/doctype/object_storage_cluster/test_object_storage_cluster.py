@@ -27,7 +27,6 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 	REGION_HEADER,
 	SENDER,
 	SENDER_HEADER,
-	WEBHOOK_ENDPOINT,
 	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
 )
@@ -35,7 +34,7 @@ from cargo.object_storage.garage.client import Client
 from cargo.object_storage.garage.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT
-from cargo.testing import use_test_settings
+from cargo.testing import SETTINGS, use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -370,7 +369,7 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 		self.assertEqual(webhook.webhook_doctype, "Object Storage Cluster")
 		self.assertEqual(webhook.webhook_docevent, "on_update")
 		self.assertEqual(webhook.request_method, "POST")
-		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
+		self.assertEqual(webhook.request_url, SETTINGS["central_webhook_url"])
 		self.assertTrue(webhook.request_url.startswith(self.settings.central_url))
 
 	def test_only_a_settled_cluster_is_reported(self):

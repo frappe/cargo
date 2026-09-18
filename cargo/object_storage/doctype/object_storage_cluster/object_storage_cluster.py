@@ -28,7 +28,6 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
-WEBHOOK_ENDPOINT = "/api/method/central.api.state_delivery.receive"
 SENDER_HEADER = "X-Sender"
 REGION_HEADER = "X-Region"
 SENDER = "cargo"
@@ -488,14 +487,21 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 		)
 
 
+def webhook_name_for(cluster: str) -> str:
+	"""The delivery that reports one cluster's status."""
+	return f"object_storage_cluster-{cluster}"
+
+
 def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 	"""Point a Frappe Webhook at Central so this cluster reports its own status changes."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-	if not settings.central_url:
-		raise frappe.ValidationError(_("Central URL must be set in Cargo Settings to configure webhook."))
+	if not settings.central_webhook_url:
+		raise frappe.ValidationError(
+			_("Central has not enrolled this Cargo yet, so there is nowhere to report to.")
+		)
 
 	secret = settings.get_password("central_webhook_secret", raise_exception=True)
-	name = f"object_storage_cluster-{cluster.name}"
+	name = webhook_name_for(cluster.name)
 	webhook: Webhook = (
 		frappe.get_doc("Webhook", name) if frappe.db.exists("Webhook", name) else frappe.new_doc("Webhook")
 	)
@@ -504,7 +510,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 		{
 			"webhook_doctype": cluster.doctype,
 			"webhook_docevent": "on_update",
-			"request_url": settings.central_url.rstrip("/") + WEBHOOK_ENDPOINT,
+			"request_url": settings.central_webhook_url,
 			"request_method": "POST",
 			"request_structure": "JSON",
 			"condition": f"doc.status in {REPORTED_STATUSES}",
@@ -523,7 +529,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 			],
 			"enable_security": True,
 			"webhook_secret": secret,
-			"enabled": True,
+			"enabled": settings.central_webhook_enabled,
 		}
 	)
 	webhook.save(ignore_permissions=True)

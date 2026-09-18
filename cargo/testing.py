@@ -3,6 +3,8 @@ from frappe.utils.password import remove_encrypted_password, set_encrypted_passw
 
 SETTINGS = {
 	"central_url": "http://central.test",
+	"central_webhook_url": "http://central.test/api/method/central.api.state_delivery.receive",
+	"central_webhook_enabled": 1,
 	"atlas_url": "http://atlas.test",
 	"cargo_url": "http://cargo.test",
 	"jwks_url": "http://atlas.test/api/atlas/jwks.json",
