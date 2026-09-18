@@ -63,6 +63,8 @@ as_bench_user() {
 }
 
 curl -fsSL "$INSTALLER" | bash
+# Pilot asks for the deprecated zone aliases as the bench user, which cannot sudo apt.
+apt-get install -y tzdata-legacy
 as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
 # Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
