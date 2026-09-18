@@ -268,6 +268,7 @@ scheduler_events = {
 		"* * * * *": [
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
 			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
+			"cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task.retry_tasks",
 			"cargo.cargo.doctype.machine.machine.sync_pending_machines",
 			"cargo.object_storage.spawn.ensure_cluster",
 			"cargo.telemetry.spawn.ensure_telemetry",
