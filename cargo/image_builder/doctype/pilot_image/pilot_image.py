@@ -314,11 +314,6 @@ def retire_old_releases() -> None:
 		filters={"pilot_version": ("not in", keep), "status": ("not in", BUILDING_STATUSES)},
 		pluck="name",
 	)
-	# The caller's work lands first, or a rollback below would take the release it just
-	# made. Each image then retires in a transaction of its own.
-	if not frappe.flags.in_test:
-		frappe.db.commit()  # nosemgrep
-
 	for name in stale:
 		try:
 			image: PilotImage = frappe.get_doc("Pilot Image", name)
