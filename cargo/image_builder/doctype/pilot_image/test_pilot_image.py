@@ -247,3 +247,45 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			self.assertFalse(image.retire())
 
 		self.assertTrue(frappe.db.exists("Pilot Image", image.name))
+
+	def test_retiring_takes_the_workflows_that_link_to_the_image(self):
+		image = self.image(self.release())
+		workflow = frappe.get_doc(
+			{
+				"doctype": "Press Workflow",
+				"linked_doctype": image.doctype,
+				"linked_docname": image.name,
+				"main_method_name": "build",
+				"main_method_title": "Build",
+			}
+		)
+		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
+			workflow.insert(ignore_permissions=True)
+
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.AtlasClient"):
+			self.assertTrue(image.retire())
+
+		self.assertFalse(frappe.db.exists("Press Workflow", workflow.name))
+		self.assertFalse(frappe.db.exists("Pilot Image", image.name))
+
+	def test_an_image_that_will_not_retire_leaves_the_rest_of_the_window_alone(self):
+		versions = [self.release() for _ in range(5)]
+		names = {version: self.image(version).name for version in versions}
+		stuck = names[versions[0]]
+		retired: list[str] = []
+
+		def retire(image: PilotImage) -> None:
+			if image.name == stuck:
+				raise frappe.LinkExistsError("still linked")
+			retired.append(image.name)
+
+		# A real rollback would drop the rows this test made.
+		with (
+			patch.object(PilotImage, "retire", autospec=True, side_effect=retire),
+			patch.object(frappe.db, "rollback") as rollback,
+		):
+			retire_old_releases()
+
+		self.assertIn(names[versions[1]], retired)
+		rollback.assert_called_once()
+		self.assertTrue(frappe.db.exists("Pilot Image", stuck))

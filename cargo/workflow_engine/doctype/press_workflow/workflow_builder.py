@@ -217,3 +217,12 @@ class WorkflowBuilder(Document):
 			if hasattr(self.flags, "current_press_workflow_task")
 			else None,
 		)
+
+	def on_trash(self) -> None:
+		"""A workflow dynamically links back here, so it goes when the document goes."""
+		for name in frappe.get_all(
+			"Press Workflow",
+			filters={"linked_doctype": self.doctype, "linked_docname": self.name},
+			pluck="name",
+		):
+			frappe.delete_doc("Press Workflow", name, ignore_permissions=True, delete_permanently=True)
