@@ -248,8 +248,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertTrue(frappe.db.exists("Pilot Image", image.name))
 
-	def test_retiring_takes_the_workflows_that_link_to_the_image(self):
-		image = self.image(self.release())
+	def workflow(self, image: PilotImage, status: str = "Success") -> str:
+		"""A build workflow linked to the image, without running it."""
 		workflow = frappe.get_doc(
 			{
 				"doctype": "Press Workflow",
@@ -257,16 +257,33 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 				"linked_docname": image.name,
 				"main_method_name": "build",
 				"main_method_title": "Build",
+				"status": status,
 			}
 		)
 		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
 			workflow.insert(ignore_permissions=True)
 
+		return workflow.name
+
+	def test_retiring_takes_the_workflows_that_link_to_the_image(self):
+		image = self.image(self.release())
+		workflow = self.workflow(image)
+
 		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.AtlasClient"):
 			self.assertTrue(image.retire())
 
-		self.assertFalse(frappe.db.exists("Press Workflow", workflow.name))
+		self.assertFalse(frappe.db.exists("Press Workflow", workflow))
 		self.assertFalse(frappe.db.exists("Pilot Image", image.name))
+
+	def test_an_image_a_workflow_still_runs_on_is_kept(self):
+		image = self.image(self.release())
+		workflow = self.workflow(image, status="Running")
+
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.AtlasClient"):
+			with self.assertRaises(frappe.ValidationError):
+				image.retire()
+
+		self.assertTrue(frappe.db.exists("Press Workflow", workflow))
 
 	def test_an_image_that_will_not_retire_leaves_the_rest_of_the_window_alone(self):
 		versions = [self.release() for _ in range(5)]

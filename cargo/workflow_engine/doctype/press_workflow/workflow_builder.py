@@ -220,9 +220,15 @@ class WorkflowBuilder(Document):
 
 	def on_trash(self) -> None:
 		"""A workflow dynamically links back here, so it goes when the document goes."""
-		for name in frappe.get_all(
+		workflows = frappe.get_all(
 			"Press Workflow",
 			filters={"linked_doctype": self.doctype, "linked_docname": self.name},
-			pluck="name",
-		):
-			frappe.delete_doc("Press Workflow", name, ignore_permissions=True, delete_permanently=True)
+			fields=["name", "status"],
+		)
+		if any(workflow.status in ["Queued", "Running"] for workflow in workflows):
+			frappe.throw(frappe._("A workflow is still running on this document."))
+
+		for workflow in workflows:
+			frappe.delete_doc(
+				"Press Workflow", workflow.name, ignore_permissions=True, delete_permanently=True
+			)
