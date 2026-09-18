@@ -17,8 +17,6 @@ from cargo.telemetry.spawn import (
 )
 from cargo.testing import SETTINGS, reset_datum_server, use_test_settings
 
-PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
-
 CONFIG = {
 	"repository": "https://github.com/frappe/datum",
 	"version": "develop",
@@ -141,12 +139,16 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 
 		self.assertEqual(self.host().version, CONFIG["version"])
 
-	def test_datum_checks_tokens_against_this_cargo_central(self):
-		"""Neither an issuer nor a key means datum answers 401 to everything."""
+	def test_datum_checks_tokens_against_this_regions_key_set(self):
+		"""The key set and the region are Cargo Settings' own, so a spawned host inherits
+		both rather than being told them: it verifies what this region's Cargo verifies."""
 		with self.configured():
 			ensure_telemetry()
 
-		self.assertEqual(self.host().oidc_issuer, SETTINGS["central_url"])
+		environment = self.host().environment()
+
+		self.assertEqual(environment["DATUM_JWKS_URL"], SETTINGS["jwks_url"])
+		self.assertEqual(environment["DATUM_REGION_ID"], str(SETTINGS["region_id"]))
 
 	def test_a_host_filled_in_by_hand_is_left_alone(self):
 		"""Auto spawn stays off unless Cargo turned it on, so a hand-built host keeps its own."""
@@ -156,7 +158,6 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 				"clickhouse_host": "clickhouse.internal",
 				"repository": CONFIG["repository"],
 				"version": CONFIG["version"],
-				"public_key": PEM,
 			}
 		).insert()
 		atlas = self.atlas()

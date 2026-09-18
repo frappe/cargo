@@ -13,8 +13,8 @@ export DEBIAN_FRONTEND=noninteractive
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
 
-if [ -z "${DATUM_JWKS_URL:-}" ]; then
-	echo "set DATUM_JWKS_URL, or every call is a 401" >&2
+if [ -z "${DATUM_JWKS_URL:-}" ] || [ -z "${DATUM_REGION_ID:-}" ]; then
+	echo "set DATUM_JWKS_URL and DATUM_REGION_ID, or every call is a 401" >&2
 	exit 1
 fi
 
@@ -149,6 +149,7 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 	echo "DATUM_USER_PASSWORD=$DATUM_USER_PASSWORD"
 	echo "DATUM_TIMEOUT=${DATUM_TIMEOUT:-30}"
 	echo "DATUM_JWKS_URL=$DATUM_JWKS_URL"
+	echo "DATUM_REGION_ID=$DATUM_REGION_ID"
 } >> /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.

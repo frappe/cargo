@@ -12,7 +12,6 @@ from cargo.client_models import TELEMETRY
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
 	DATUM_PORT,
-	PUBLIC_KEY_FILE,
 	REGION_HEADER,
 	SENDER,
 	SENDER_HEADER,
@@ -21,8 +20,6 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	DatumServer,
 )
 from cargo.testing import SETTINGS, use_test_settings
-
-PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQ\n-----END PUBLIC KEY-----"
 
 
 class IntegrationTestDatumServer(IntegrationTestCase):
@@ -64,69 +61,53 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 		return doc.environment()
 
-	def test_a_key_of_whitespace_is_no_key_at_all(self):
-		"""Whitespace is truthy, so it would satisfy the either/or and then advertise a key
-		file holding nothing -- the 401-to-everything this refuses."""
-		self.assertFalse(self.saved(public_key="   \n  "))
-
-	def test_a_key_is_stored_stripped(self):
-		"""It is written to the host verbatim, so the padding would go with it."""
-		doc = self.server(public_key=f"  {PEM}  \n")
-		doc.insert()
-		self.addCleanup(frappe.db.rollback)
-
-		self.assertEqual(doc.public_key, PEM)
-
 	def test_a_port_outside_the_range_is_refused(self):
 		"""It reaches datum as a string it cannot argue with: the host starts, then cannot
 		reach ClickHouse."""
-		issuer = "https://central.test"
-
-		self.assertFalse(self.saved(oidc_issuer=issuer, clickhouse_port=0))
-		self.assertFalse(self.saved(oidc_issuer=issuer, clickhouse_port=65536))
-		self.assertTrue(self.saved(oidc_issuer=issuer, clickhouse_port=65535))
+		self.assertFalse(self.saved(clickhouse_port=0))
+		self.assertFalse(self.saved(clickhouse_port=65536))
+		self.assertTrue(self.saved(clickhouse_port=65535))
 
 	def test_a_timeout_of_zero_is_refused(self):
 		"""Zero is not "no timeout": every ClickHouse call would expire at once."""
-		issuer = "https://central.test"
+		self.assertFalse(self.saved(timeout_seconds=0))
+		self.assertFalse(self.saved(timeout_seconds=-5))
 
-		self.assertFalse(self.saved(oidc_issuer=issuer, timeout_seconds=0))
-		self.assertFalse(self.saved(oidc_issuer=issuer, timeout_seconds=-5))
+	def saved_without(self, field: str, value) -> bool:
+		"""Save a host with one Cargo Setting cleared. `saved` lays the test settings down
+		first, so the clearing has to come after it, and the controller reads the cached
+		document, so the cache goes with it."""
+		use_test_settings()
+		frappe.db.set_single_value("Cargo Settings", field, value)
+		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+		self.addCleanup(frappe.clear_document_cache, "Cargo Settings", "Cargo Settings")
+		try:
+			self.server().save()
+			return True
+		except frappe.ValidationError:
+			return False
+		finally:
+			frappe.db.rollback()
 
 	def test_no_way_to_check_a_token_is_refused(self):
-		"""With neither, datum answers 401 to every call."""
-		self.assertFalse(self.saved())
+		"""Without a key set datum answers 401 to every call, so it is never set up."""
+		self.assertFalse(self.saved_without("jwks_url", ""))
 
-	def test_an_issuer_alone_is_enough(self):
-		self.assertTrue(self.saved(oidc_issuer="https://central.test"))
+	def test_no_region_is_refused(self):
+		"""Every region reads the same key set, so a datum without a region of its own
+		would take any region's token."""
+		self.assertFalse(self.saved_without("region_id", 0))
 
-	def test_a_public_key_alone_is_enough(self):
-		self.assertTrue(self.saved(public_key=PEM))
+	def test_the_key_set_and_region_reach_datum_from_settings(self):
+		"""Both are Cargo Settings' to own: datum verifies against the same merged set for
+		the same region, so restating them on the host is a second copy that can drift."""
+		environment = self.environment()
 
-	def test_a_trailing_slash_is_trimmed_from_the_issuer(self):
-		"""Datum appends the discovery path, so a stray slash would double it."""
-		doc = self.server(oidc_issuer="https://central.test/")
-		doc.save()
-		self.addCleanup(frappe.db.rollback)
-
-		self.assertEqual(doc.oidc_issuer, "https://central.test")
-
-	def test_the_issuer_reaches_datum_as_its_own_variable(self):
-		environment = self.environment(oidc_issuer="https://central.test")
-
-		self.assertEqual(environment["DATUM_OIDC_ISSUER"], "https://central.test")
-		self.assertNotIn("DATUM_JWT_PUBLIC_KEY_FILE", environment)
-
-	def test_a_public_key_is_passed_as_a_file_and_as_the_key(self):
-		"""Datum reads a path, so the install is handed both: where to write it, and what."""
-		environment = self.environment(public_key=PEM)
-
-		self.assertEqual(environment["DATUM_JWT_PUBLIC_KEY_FILE"], PUBLIC_KEY_FILE)
-		self.assertEqual(environment["DATUM_JWT_PUBLIC_KEY"], PEM)
-		self.assertNotIn("DATUM_OIDC_ISSUER", environment)
+		self.assertEqual(environment["DATUM_JWKS_URL"], SETTINGS["jwks_url"])
+		self.assertEqual(environment["DATUM_REGION_ID"], str(SETTINGS["region_id"]))
 
 	def test_the_clickhouse_defaults_are_carried(self):
-		environment = self.environment(oidc_issuer="https://central.test")
+		environment = self.environment()
 
 		self.assertEqual(environment["DATUM_CLICKHOUSE_HOST"], "clickhouse.internal")
 		self.assertEqual(environment["DATUM_CLICKHOUSE_PORT"], "8123")
@@ -134,13 +115,13 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertEqual(environment["DATUM_TIMEOUT"], "30")
 
 	def test_the_datum_user_password_is_decrypted(self):
-		environment = self.environment(oidc_issuer="https://central.test", datum_user_password="ch")
+		environment = self.environment(datum_user_password="ch")
 
 		self.assertEqual(environment["DATUM_USER_PASSWORD"], "ch")
 
 	def test_the_install_needs_which_datum_to_install(self):
 		"""`environment` is what datum runs on; the repo and version are how it got there."""
-		doc = self.server(oidc_issuer="https://central.test")
+		doc = self.server()
 		doc.save()
 		self.addCleanup(frappe.db.rollback)
 		install = doc.install_environment()
@@ -151,11 +132,11 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def test_nothing_unset_is_handed_to_datum(self):
 		"""An empty variable is not the same as an unset one: datum treats "" as configured."""
-		self.assertNotIn("DATUM_JWT_PUBLIC_KEY_FILE", self.environment(oidc_issuer="https://central.test"))
+		self.assertNotIn("DATUM_CLICKHOUSE_HOST", self.environment(clickhouse_host=""))
 
 	def test_every_user_password_is_generated_and_distinct(self):
 		"""The install writes all three into ClickHouse, so nothing has to be kept in step."""
-		doc = self.server(oidc_issuer="https://central.test")
+		doc = self.server()
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
@@ -178,7 +159,6 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
 				"version": "develop",
-				"public_key": PEM,
 			}
 		).save()
 
@@ -188,7 +168,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def test_the_two_clickhouse_users_get_their_own_passwords(self):
 		"""Nobody types these: datum-migrate creates both users with what is generated here."""
-		doc = self.server(oidc_issuer="https://central.test")
+		doc = self.server()
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
@@ -200,13 +180,11 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 	def test_the_api_connects_as_datum_not_the_superuser(self):
 		"""Datum defaults to ClickHouse's `default` user, which may write anywhere."""
-		self.assertEqual(
-			self.environment(oidc_issuer="https://central.test")["DATUM_CLICKHOUSE_USER"], "datum"
-		)
+		self.assertEqual(self.environment()["DATUM_CLICKHOUSE_USER"], "datum")
 
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
-		self.assertTrue(self.environment(oidc_issuer="https://central.test")["DEFAULT_USER_PASSWORD"])
+		self.assertTrue(self.environment()["DEFAULT_USER_PASSWORD"])
 
 
 class IntegrationTestTelemetryWebhook(IntegrationTestCase):
@@ -224,7 +202,6 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
 				"version": "develop",
-				"public_key": PEM,
 			}
 		).insert()
 
@@ -246,7 +223,6 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
 				"version": "develop",
-				"public_key": PEM,
 			}
 		).save()
 
@@ -324,7 +300,6 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
 				"version": "develop",
-				"public_key": PEM,
 			}
 		).insert()
 		self.machine = frappe.get_doc(

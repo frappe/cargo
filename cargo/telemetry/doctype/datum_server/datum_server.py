@@ -75,13 +75,20 @@ class DatumServer(WorkflowBuilder):
 		self.validate_connection()
 
 	def validate_token_verification(self) -> None:
-		"""Whitespace is truthy, so a URL of spaces is the 401-to-everything this check
-		exists to prevent."""
-		self.jwks_url = (self.jwks_url or "").strip() or None
+		"""Datum checks tokens against the same merged key set Cargo does, for the same
+		region, so both come from Cargo Settings rather than being restated here. Without
+		either, datum answers 401 to everything."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
-		if not self.jwks_url:
+		if not (settings.jwks_url or "").strip():
 			frappe.throw(
-				_("Set the JWKS URL, or datum will answer 401 to everything."),
+				_("Set the JWKS URL in Cargo Settings, or datum will answer 401 to everything."),
+				frappe.ValidationError,
+			)
+
+		if not settings.region_id:
+			frappe.throw(
+				_("Set the region ID in Cargo Settings, or datum will take another region's tokens."),
 				frappe.ValidationError,
 			)
 
@@ -258,7 +265,10 @@ class DatumServer(WorkflowBuilder):
 		self.save()
 
 	def environment(self) -> dict[str, str]:
-		"""What datum runs on."""
+		"""What datum runs on. The key set and the region come from Cargo Settings, which
+		already holds both for this host: a token is verified against that set and must be
+		addressed to that region, or another region's pilot could write here."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		variables = {
 			"DATUM_CLICKHOUSE_HOST": self.clickhouse_host,
 			"DATUM_CLICKHOUSE_PORT": str(self.clickhouse_port),
@@ -267,7 +277,8 @@ class DatumServer(WorkflowBuilder):
 			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
 			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
-			"DATUM_JWKS_URL": self.jwks_url,
+			"DATUM_JWKS_URL": settings.jwks_url,
+			"DATUM_REGION_ID": str(settings.region_id),
 		}
 
 		return {name: value for name, value in variables.items() if value}
