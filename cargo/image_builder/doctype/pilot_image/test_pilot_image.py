@@ -329,15 +329,16 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertIsNone(image.temporary_vm_id)
 		self.assertIn("stopped by", image.error)
 
-	def test_a_machine_atlas_will_not_destroy_keeps_its_keys(self):
-		"""The keypair still opens that machine, so it is kept until the machine is gone."""
+	def test_a_machine_atlas_will_not_destroy_leaves_the_build_alone(self):
+		"""Failed reads as renting nothing, so it is not written over a machine still up."""
 		image = self.building_image(status="Provisioning")
 
 		with patch.object(PilotImage, "builder") as builder:
 			builder.destroy_build_machine.return_value = False
-			image.stop_build()
+			with self.assertRaises(frappe.ValidationError):
+				image.stop_build()
 
-		self.assertEqual(image.status, "Failed")
+		self.assertEqual(image.status, "Provisioning")
 		self.assertEqual(image.temporary_vm_id, "vm-stuck")
 		self.assertEqual(image.ssh_public_key, "ssh-ed25519 AAAA")
 
