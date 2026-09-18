@@ -5,6 +5,7 @@ import json
 from itertools import product
 
 import frappe
+from frappe import _
 from frappe.utils import now_datetime
 
 from cargo.atlas_client import (
@@ -70,9 +71,7 @@ class PilotImage(WorkflowBuilder):
 				"name": ("!=", self.name),
 			},
 		):
-			frappe.throw(
-				frappe._("{0} on {1} already exists.").format(self.pilot_version, self.frappe_version)
-			)
+			frappe.throw(_("{0} on {1} already exists.").format(self.pilot_version, self.frappe_version))
 
 	@property
 	def atlas_name(self) -> str:
@@ -134,14 +133,14 @@ class PilotImage(WorkflowBuilder):
 	def build(self) -> None:
 		"""Ask Atlas for a machine to bake. The scheduler takes it from here."""
 		if self.status in BUILDING_STATUSES:
-			frappe.throw(frappe._("This image is already building."))
+			frappe.throw(_("This image is already building."))
 
 		# Checked before a machine is rented: without it the image reaches nothing.
 		if not self.wildcard_domain:
-			frappe.throw(frappe._("Set the wildcard domain in Cargo Settings before building."))
+			frappe.throw(_("Set the wildcard domain in Cargo Settings before building."))
 
 		if not self.region_id:
-			frappe.throw(frappe._("Set the region ID in Cargo Settings before building."))
+			frappe.throw(_("Set the region ID in Cargo Settings before building."))
 
 		self.build_log = None
 		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
@@ -201,6 +200,36 @@ class PilotImage(WorkflowBuilder):
 		# disk holds no key to take off it. Cargo drops its own half here.
 		self.drop_ssh_keys()
 		self.mark("Snapshotting")
+
+	@frappe.whitelist()
+	def stop_build(self) -> None:
+		"""Give up on a build that is not moving, and release the machine it rented."""
+		if self.status not in BUILDING_STATUSES:
+			frappe.throw(_("This image is not building."))
+
+		workflow = self.running_workflow
+		if workflow:
+			frappe.get_doc("Press Workflow", workflow).force_fail()
+			return
+
+		if self.temporary_vm_id and not self.builder.destroy_build_machine(self.temporary_vm_id):
+			frappe.throw(_("Atlas did not destroy {0}.").format(self.temporary_vm_id))
+
+		self.temporary_vm_id = None
+		self.drop_ssh_keys()
+		self.mark("Failed", error=f"Build stopped by {frappe.session.user}.")
+
+	@property
+	def running_workflow(self) -> str | None:
+		"""This image's build workflow while it is still going, or None."""
+		return frappe.db.get_value(
+			"Press Workflow",
+			{
+				"linked_doctype": self.doctype,
+				"linked_docname": self.name,
+				"status": ("in", ("Queued", "Running")),
+			},
+		)
 
 	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
 	def take_snapshot(self, vm_id: str) -> None:

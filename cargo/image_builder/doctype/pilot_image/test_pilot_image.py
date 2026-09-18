@@ -325,3 +325,66 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertIn(names[versions[1]], retired)
 		rollback.assert_called_once()
 		self.assertTrue(frappe.db.exists("Pilot Image", stuck))
+
+	def building_image(self, status: str = "Building") -> PilotImage:
+		"""An image part way through a build, with a machine rented for it."""
+		image = self.image(self.release())
+		image.db_set({"status": status, "temporary_vm_id": "vm-stuck", "ssh_public_key": "ssh-ed25519 AAAA"})
+		image.reload()
+
+		return image
+
+	def test_a_started_build_is_asked_to_fail_itself(self):
+		"""Its own failure callback destroys the machine and records which step died, so
+		nothing is torn down from here."""
+		image = self.building_image()
+		workflow = self.workflow(image, status="Running")
+
+		with patch.object(PilotImage, "builder") as builder:
+			image.stop_build()
+
+		builder.destroy_build_machine.assert_not_called()
+		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+
+	def test_a_workflow_a_restarted_worker_left_running_is_stopped_the_same_way(self):
+		"""Nothing is executing it, so only the flag `retry_workflows` reads can end it."""
+		image = self.building_image()
+		workflow = self.workflow(image, status="Queued")
+
+		with patch.object(PilotImage, "builder"):
+			image.stop_build()
+
+		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+
+	def test_a_build_with_no_workflow_yet_releases_its_own_machine(self):
+		"""Provisioning rents a machine before the workflow exists, so nothing else will."""
+		image = self.building_image(status="Provisioning")
+
+		with patch.object(PilotImage, "builder") as builder:
+			builder.destroy_build_machine.return_value = True
+			image.stop_build()
+
+		builder.destroy_build_machine.assert_called_once_with("vm-stuck")
+		self.assertEqual(image.status, "Failed")
+		self.assertIsNone(image.temporary_vm_id)
+		self.assertIn("stopped by", image.error)
+
+	def test_a_machine_atlas_will_not_destroy_leaves_the_build_alone(self):
+		"""Failed reads as renting nothing, so it is not written over a machine still up."""
+		image = self.building_image(status="Provisioning")
+
+		with patch.object(PilotImage, "builder") as builder:
+			builder.destroy_build_machine.return_value = False
+			with self.assertRaises(frappe.ValidationError):
+				image.stop_build()
+
+		self.assertEqual(image.status, "Provisioning")
+		self.assertEqual(image.temporary_vm_id, "vm-stuck")
+		self.assertEqual(image.ssh_public_key, "ssh-ed25519 AAAA")
+
+	def test_an_image_that_is_not_building_cannot_be_stopped(self):
+		"""Draft, Available and Failed rent nothing, so there is nothing to stop."""
+		image = self.image(self.release())
+
+		with self.assertRaises(frappe.ValidationError):
+			image.stop_build()
