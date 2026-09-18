@@ -275,9 +275,50 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		return image
 
-	def test_a_stuck_build_can_be_stopped_and_stops_renting(self):
-		"""What this exists for: the machine is what costs money, so it goes first."""
+	def workflow_for(self, image: PilotImage, status: str = "Running") -> str:
+		"""A build workflow of this image, as a restarted worker leaves one behind.
+
+		The engine runs a workflow in the foreground under test, so the insert is what
+		would otherwise build the image; here it only needs to exist."""
+		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
+			workflow = frappe.get_doc(
+				{
+					"doctype": "Press Workflow",
+					"linked_doctype": image.doctype,
+					"linked_docname": image.name,
+					"main_method_name": "run_build",
+					"main_method_title": "Run Build",
+					"status": status,
+				}
+			).insert(ignore_permissions=True)
+
+		return workflow.name
+
+	def test_a_started_build_is_asked_to_fail_itself(self):
+		"""Its own failure callback destroys the machine and records which step died, so
+		nothing is torn down from here."""
 		image = self.building_image()
+		workflow = self.workflow_for(image)
+
+		with patch.object(PilotImage, "builder") as builder:
+			image.stop_build()
+
+		builder.destroy_build_machine.assert_not_called()
+		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+
+	def test_a_workflow_a_restarted_worker_left_running_is_stopped_the_same_way(self):
+		"""Nothing is executing it, so only the flag `retry_workflows` reads can end it."""
+		image = self.building_image()
+		workflow = self.workflow_for(image, status="Queued")
+
+		with patch.object(PilotImage, "builder"):
+			image.stop_build()
+
+		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+
+	def test_a_build_with_no_workflow_yet_releases_its_own_machine(self):
+		"""Provisioning rents a machine before the workflow exists, so nothing else will."""
+		image = self.building_image(status="Provisioning")
 
 		with patch.object(PilotImage, "builder") as builder:
 			builder.destroy_build_machine.return_value = True
@@ -290,7 +331,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_a_machine_atlas_will_not_destroy_keeps_its_keys(self):
 		"""The keypair still opens that machine, so it is kept until the machine is gone."""
-		image = self.building_image()
+		image = self.building_image(status="Provisioning")
 
 		with patch.object(PilotImage, "builder") as builder:
 			builder.destroy_build_machine.return_value = False
@@ -299,15 +340,6 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(image.status, "Failed")
 		self.assertEqual(image.temporary_vm_id, "vm-stuck")
 		self.assertEqual(image.ssh_public_key, "ssh-ed25519 AAAA")
-
-	def test_every_building_status_can_be_stopped(self):
-		for status in ("Provisioning", "Building", "Snapshotting"):
-			with self.subTest(status=status), patch.object(PilotImage, "builder") as builder:
-				builder.destroy_build_machine.return_value = True
-				image = self.building_image(status)
-				image.stop_build()
-
-				self.assertEqual(image.status, "Failed")
 
 	def test_an_image_that_is_not_building_cannot_be_stopped(self):
 		"""Draft, Available and Failed rent nothing, so there is nothing to stop."""

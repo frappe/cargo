@@ -60,12 +60,14 @@ frappe.ui.form.on("Pilot Image", {
 			frm.add_custom_button(__("Stop Building"), () => {
 				frappe.confirm(
 					__(
-						"Destroy the build machine and mark this image Failed. For a build that is stuck; a step already running cannot be interrupted."
+						"Fail this build and destroy its machine. A build already running stops within the minute; one whose worker restarted stops the same way."
 					),
 					() =>
 						frm.call("stop_build").then(() => {
 							frappe.show_alert({
-								message: __("Build stopped. The machine has been destroyed."),
+								message: __(
+									"Stopping. The machine is destroyed when the build gives up."
+								),
 								indicator: "orange",
 							});
 							frm.reload_doc();
