@@ -13,8 +13,8 @@ export DEBIAN_FRONTEND=noninteractive
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
 
-if [ -z "${DATUM_JWT_PUBLIC_KEY_FILE:-}" ] && [ -z "${DATUM_OIDC_ISSUER:-}" ]; then
-	echo "set DATUM_JWT_PUBLIC_KEY_FILE or DATUM_OIDC_ISSUER, or every call is a 401" >&2
+if [ -z "${DATUM_JWKS_URL:-}" ]; then
+	echo "set DATUM_JWKS_URL, or every call is a 401" >&2
 	exit 1
 fi
 
@@ -139,12 +139,6 @@ echo "datum is at $(as_user "git -C $DIR rev-parse --short HEAD")"
 
 as_user "$UV sync --group api --directory $DIR"
 
-if [ -n "${DATUM_JWT_PUBLIC_KEY:-}" ]; then
-	install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 700 "$(dirname "$DATUM_JWT_PUBLIC_KEY_FILE")"
-	install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null "$DATUM_JWT_PUBLIC_KEY_FILE"
-	printf '%s\n' "$DATUM_JWT_PUBLIC_KEY" > "$DATUM_JWT_PUBLIC_KEY_FILE"
-fi
-
 # The unit reads its secrets from here rather than carrying them in its own text, where
 # they would be world-readable through systemctl show.
 install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
@@ -154,8 +148,7 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 	echo "DATUM_CLICKHOUSE_USER=$DATUM_CLICKHOUSE_USER"
 	echo "DATUM_USER_PASSWORD=$DATUM_USER_PASSWORD"
 	echo "DATUM_TIMEOUT=${DATUM_TIMEOUT:-30}"
-	[ -n "${DATUM_OIDC_ISSUER:-}" ] && echo "DATUM_OIDC_ISSUER=$DATUM_OIDC_ISSUER"
-	[ -n "${DATUM_JWT_PUBLIC_KEY:-}" ] && echo "DATUM_JWT_PUBLIC_KEY_FILE=$DATUM_JWT_PUBLIC_KEY_FILE"
+	echo "DATUM_JWKS_URL=$DATUM_JWKS_URL"
 } >> /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.

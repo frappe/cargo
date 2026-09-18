@@ -23,10 +23,6 @@
   "datum_user_password",
   "insights_user_password",
   "timeout_seconds",
-  "token_verification_section",
-  "oidc_issuer",
-  "testing_section",
-  "public_key",
   "section_break_setup",
   "setup_log"
  ],
@@ -146,32 +142,6 @@
    "non_negative": 1
   },
   {
-   "description": "How datum checks the tokens Central mints.",
-   "fieldname": "token_verification_section",
-   "fieldtype": "Section Break",
-   "label": "Token Verification"
-  },
-  {
-   "description": "DATUM_OIDC_ISSUER. Central's base URL. Datum reads {issuer}/.well-known/openid-configuration for the JWKS, so keys rotate without redeploying datum. This is how a real host authenticates.",
-   "fieldname": "oidc_issuer",
-   "fieldtype": "Data",
-   "label": "OIDC Issuer",
-   "options": "URL"
-  },
-  {
-   "collapsible": 1,
-   "description": "A pinned key, for working without a reachable issuer. Not how a deployed host runs.",
-   "fieldname": "testing_section",
-   "fieldtype": "Section Break",
-   "label": "Testing"
-  },
-  {
-   "description": "DATUM_JWT_PUBLIC_KEY_FILE. Written to disk and passed as a path. Testing only: it pins one key and does not follow a rotation. Leave empty and set an issuer instead.",
-   "fieldname": "public_key",
-   "fieldtype": "Code",
-   "label": "Public Key (PEM)"
-  },
-  {
    "collapsible": 1,
    "depends_on": "setup_log",
    "fieldname": "section_break_setup",
@@ -206,7 +176,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-16 17:33:36.542554",
+ "modified": "2026-09-18 11:16:12.700500",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
@@ -216,10 +186,8 @@
    "create": 1,
    "delete": 1,
    "email": 1,
-   "export": 1,
    "print": 1,
    "read": 1,
-   "report": 1,
    "role": "System Manager",
    "share": 1,
    "write": 1
