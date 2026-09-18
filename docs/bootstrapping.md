@@ -100,7 +100,9 @@ Cargo calls Atlas with `Authorization: Bearer <atlas_token>` and `X-Tenant-ID: 0
 
 The Proxy token has audience `atlas-proxy:<region-id>`, subject `cargo`, scope `site:*`, a `constraints.site.suffix` value of `-svc`, no tenant claim, and a 365-day lifetime. Cargo also refuses to call the Proxy for a site name without this suffix.
 
-Inbound Cargo API tokens use the `X-Cargo-Access-Token` header. Cargo verifies them with the merged Atlas key set and requires the audience `atlas-cargo:<region-id>`. Cargo issuer validation is deferred.
+Cargo installs datum with `DATUM_JWKS_URL` and `DATUM_REGION_ID` from Cargo Settings, written to `/etc/datum.env`. Datum verifies against the same merged key set Cargo does, and requires the audience `atlas-datum:<region-id>`, so a pilot in another region cannot write to this region's telemetry. Without either variable datum answers 401 to everything, and the installer refuses to run.
+
+Inbound Cargo API tokens use the `X-Cargo-Access-Token` header. Cargo verifies them with the merged Atlas key set and requires the audience `atlas-cargo:<region-id>`, the Ed25519 (`EdDSA`) algorithm, and a key ID namespaced to the issuer the token declares -- `central:` or `atlas:<region-id>:`. Cargo holds no verification secret of its own. Read [the Central contract](central-contract.md#central-calling-cargo).
 
 ## Validation
 

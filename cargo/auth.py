@@ -14,18 +14,8 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 TOKEN_HEADER = "X-Cargo-Access-Token"
-JWKS_ALGORITHMS = (
-	"RS256",
-	"RS384",
-	"RS512",
-	"ES256",
-	"ES384",
-	"ES512",
-	"PS256",
-	"PS384",
-	"PS512",
-	"EdDSA",
-)
+CENTRAL_ISSUER = "central"
+ALGORITHM = "EdDSA"
 
 jwks_clients: dict[str, PyJWKClient] = {}
 
@@ -74,29 +64,41 @@ def token_claims(token: str) -> dict[str, Any] | None:
 
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 	try:
-		kid = jwt.get_unverified_header(token).get("kid")
-		if not isinstance(kid, str):
+		header = jwt.get_unverified_header(token)
+		kid = header.get("kid")
+		if not isinstance(kid, str) or header.get("alg") != ALGORITHM:
+			return None
+
+		# The key set carries more than one issuer's keys, so a signature alone does not say
+		# who signed. The key id does, and `iss` is then held to it.
+		issuer = issuer_for_key_id(kid, settings.region_id)
+		if issuer is None:
 			return None
 
 		# An unknown key id must not make an attacker refetch the key set.
 		signing_key = PyJWKClient.match_kid(jwks_client(settings.jwks_url).get_signing_keys(), kid)
-		if signing_key is None:
+		if signing_key is None or signing_key.algorithm_name != ALGORITHM:
 			return None
 
 		return jwt.decode(
 			token,
 			signing_key.key,
-			algorithms=JWKS_ALGORITHMS,
-			audience=accepted_audiences(settings),
-			options={"require": ["exp", "aud"], "verify_aud": True},
+			algorithms=[ALGORITHM],
+			audience=[f"atlas-cargo:{settings.region_id}"],
+			issuer=issuer,
+			options={"require": ["iss", "sub", "aud", "iat", "exp"], "verify_aud": True},
 		)
 	except jwt.PyJWTError:
 		return None
 
 
-def accepted_audiences(settings: CargoSettings) -> list[str]:
-	"""The audience reserved for this region's Cargo API."""
-	return [f"atlas-cargo:{settings.region_id}"]
+def issuer_for_key_id(key_id: str, region_id: int) -> str | None:
+	"""The issuer whose key id namespace this is, or None when no issuer claims it."""
+	for issuer in (CENTRAL_ISSUER, f"atlas:{region_id}"):
+		if key_id.startswith(f"{issuer}:") and key_id.removeprefix(f"{issuer}:"):
+			return issuer
+
+	return None
 
 
 def jwks_client(url: str) -> PyJWKClient:

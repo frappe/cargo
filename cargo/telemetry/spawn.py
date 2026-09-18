@@ -84,12 +84,10 @@ def build_server(config: dict) -> None:
 
 
 def provision(server: DatumServer, config: dict) -> None:
-	"""Fill the host in from site config; the machine comes on the next run. The issuer is
-	Central, whose keys datum checks tokens against."""
+	"""Fill the host in from site config; the machine comes on the next run."""
 	server.update(
 		{
 			"auto_spawn": 1,
-			"oidc_issuer": frappe.db.get_single_value("Cargo Settings", "central_url"),
 			**{field: config[field] for field in DATUM_FIELDS},
 		}
 	).save(ignore_permissions=True)

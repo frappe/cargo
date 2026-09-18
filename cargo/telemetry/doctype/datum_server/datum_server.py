@@ -29,7 +29,6 @@ TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
 TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 TELEMETRY_SITE_NAMES = (TELEMETRY_WRITE_SITE_NAME, TELEMETRY_READ_SITE_NAME)
 SETUP_TIMEOUT = 30 * 60
-PUBLIC_KEY_FILE = "/home/frappe/datum/.dev/datum.pub"
 # Fixed by datum's own ACL migration, which creates exactly these two.
 DATUM_USER = "datum"
 MAX_PORT = 65535
@@ -54,17 +53,16 @@ class DatumServer(WorkflowBuilder):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
 		base_image: DF.Data
-		clickhouse_host: DF.Data
+		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
 		insights_user_password: DF.Password | None
 		machine: DF.Link | None
-		oidc_issuer: DF.Data | None
-		public_key: DF.Code | None
 		repository: DF.Data
 		setup_log: DF.Code | None
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
@@ -77,14 +75,20 @@ class DatumServer(WorkflowBuilder):
 		self.validate_connection()
 
 	def validate_token_verification(self) -> None:
-		"""One of the two, and a real one: whitespace is truthy, and a key datum cannot read
-		is the 401-to-everything this check exists to prevent."""
-		self.oidc_issuer = (self.oidc_issuer or "").strip().rstrip("/") or None
-		self.public_key = (self.public_key or "").strip() or None
+		"""Datum checks tokens against the same merged key set Cargo does, for the same
+		region, so both come from Cargo Settings rather than being restated here. Without
+		either, datum answers 401 to everything."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
-		if not (self.oidc_issuer or self.public_key):
+		if not (settings.jwks_url or "").strip():
 			frappe.throw(
-				_("Set an OIDC issuer or a public key, or datum will answer 401 to everything."),
+				_("Set the JWKS URL in Cargo Settings, or datum will answer 401 to everything."),
+				frappe.ValidationError,
+			)
+
+		if not settings.region_id:
+			frappe.throw(
+				_("Set the region ID in Cargo Settings, or datum will take another region's tokens."),
 				frappe.ValidationError,
 			)
 
@@ -260,8 +264,11 @@ class DatumServer(WorkflowBuilder):
 		self.error = error
 		self.save()
 
-	def environment(self, key_file: str = PUBLIC_KEY_FILE) -> dict[str, str]:
-		"""What datum runs on. `key_file` is where the PEM was written on the host."""
+	def environment(self) -> dict[str, str]:
+		"""What datum runs on. The key set and the region come from Cargo Settings, which
+		already holds both for this host: a token is verified against that set and must be
+		addressed to that region, or another region's pilot could write here."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		variables = {
 			"DATUM_CLICKHOUSE_HOST": self.clickhouse_host,
 			"DATUM_CLICKHOUSE_PORT": str(self.clickhouse_port),
@@ -270,19 +277,16 @@ class DatumServer(WorkflowBuilder):
 			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
 			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
-			"DATUM_OIDC_ISSUER": self.oidc_issuer,
-			# This is for the fastapi server to read.
-			"DATUM_JWT_PUBLIC_KEY_FILE": key_file if self.public_key else None,
-			# The PEM itself, which the install writes to that path.
-			"DATUM_JWT_PUBLIC_KEY": self.public_key,
+			"DATUM_JWKS_URL": settings.jwks_url,
+			"DATUM_REGION_ID": str(settings.region_id),
 		}
 
 		return {name: value for name, value in variables.items() if value}
 
-	def install_environment(self, key_file: str = PUBLIC_KEY_FILE) -> dict[str, str]:
+	def install_environment(self) -> dict[str, str]:
 		"""What the install script needs on top of datum's own: which datum to install."""
 		return {
-			**self.environment(key_file),
+			**self.environment(),
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
 			"DATUM_PORT": DATUM_PORT,
