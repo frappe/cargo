@@ -267,6 +267,65 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertTrue(frappe.db.exists("Pilot Image", image.name))
 
+	def workflow(self, image: PilotImage, status: str = "Success") -> str:
+		"""A build workflow linked to the image, without running it."""
+		workflow = frappe.get_doc(
+			{
+				"doctype": "Press Workflow",
+				"linked_doctype": image.doctype,
+				"linked_docname": image.name,
+				"main_method_name": "build",
+				"main_method_title": "Build",
+				"status": status,
+			}
+		)
+		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
+			workflow.insert(ignore_permissions=True)
+
+		return workflow.name
+
+	def test_retiring_takes_the_workflows_that_link_to_the_image(self):
+		image = self.image(self.release())
+		workflow = self.workflow(image)
+
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.AtlasClient"):
+			self.assertTrue(image.retire())
+
+		self.assertFalse(frappe.db.exists("Press Workflow", workflow))
+		self.assertFalse(frappe.db.exists("Pilot Image", image.name))
+
+	def test_an_image_a_workflow_still_runs_on_is_kept(self):
+		image = self.image(self.release())
+		workflow = self.workflow(image, status="Running")
+
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.AtlasClient"):
+			with self.assertRaises(frappe.ValidationError):
+				image.retire()
+
+		self.assertTrue(frappe.db.exists("Press Workflow", workflow))
+
+	def test_an_image_that_will_not_retire_leaves_the_rest_of_the_window_alone(self):
+		versions = [self.release() for _ in range(5)]
+		names = {version: self.image(version).name for version in versions}
+		stuck = names[versions[0]]
+		retired: list[str] = []
+
+		def retire(image: PilotImage) -> None:
+			if image.name == stuck:
+				raise frappe.LinkExistsError("still linked")
+			retired.append(image.name)
+
+		# A real rollback would drop the rows this test made.
+		with (
+			patch.object(PilotImage, "retire", autospec=True, side_effect=retire),
+			patch.object(frappe.db, "rollback") as rollback,
+		):
+			retire_old_releases()
+
+		self.assertIn(names[versions[1]], retired)
+		rollback.assert_called_once()
+		self.assertTrue(frappe.db.exists("Pilot Image", stuck))
+
 	def building_image(self, status: str = "Building") -> PilotImage:
 		"""An image part way through a build, with a machine rented for it."""
 		image = self.image(self.release())
@@ -275,30 +334,11 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		return image
 
-	def workflow_for(self, image: PilotImage, status: str = "Running") -> str:
-		"""A build workflow of this image, as a restarted worker leaves one behind.
-
-		The engine runs a workflow in the foreground under test, so the insert is what
-		would otherwise build the image; here it only needs to exist."""
-		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
-			workflow = frappe.get_doc(
-				{
-					"doctype": "Press Workflow",
-					"linked_doctype": image.doctype,
-					"linked_docname": image.name,
-					"main_method_name": "run_build",
-					"main_method_title": "Run Build",
-					"status": status,
-				}
-			).insert(ignore_permissions=True)
-
-		return workflow.name
-
 	def test_a_started_build_is_asked_to_fail_itself(self):
 		"""Its own failure callback destroys the machine and records which step died, so
 		nothing is torn down from here."""
 		image = self.building_image()
-		workflow = self.workflow_for(image)
+		workflow = self.workflow(image, status="Running")
 
 		with patch.object(PilotImage, "builder") as builder:
 			image.stop_build()
@@ -309,7 +349,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def test_a_workflow_a_restarted_worker_left_running_is_stopped_the_same_way(self):
 		"""Nothing is executing it, so only the flag `retry_workflows` reads can end it."""
 		image = self.building_image()
-		workflow = self.workflow_for(image, status="Queued")
+		workflow = self.workflow(image, status="Queued")
 
 		with patch.object(PilotImage, "builder"):
 			image.stop_build()

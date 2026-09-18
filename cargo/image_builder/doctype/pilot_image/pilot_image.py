@@ -369,8 +369,15 @@ def retire_old_releases() -> None:
 		pluck="name",
 	)
 	for name in stale:
-		image: PilotImage = frappe.get_doc("Pilot Image", name)
-		image.retire()
+		try:
+			image: PilotImage = frappe.get_doc("Pilot Image", name)
+			image.retire()
+
+			if not frappe.flags.in_test:
+				frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not retire image {name}")
 
 
 def on_doctype_update() -> None:
