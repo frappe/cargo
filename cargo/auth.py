@@ -15,8 +15,6 @@ if typing.TYPE_CHECKING:
 
 TOKEN_HEADER = "X-Cargo-Access-Token"
 CENTRAL_ISSUER = "central"
-# Every key on the merged set is Ed25519. Pinning the algorithm keeps a token from
-# naming a weaker one and being verified against a key meant for this.
 ALGORITHM = "EdDSA"
 
 jwks_clients: dict[str, PyJWKClient] = {}
