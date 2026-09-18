@@ -15,7 +15,6 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	REGION_HEADER,
 	SENDER,
 	SENDER_HEADER,
-	WEBHOOK_ENDPOINT,
 	WEBHOOK_NAME,
 	DatumServer,
 )
@@ -213,7 +212,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		webhook = self.webhook()
 
 		self.assertEqual(webhook.webhook_doctype, "Datum Server")
-		self.assertTrue(webhook.request_url.endswith(WEBHOOK_ENDPOINT))
+		self.assertEqual(webhook.request_url, SETTINGS["central_webhook_url"])
 		self.assertTrue(webhook.enable_security)
 
 	def test_a_host_saved_rather_than_inserted_still_gets_its_webhook(self):
