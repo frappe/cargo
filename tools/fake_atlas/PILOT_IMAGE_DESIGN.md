@@ -54,15 +54,7 @@ Metadata is not stored in Docker labels, environment variables, image layers, AP
 
 ## Verification
 
-Focused automated tests cover:
-
-- Atlas image labels and catalog tag filtering.
-- Complete image representations expected by Central.
-- VM creation selecting the requested snapshot.
-- Per-VM metadata isolation and cleanup.
-- Metadata token issuance, validation, expiry, and attribute reads.
-
-The manual end-to-end proof is:
+Use syntax and Docker smoke checks for the helper scripts, followed by this end-to-end proof:
 
 1. Start Fake Atlas with `--systemd`.
 2. Build a Pilot image for Frappe `version-16` through Cargo.
@@ -71,4 +63,4 @@ The manual end-to-end proof is:
 5. Confirm Pilot marks Central bootstrap complete and stores the injected default S3 configuration.
 6. Spawn a site and exercise object-storage-backed behavior.
 
-The final bucket and site checks depend on the local Central, Cargo, Garage, and DNS environment and are not made part of Fake Atlas's unit suite.
+The final bucket and site checks depend on the local Central, Cargo, Garage, and DNS environment.

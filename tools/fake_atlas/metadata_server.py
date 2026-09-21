@@ -33,53 +33,56 @@ class MetadataState:
 		return True
 
 
+class MetadataHandler(BaseHTTPRequestHandler):
+	state: MetadataState
+
+	def log_message(self, *args) -> None:
+		pass
+
+	def reply(self, status: int, body: str = "") -> None:
+		encoded = body.encode()
+		self.send_response(status)
+		self.send_header("Content-Type", "text/plain; charset=utf-8")
+		self.send_header("Content-Length", str(len(encoded)))
+		self.end_headers()
+		self.wfile.write(encoded)
+
+	def do_PUT(self) -> None:
+		if urlsplit(self.path).path != TOKEN_PATH:
+			self.reply(404)
+			return
+
+		try:
+			ttl = int(self.headers.get("X-metadata-token-ttl-seconds", ""))
+		except ValueError:
+			self.reply(400)
+			return
+		if not 1 <= ttl <= MAX_TOKEN_TTL_SECONDS:
+			self.reply(400)
+			return
+		self.reply(200, self.state.issue_token(ttl))
+
+	def do_GET(self) -> None:
+		path = urlsplit(self.path).path
+		if not path.startswith(ATTRIBUTE_PREFIX):
+			self.reply(404)
+			return
+
+		token = self.headers.get("X-metadata-token", "")
+		if not self.state.accepts(token):
+			self.reply(401)
+			return
+
+		name = unquote(path.removeprefix(ATTRIBUTE_PREFIX))
+		value = self.state.attributes.get(name)
+		if value is None:
+			self.reply(404)
+			return
+		self.reply(200, value)
+
+
 def make_handler(state: MetadataState) -> type[BaseHTTPRequestHandler]:
-	class MetadataHandler(BaseHTTPRequestHandler):
-		def log_message(self, *args) -> None:
-			pass
-
-		def reply(self, status: int, body: str = "") -> None:
-			encoded = body.encode()
-			self.send_response(status)
-			self.send_header("Content-Type", "text/plain; charset=utf-8")
-			self.send_header("Content-Length", str(len(encoded)))
-			self.end_headers()
-			self.wfile.write(encoded)
-
-		def do_PUT(self) -> None:
-			if urlsplit(self.path).path != TOKEN_PATH:
-				self.reply(404)
-				return
-
-			try:
-				ttl = int(self.headers.get("X-metadata-token-ttl-seconds", ""))
-			except ValueError:
-				self.reply(400)
-				return
-			if not 1 <= ttl <= MAX_TOKEN_TTL_SECONDS:
-				self.reply(400)
-				return
-			self.reply(200, state.issue_token(ttl))
-
-		def do_GET(self) -> None:
-			path = urlsplit(self.path).path
-			if not path.startswith(ATTRIBUTE_PREFIX):
-				self.reply(404)
-				return
-
-			token = self.headers.get("X-metadata-token", "")
-			if not state.accepts(token):
-				self.reply(401)
-				return
-
-			name = unquote(path.removeprefix(ATTRIBUTE_PREFIX))
-			value = state.attributes.get(name)
-			if value is None:
-				self.reply(404)
-				return
-			self.reply(200, value)
-
-	return MetadataHandler
+	return type("BoundMetadataHandler", (MetadataHandler,), {"state": state})
 
 
 def serve(metadata_path: str, host: str = "169.254.169.254", port: int = 80) -> None:
