@@ -14,7 +14,7 @@ class IntegrationTestBuilder(IntegrationTestCase):
 	"""How a build waits for a machine that Atlas calls running before it has booted."""
 
 	def setUp(self):
-		self.builder = Builder("IMG-0001-version-16")
+		self.builder = Builder()
 
 	def ping(self, *returncodes):
 		return patch(
@@ -88,18 +88,3 @@ class IntegrationTestBuilder(IntegrationTestCase):
 			self.builder.flush_build_machine("fdaa:1::1d", "key")
 
 		self.assertEqual(run.call_args.args[1], "sync")
-
-	def test_a_built_image_is_snapshotted_as_a_system_image(self):
-		client = Mock()
-		tags = {"purpose": "pilot", "pilot_version": "1.2.3"}
-		with patch.object(Builder, "client", new=property(lambda _: client)):
-			self.builder.snapshot_build_machine("vm-1", tags)
-
-		client.create_snapshot.assert_called_once_with(
-			"vm-1",
-			"IMG-0001-version-16",
-			image_type="system",
-			cache_image=True,
-			memory_snapshot=True,
-			tags=tags,
-		)

@@ -107,6 +107,27 @@ class Machine(Document):
 
 		return created["id"]
 
+	def snapshot(
+		self,
+		title: str,
+		tags: dict[str, str],
+		image_type: str = "system",
+		memory_snapshot: bool = True,
+		cache_image: bool = True,
+	) -> str:
+		"""Photograph this machine and return the image Atlas filed it under. Cached and
+		memory-backed, so a machine booted from it starts warm."""
+		from cargo.atlas_client import AtlasClient
+
+		return AtlasClient.from_settings().create_snapshot(
+			self.vm_id,
+			title,
+			image_type=image_type,
+			cache_image=cache_image,
+			memory_snapshot=memory_snapshot,
+			tags=tags,
+		)
+
 	def terminate(self) -> bool:
 		"""Tell Atlas to let this machine go. A refusal leaves it Broken rather than
 		pretending it is gone, since it is still running and still costing money."""

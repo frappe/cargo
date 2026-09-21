@@ -4,15 +4,13 @@ from collections.abc import Callable
 
 import frappe
 
-from cargo.atlas_client import AtlasClient, base_image_id
+from cargo.client_models import BUILDER, NodeSpec
 from cargo.ssh import SshError, run_over_ssh, script
 
 # Atlas records the snapshotted machine's shape as the warm-start template, so this is the
 # shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
 # on its own, which is why the provision script runs on temporary swap.
-BUILD_CPU_MILLICORES = 1000
-BUILD_MEMORY_MIB = 1024
-BUILD_DISK_MIB = 8 * 1024
+BUILD_SPEC = NodeSpec(role=BUILDER, cpu_millicores=1000, ram_gb=1, disk_gb=8)
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
 # Atlas reports a machine running once it is created, which is before it has booted. It
@@ -26,14 +24,8 @@ FLUSH_TIMEOUT = 300
 
 
 class Builder:
-	"""Rents a machine, runs one script on it, photographs it, throws it away."""
-
-	def __init__(self, atlas_name: str) -> None:
-		self.atlas_name = atlas_name
-
-	@property
-	def client(self) -> AtlasClient:
-		return AtlasClient.from_settings()
+	"""Runs the provision script on a build machine. The machine itself is a `Machine`
+	record, which is what rents it, photographs it and lets it go."""
 
 	def wait_until_reachable(self, address: str, private_key: str) -> None:
 		"""Wait for the machine to answer, on the network first and then on SSH."""
@@ -100,38 +92,3 @@ class Builder:
 		"""Write the page cache out. Atlas photographs a paused disk, and pausing flushes
 		nothing, so unwritten files land in the image empty."""
 		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
-
-	def provision_build_machine(self, public_key: str) -> str:
-		"""Cargo builder machines are ephemeral: they are created, provisioned, snapshotted, then destroyed."""
-		return self.client.create_vm(
-			image_id=base_image_id(),
-			cpu_millicores=BUILD_CPU_MILLICORES,
-			memory_mib=BUILD_MEMORY_MIB,
-			disk_mib=BUILD_DISK_MIB,
-			public_key=public_key,
-			hostname=self.atlas_name,
-		)["id"]
-
-	def snapshot_build_machine(self, vm_id: str, tags: dict[str, str]) -> str:
-		"""Photograph the baked machine. This is the image. Both flags are what lets a host
-		cache the artifacts and build a warm template, so a tenant VM starts from memory.
-
-		The tags say what the image is, so a later search finds it without the id."""
-		return self.client.create_snapshot(
-			vm_id,
-			self.atlas_name,
-			image_type="system",
-			cache_image=True,
-			memory_snapshot=True,
-			tags=tags,
-		)
-
-	def destroy_build_machine(self, vm_id: str) -> bool:
-		"""Best effort: a machine left running after a failed bake still costs money."""
-		try:
-			self.client.terminate_vm(vm_id)
-		except Exception:
-			frappe.log_error(title=f"Could not destroy build machine {vm_id}")
-			return False
-
-		return True

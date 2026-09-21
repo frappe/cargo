@@ -6,6 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	PilotImage,
 	build_image,
@@ -37,6 +38,25 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		).insert()
 
 		return image
+
+	def machine(self, image: PilotImage, status: str = "Running", address: str = "fdaa:1::1d") -> str:
+		"""A build machine Atlas already answered for, linked to the image."""
+		machine = frappe.get_doc(
+			{
+				"doctype": "Machine",
+				"reference_doctype": image.doctype,
+				"reference_name": image.name,
+				"role": "builder",
+				"disk_size_gb": 8,
+				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
+				"address": address,
+				"status": status,
+			}
+		).insert()
+		image.db_set("machine", machine.name)
+		image.reload()
+
+		return machine.name
 
 	def release(self) -> str:
 		"""A release nothing else in this test run uses."""
@@ -85,11 +105,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertNotIn("SITE", environment)
 		self.assertNotIn("ADMIN_DOMAIN", environment)
 
-	def test_a_build_flushes_its_machine_while_it_still_holds_the_key(self):
-		"""The snapshot task has no key, so a later flush could not reach the machine."""
+	def test_a_build_flushes_its_machine_before_it_is_snapshotted(self):
+		"""Atlas photographs a paused disk, so the flush belongs to the provision task."""
 		image = self.image(self.release())
-		image.ssh_private_key = "key"
-		image.save()
+		self.machine(image)
 
 		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.Builder") as builder:
 			with patch("cargo.image_builder.doctype.pilot_image.pilot_image.OutputLog"):
@@ -97,7 +116,87 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		builder.return_value.flush_build_machine.assert_called_once()
 		self.assertEqual(image.status, "Snapshotting")
-		self.assertIsNone(image.ssh_private_key)
+
+	def test_a_build_reads_the_key_off_its_machine(self):
+		"""The keypair belongs to the machine it opens, so the image keeps no copy."""
+		image = self.image(self.release())
+		machine = self.machine(image)
+
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.Builder") as builder:
+			with patch("cargo.image_builder.doctype.pilot_image.pilot_image.OutputLog"):
+				image.run_provision_script("fdaa:1::1d")
+
+		private_key = frappe.get_doc("Machine", machine).get_password("ssh_private_key")
+		builder.return_value.wait_until_reachable.assert_called_once_with("fdaa:1::1d", private_key)
+
+	def test_a_build_asks_for_one_builder_machine(self):
+		image = self.image(self.release())
+		machine = frappe.get_doc("Machine", self.machine(image))
+
+		with (
+			patch("cargo.image_builder.doctype.pilot_image.pilot_image.base_image_id", return_value="img-1"),
+			patch.object(MachineDoc, "request", return_value=machine) as request,
+		):
+			image.build()
+
+		spec = request.call_args.args[1]
+		self.assertEqual(spec.role, "builder")
+		self.assertEqual(request.call_args.kwargs["base_image"], "img-1")
+		self.assertEqual(image.machine, machine.name)
+		self.assertEqual(image.status, "Provisioning")
+
+	def test_the_snapshot_is_taken_off_the_machine_and_the_machine_let_go(self):
+		image = self.image(self.release())
+		machine = self.machine(image)
+
+		with (
+			patch.object(MachineDoc, "snapshot", return_value="img-9") as snapshot,
+			patch.object(MachineDoc, "terminate", return_value=True) as terminate,
+		):
+			image.take_snapshot()
+
+		snapshot.assert_called_once_with(image.atlas_name, image.image_tags)
+		terminate.assert_called_once()
+		self.assertEqual(image.snapshot_id, "img-9")
+		self.assertEqual(frappe.db.get_value("Pilot Image", image.name, "machine"), machine)
+
+	def test_a_machine_that_came_up_starts_the_build(self):
+		image = self.image(self.release())
+		self.machine(image)
+		image.db_set("status", "Provisioning")
+		image.reload()
+
+		with patch.object(PilotImage, "run_build") as run_build:
+			image.sync_machines()
+
+		run_build.run_as_workflow.assert_called_once_with(address="fdaa:1::1d")
+		self.assertEqual(image.status, "Building")
+
+	def test_a_machine_that_never_came_up_fails_the_image(self):
+		image = self.image(self.release())
+		machine = self.machine(image, status="Broken")
+		frappe.db.set_value("Machine", machine, "error", "Atlas reported failed")
+		image.db_set("status", "Provisioning")
+		image.reload()
+
+		with patch.object(PilotImage, "run_build") as run_build:
+			image.sync_machines()
+
+		run_build.run_as_workflow.assert_not_called()
+		self.assertEqual(image.status, "Failed")
+		self.assertIn("Atlas reported failed", image.error)
+
+	def test_a_machine_still_booting_leaves_the_image_waiting(self):
+		image = self.image(self.release())
+		self.machine(image, status="Pending", address=None)
+		image.db_set("status", "Provisioning")
+		image.reload()
+
+		with patch.object(PilotImage, "run_build") as run_build:
+			image.sync_machines()
+
+		run_build.run_as_workflow.assert_not_called()
+		self.assertEqual(image.status, "Provisioning")
 
 	def test_one_release_cannot_take_the_same_frappe_version_twice(self):
 		version = self.release()
@@ -116,21 +215,21 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
 		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
 
-		with patch("cargo.image_builder.doctype.pilot_image.builder.AtlasClient") as atlas:
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.MachineDoc") as machine:
 			with self.assertRaises(frappe.ValidationError):
 				self.image(self.release()).build()
 
-		atlas.from_settings.assert_not_called()
+		machine.request.assert_not_called()
 
 	def test_a_build_without_a_region_stops_before_it_rents_a_machine(self):
 		frappe.db.set_single_value("Cargo Settings", "region_id", 0)
 		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
 
-		with patch("cargo.image_builder.doctype.pilot_image.builder.AtlasClient") as atlas:
+		with patch("cargo.image_builder.doctype.pilot_image.pilot_image.MachineDoc") as machine:
 			with self.assertRaises(frappe.ValidationError):
 				self.image(self.release()).build()
 
-		atlas.from_settings.assert_not_called()
+		machine.request.assert_not_called()
 
 	def test_a_release_becomes_an_image_per_frappe_version_and_site_variant(self):
 		version = self.release()
@@ -329,7 +428,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def building_image(self, status: str = "Building") -> PilotImage:
 		"""An image part way through a build, with a machine rented for it."""
 		image = self.image(self.release())
-		image.db_set({"status": status, "temporary_vm_id": "vm-stuck", "ssh_public_key": "ssh-ed25519 AAAA"})
+		self.machine(image)
+		image.db_set("status", status)
 		image.reload()
 
 		return image
@@ -340,10 +440,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image = self.building_image()
 		workflow = self.workflow(image, status="Running")
 
-		with patch.object(PilotImage, "builder") as builder:
+		with patch.object(MachineDoc, "terminate") as terminate:
 			image.stop_build()
 
-		builder.destroy_build_machine.assert_not_called()
+		terminate.assert_not_called()
 		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
 
 	def test_a_workflow_a_restarted_worker_left_running_is_stopped_the_same_way(self):
@@ -351,7 +451,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image = self.building_image()
 		workflow = self.workflow(image, status="Queued")
 
-		with patch.object(PilotImage, "builder"):
+		with patch.object(MachineDoc, "terminate"):
 			image.stop_build()
 
 		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
@@ -360,27 +460,23 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		"""Provisioning rents a machine before the workflow exists, so nothing else will."""
 		image = self.building_image(status="Provisioning")
 
-		with patch.object(PilotImage, "builder") as builder:
-			builder.destroy_build_machine.return_value = True
+		with patch.object(MachineDoc, "terminate", return_value=True) as terminate:
 			image.stop_build()
 
-		builder.destroy_build_machine.assert_called_once_with("vm-stuck")
+		terminate.assert_called_once()
 		self.assertEqual(image.status, "Failed")
-		self.assertIsNone(image.temporary_vm_id)
 		self.assertIn("stopped by", image.error)
 
 	def test_a_machine_atlas_will_not_destroy_leaves_the_build_alone(self):
 		"""Failed reads as renting nothing, so it is not written over a machine still up."""
 		image = self.building_image(status="Provisioning")
 
-		with patch.object(PilotImage, "builder") as builder:
-			builder.destroy_build_machine.return_value = False
+		with patch.object(MachineDoc, "terminate", return_value=False):
 			with self.assertRaises(frappe.ValidationError):
 				image.stop_build()
 
 		self.assertEqual(image.status, "Provisioning")
-		self.assertEqual(image.temporary_vm_id, "vm-stuck")
-		self.assertEqual(image.ssh_public_key, "ssh-ed25519 AAAA")
+		self.assertEqual(frappe.db.get_value("Machine", image.machine, "status"), "Running")
 
 	def test_an_image_that_is_not_building_cannot_be_stopped(self):
 		"""Draft, Available and Failed rent nothing, so there is nothing to stop."""

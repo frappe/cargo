@@ -89,6 +89,22 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertEqual(machine.vm_id, "vm-00003")
 		self.assertIsNone(machine.address)
 
+	def test_a_machine_is_photographed_as_a_cached_system_image(self):
+		"""Both flags are what lets a host build a warm template from the image."""
+		tags = {"purpose": "pilot", "pilot_version": "1.2.3"}
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.create_snapshot.return_value = "img-9"
+			self.assertEqual(self.machine.snapshot("IMG-0001-version-16", tags), "img-9")
+
+		atlas.from_settings.return_value.create_snapshot.assert_called_once_with(
+			self.machine.vm_id,
+			"IMG-0001-version-16",
+			image_type="system",
+			cache_image=True,
+			memory_snapshot=True,
+			tags=tags,
+		)
+
 	def test_the_public_address_is_never_taken_for_the_mesh_one(self):
 		"""Cargo reaches machines over the mesh only; the public address is for the proxy."""
 		self.machine.sync(self.client(running_vm()))
