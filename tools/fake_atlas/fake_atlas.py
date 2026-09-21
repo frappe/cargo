@@ -2,7 +2,7 @@
 """A stand-in for Atlas that hands out Docker containers instead of VMs.
 
 Speaks the shape Cargo expects -- Atlas's tenant API under /api/atlas, an
-`Authorization: token <key>:<secret>` header and an X-Tenant-ID header -- so nothing in the
+`Authorization: Bearer <token>` header and an X-Tenant-ID header -- so nothing in the
 Cargo app changes. Point Cargo Settings' Atlas URL at this and build an image for real.
 
     python3 fake_atlas.py --port 8100
@@ -14,13 +14,22 @@ which macOS will not do.
 """
 
 import argparse
+import atexit
 import json
+import math
 import os
+import platform
+import re
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
@@ -30,10 +39,12 @@ SYSTEM_IMAGE = {
 	"id": "ubuntu-24.04",
 	"title": "Ubuntu 24.04",
 	"image_type": "system",
-	"operating_system": "Ubuntu",
-	"operating_system_version": "24.04",
+	"architecture": platform.machine().replace("aarch64", "arm64").replace("x86_64", "amd64"),
 	"status": "available",
 	"enabled": True,
+	"rootfs_size_mib": 64,
+	"created_at": int(time.time()),
+	"tags": {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"},
 }
 # Atlas machines take minutes to boot. A few seconds here is enough to prove the variant
 # really goes Provisioning -> scheduler sweep -> Building, rather than racing straight through.
@@ -53,16 +64,26 @@ SLOTS = 12
 # whatever address Cargo gave it.
 NETWORK = "cargo-fake"
 SSH_CONFIG = os.path.expanduser("~/.ssh/config.d/fake-atlas")
+FAKE_ATLAS_DIRECTORY = Path(__file__).resolve().parent
+METADATA_DIRECTORY = Path(tempfile.mkdtemp(prefix="fake-atlas-metadata-"))
+METADATA_MOUNT = "/var/lib/fake-atlas/metadata.json"
+SYSTEMD_IMAGE_VERSION = 3
+IMAGE_TYPE_LABEL = "io.frappe.fake-atlas.image-type"
+TITLE_LABEL = "io.frappe.fake-atlas.title"
+TAGS_LABEL = "io.frappe.fake-atlas.tags"
 # Stock ubuntu images have no /sbin/init, and the usual prebuilt systemd images are amd64
 # only. Build one locally instead, so this works on whatever architecture the host is.
 SYSTEMD_DOCKERFILE = """
 FROM {base}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
- && apt-get install -y -qq systemd systemd-sysv dbus openssh-server sudo curl ca-certificates \
+ && apt-get install -y -qq systemd systemd-sysv dbus openssh-server sudo curl ca-certificates python3-minimal iproute2 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /run/sshd \
  && systemctl enable ssh
+COPY metadata_server.py /usr/local/lib/fake-atlas/metadata_server.py
+COPY fake-atlas-metadata.service /etc/systemd/system/fake-atlas-metadata.service
+RUN systemctl enable fake-atlas-metadata.service
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
 """
@@ -86,10 +107,127 @@ sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd
 
 VMS: dict[str, dict] = {}
 LOCK = threading.Lock()
+atexit.register(shutil.rmtree, METADATA_DIRECTORY, ignore_errors=True)
 
 
 def run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
 	return subprocess.run(command, capture_output=True, text=True, check=True, **kwargs)
+
+
+def inspect_image(image_id: str) -> dict | None:
+	result = subprocess.run(
+		["docker", "image", "inspect", image_id],
+		capture_output=True,
+		text=True,
+	)
+	if result.returncode:
+		return None
+	images = json.loads(result.stdout)
+	return images[0] if images else None
+
+
+def docker_images() -> list[tuple[str, dict]]:
+	result = run(
+		[
+			"docker",
+			"image",
+			"ls",
+			"--filter",
+			f"label={IMAGE_TYPE_LABEL}",
+			"--format",
+			"{{.Repository}}:{{.Tag}}",
+		]
+	)
+	images = []
+	for reference in result.stdout.splitlines():
+		if reference.startswith("<none>"):
+			continue
+		image_id = reference.removesuffix(":latest")
+		if inspected := inspect_image(reference):
+			images.append((image_id, inspected))
+	return images
+
+
+def image_response(image_id: str, inspected: dict | None = None) -> dict:
+	if image_id in IMAGES:
+		return dict(SYSTEM_IMAGE)
+
+	inspected = inspected or inspect_image(image_id)
+	if not inspected:
+		raise KeyError(image_id)
+	labels = (inspected.get("Config") or {}).get("Labels") or {}
+	try:
+		tags = json.loads(labels[TAGS_LABEL])
+		created_at = int(datetime.fromisoformat(inspected["Created"].replace("Z", "+00:00")).timestamp())
+		image_type = labels[IMAGE_TYPE_LABEL]
+		title = labels[TITLE_LABEL]
+	except (KeyError, TypeError, ValueError) as exception:
+		raise KeyError(image_id) from exception
+	if image_type not in ("machine", "system") or not _valid_tags(tags):
+		raise KeyError(image_id)
+
+	return {
+		"id": image_id,
+		"title": title,
+		"image_type": image_type,
+		"architecture": inspected.get("Architecture") or "unknown",
+		"status": "available",
+		"enabled": True,
+		"rootfs_size_mib": max(1, math.ceil(int(inspected.get("Size") or 0) / (1024 * 1024))),
+		"created_at": created_at,
+		"tags": tags,
+	}
+
+
+def list_images(query: str) -> dict:
+	parameters = parse_qs(query)
+	try:
+		offset = int(parameters.get("offset", ["0"])[0])
+		limit = int(parameters.get("limit", ["100"])[0])
+	except ValueError as exception:
+		raise ValueError("offset and limit must be whole numbers") from exception
+	if offset < 0 or not 1 <= limit <= 100:
+		raise ValueError("offset must be nonnegative and limit must be between 1 and 100")
+
+	required_tags = {}
+	for expression in parameters.get("tag", []):
+		for item in expression.split(","):
+			key, separator, value = item.partition(":")
+			if not separator or not key or not value:
+				raise ValueError("tag filters must use key:value")
+			required_tags[key] = value
+
+	images = [image_response("ubuntu-24.04")]
+	for image_id, inspected in docker_images():
+		try:
+			images.append(image_response(image_id, inspected))
+		except KeyError:
+			continue
+	image_type = parameters.get("image_type", [None])[0]
+	images = [
+		image
+		for image in images
+		if (not image_type or image["image_type"] == image_type)
+		and all(image["tags"].get(key) == value for key, value in required_tags.items())
+	]
+	images.sort(key=lambda image: image["created_at"], reverse=True)
+
+	return {
+		"items": images[offset : offset + limit],
+		"offset": offset,
+		"limit": limit,
+		"has_more": offset + limit < len(images),
+	}
+
+
+def _valid_tags(tags: object) -> bool:
+	return isinstance(tags, dict) and all(
+		isinstance(key, str)
+		and bool(key)
+		and isinstance(value, str)
+		and not any(character in key + value for character in "\r\n")
+		for key, value in tags.items()
+	)
 
 
 def wait_for_systemd(name: str, attempts: int = 60) -> None:
@@ -110,14 +248,69 @@ def wait_for_systemd(name: str, attempts: int = 60) -> None:
 
 def systemd_image(base: str) -> str:
 	"""Build (once) an image of `base` that can actually boot systemd."""
-	tag = f"cargo-fake/systemd-{base.replace(':', '-')}"
+	tag = f"cargo-fake/systemd-v{SYSTEMD_IMAGE_VERSION}-{base.replace(':', '-')}"
 	if subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0:
 		return tag
 
 	print(f"  building {tag} (first use, takes a minute)", flush=True)
-	run(["docker", "build", "-t", tag, "-"], input=SYSTEMD_DOCKERFILE.format(base=base))
+	run(
+		["docker", "build", "-t", tag, "-f", "-", str(FAKE_ATLAS_DIRECTORY)],
+		input=SYSTEMD_DOCKERFILE.format(base=base),
+	)
 
 	return tag
+
+
+def resolve_image(image_id: str) -> str:
+	if not isinstance(image_id, str) or not image_id:
+		raise ValueError("image_id is required")
+	if image_id in IMAGES:
+		return IMAGES[image_id]
+	if inspect_image(image_id):
+		return image_id
+	raise KeyError(image_id)
+
+
+def write_vm_metadata(vm_id: str, metadata: dict[str, str]) -> str:
+	if not _valid_tags(metadata):
+		raise ValueError("metadata must be an object of string attributes")
+	path = METADATA_DIRECTORY / f"{vm_id}.json"
+	file_descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+	with os.fdopen(file_descriptor, "w") as handle:
+		json.dump(metadata, handle)
+	return str(path)
+
+
+def remove_vm_metadata(vm: dict) -> None:
+	path = vm.get("metadata_path")
+	if path:
+		try:
+			os.unlink(path)
+		except FileNotFoundError:
+			pass
+
+
+def metadata_hostnames(metadata: dict[str, str]) -> list[str]:
+	try:
+		bootstrap = json.loads(metadata.get("pilot-central", "{}"))
+	except (TypeError, ValueError):
+		return []
+	if not isinstance(bootstrap, dict):
+		return []
+	urls = [bootstrap.get("central_endpoint"), bootstrap.get("jwks_url")]
+	storage = bootstrap.get("s3")
+	if isinstance(storage, dict):
+		urls.append(storage.get("endpoint_url"))
+
+	hostnames = set()
+	for url in urls:
+		try:
+			hostname = urlsplit(url).hostname if isinstance(url, str) else None
+		except ValueError:
+			continue
+		if hostname and hostname not in ("localhost", "127.0.0.1"):
+			hostnames.add(hostname)
+	return sorted(hostnames)
 
 
 def allocate_vm(vm_id: str) -> dict:
@@ -135,6 +328,8 @@ def allocate_vm(vm_id: str) -> dict:
 			"address": f"{HOST_PREFIX}{slot}",
 			"port": FIRST_PORT + slot - 1,
 			"container": None,
+			"image_id": None,
+			"metadata_path": None,
 		}
 
 		return dict(VMS[vm_id])
@@ -183,7 +378,15 @@ def write_ssh_config() -> None:
 
 
 def boot(
-	vm_id: str, machine: dict, role: str, image: str, public_key: str, systemd: bool, delay: int
+	vm_id: str,
+	machine: dict,
+	role: str,
+	image: str,
+	public_key: str,
+	metadata_path: str,
+	hostnames: list[str],
+	systemd: bool,
+	delay: int,
 ) -> None:
 	"""Start the container and get sshd listening, then mark it Running.
 
@@ -204,7 +407,11 @@ def boot(
 		host,
 		"-p",
 		f"127.0.0.1:{port}:22",
+		"-v",
+		f"{metadata_path}:{METADATA_MOUNT}:ro",
 	]
+	for hostname in hostnames:
+		command += ["--add-host", f"{hostname}:host-gateway"]
 	if role == GATEWAY:
 		command += ["-p", f"127.0.0.1:{ADMIN_PORT}:{ADMIN_PORT}"]
 	if systemd:
@@ -233,10 +440,13 @@ def boot(
 			]
 		)
 		time.sleep(delay)
-	except subprocess.CalledProcessError as exception:
+	except (subprocess.CalledProcessError, RuntimeError) as exception:
+		error = getattr(exception, "stderr", "") or str(exception)
+		subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 		with LOCK:
-			VMS[vm_id].update(state="failed", error=(exception.stderr or "")[:500])
-		print(f"  x {vm_id} broke: {(exception.stderr or '').strip()[:200]}", flush=True)
+			VMS[vm_id].update(state="failed", error=error[:500], container=None)
+		remove_vm_metadata(VMS[vm_id])
+		print(f"  x {vm_id} broke: {error.strip()[:200]}", flush=True)
 		return
 
 	with LOCK:
@@ -266,14 +476,15 @@ class Handler(BaseHTTPRequestHandler):
 
 	@property
 	def route(self) -> list[str]:
-		return self.path[len(PREFIX) :].strip("/").split("/")
+		path = urlsplit(self.path).path
+		return path[len(PREFIX) :].strip("/").split("/")
 
 	def authenticated(self) -> bool:
 		if not self.path.startswith(PREFIX):
 			self.fail("unknown endpoint", 404, "not_found")
 			return False
-		if not (self.headers.get("Authorization") or "").startswith("token "):
-			self.fail("Authorization: token <key>:<secret> required", 401, "authentication_required")
+		if not (self.headers.get("Authorization") or "").startswith("Bearer "):
+			self.fail("Authorization: Bearer <token> required", 401, "authentication_required")
 			return False
 		if not self.headers.get("X-Tenant-ID"):
 			self.fail("The request needs a tenant ID.", 400)
@@ -297,6 +508,10 @@ class Handler(BaseHTTPRequestHandler):
 				self.reply(self.create_snapshot(route[1], payload), 201)
 			else:
 				self.fail(f"unimplemented: POST {self.path}", 404, "not_found")
+		except KeyError:
+			self.fail("The resource does not exist.", 404, "not_found")
+		except ValueError as exception:
+			self.fail(str(exception), 400)
 		except Exception as exception:
 			self.fail(str(exception), 500, "internal_error")
 
@@ -316,6 +531,8 @@ class Handler(BaseHTTPRequestHandler):
 				self.fail(f"unimplemented: GET {self.path}", 404, "not_found")
 		except KeyError:
 			self.fail("The resource does not exist.", 404, "not_found")
+		except ValueError as exception:
+			self.fail(str(exception), 400)
 		except Exception as exception:
 			self.fail(str(exception), 500, "internal_error")
 
@@ -336,13 +553,26 @@ class Handler(BaseHTTPRequestHandler):
 
 	def create_virtual_machine(self, payload: dict) -> dict:
 		"""One container per machine. Returns immediately: Cargo polls for running."""
-		role = (payload.get("metadata") or {}).get("role")
-		image = IMAGES.get(payload.get("image_id"), "ubuntu:24.04")
-		if self.systemd:
+		metadata = payload.get("metadata") or {}
+		if not isinstance(metadata, dict):
+			raise ValueError("metadata must be an object")
+		role = metadata.get("role")
+		image_id = payload.get("image_id")
+		image = resolve_image(image_id)
+		if self.systemd and image_id in IMAGES:
 			image = systemd_image(image)
 
 		vm_id = f"vm-{uuid.uuid4().hex[:8]}"
 		machine = allocate_vm(vm_id)
+		try:
+			metadata_path = write_vm_metadata(vm_id, metadata)
+		except Exception:
+			with LOCK:
+				VMS.pop(vm_id, None)
+			raise
+		hostnames = metadata_hostnames(metadata)
+		with LOCK:
+			VMS[vm_id].update(image_id=image_id, metadata_path=metadata_path)
 		write_ssh_config()
 		print(f"-> create {vm_id} ({role or 'no role'})", flush=True)
 		threading.Thread(
@@ -353,6 +583,8 @@ class Handler(BaseHTTPRequestHandler):
 				role,
 				image,
 				(payload.get("ssh_keys") or [""])[0],
+				metadata_path,
+				hostnames,
 				self.systemd,
 				self.boot_delay,
 			),
@@ -367,7 +599,7 @@ class Handler(BaseHTTPRequestHandler):
 		return {
 			"id": vm_id,
 			"tenant_id": int(self.headers.get("X-Tenant-ID")),
-			"image_id": "ubuntu-24.04",
+			"image_id": vm["image_id"],
 			"created_at": int(time.time()),
 			"current_state": vm["state"],
 			"desired_state": "running",
@@ -387,33 +619,35 @@ class Handler(BaseHTTPRequestHandler):
 	def create_snapshot(self, vm_id: str, payload: dict) -> dict:
 		"""docker commit is the honest analogue of a disk snapshot."""
 		vm = VMS[vm_id]
-		tag = f"cargo-snapshot/{payload.get('title', vm_id)}".lower()
-		run(["docker", "commit", vm["container"], tag])
+		title = str(payload.get("title") or vm_id)
+		suffix = re.sub(r"[^a-z0-9_.-]+", "-", title.lower()).strip(".-") or vm_id
+		tag = f"cargo-snapshot/{suffix}"
+		image_type = payload.get("image_type") or "machine"
+		tags = payload.get("tags") or {}
+		if image_type not in ("machine", "system"):
+			raise ValueError("image_type must be machine or system")
+		if not _valid_tags(tags):
+			raise ValueError("tags must be an object of string values")
+		changes = {
+			IMAGE_TYPE_LABEL: image_type,
+			TITLE_LABEL: title,
+			TAGS_LABEL: json.dumps(tags, separators=(",", ":"), sort_keys=True),
+		}
+		command = ["docker", "commit"]
+		for key, value in changes.items():
+			command += ["--change", f"LABEL {key}={json.dumps(value)}"]
+		command += [vm["container"], tag]
+		run(command)
 		print(f"  * snapshot {tag}", flush=True)
 		print(f"    inspect it: docker run --rm -it {tag} bash", flush=True)
 
-		return {"id": tag, "title": payload.get("title", vm_id), "status": "Available"}
+		return image_response(tag)
 
 	def list_images(self) -> dict:
-		"""The base image Cargo bakes on. Cargo finds it by operating system, not by name."""
-		return {"items": [SYSTEM_IMAGE], "offset": 0, "limit": 1, "has_more": False}
+		return list_images(urlsplit(self.path).query)
 
 	def get_image(self, image_id: str) -> dict:
-		result = subprocess.run(
-			["docker", "image", "inspect", image_id, "--format", "{{.Size}}"],
-			capture_output=True,
-			text=True,
-		)
-		if result.returncode != 0:
-			raise KeyError(image_id)
-
-		return {
-			"id": image_id,
-			"status": "Available",
-			"transfer_progress": 100,
-			"transfer_error": None,
-			"rootfs_size_mib": int(result.stdout.strip()) // (1024 * 1024),
-		}
+		return image_response(image_id)
 
 	def delete_image(self, image_id: str) -> dict:
 		"""Atlas archives an image a machine still uses, so this never refuses either."""
@@ -430,6 +664,8 @@ class Handler(BaseHTTPRequestHandler):
 		if vm and vm["container"]:
 			subprocess.run(["docker", "rm", "-f", vm["container"]], capture_output=True)
 			print(f"  - {vm_id} destroyed", flush=True)
+		if vm:
+			remove_vm_metadata(vm)
 		with LOCK:
 			VMS.pop(vm_id, None)
 		write_ssh_config()

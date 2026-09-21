@@ -158,11 +158,14 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		Atlas names an image by a generated id, so an empty `base_image` is resolved rather
 		than sent as a name Atlas cannot know."""
+		if not self.base_image:
+			self.base_image = base_image_id()
+
 		spec = NodeSpec(role=role, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 		machine: Machine = MachineDoc.request(
 			self,
 			spec,
-			base_image=self.base_image or base_image_id(),
+			base_image=self.base_image,
 			zone=self.region,
 		)
 
