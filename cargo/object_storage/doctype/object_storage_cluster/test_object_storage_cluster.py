@@ -25,8 +25,8 @@ from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	CLUSTER_SECRETS,
 	REGION_HEADER,
-	SENDER,
-	SENDER_HEADER,
+	SOURCE,
+	SOURCE_HEADER,
 	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
 )
@@ -399,7 +399,7 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 
 		headers = get_webhook_headers(cluster, self.webhook_of(cluster))
 
-		self.assertEqual(headers[SENDER_HEADER], SENDER)
+		self.assertEqual(headers[SOURCE_HEADER], SOURCE)
 		self.assertEqual(headers[REGION_HEADER], self.settings.region)
 
 	def test_a_failed_cluster_reports_itself_unavailable(self):
