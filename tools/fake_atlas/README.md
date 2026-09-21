@@ -72,7 +72,7 @@ Green here does not mean green in production:
 - **A snapshot is only a copy of the files.** It says nothing about whether the image boots.
 - **Machines are not really spread out.** The request says which machines should sit apart;
   this only counts them.
-- **Any token is accepted.** There is no real check.
+- **Any Bearer token is accepted.** There is no real check.
 
 ## Clearing up afterwards
 

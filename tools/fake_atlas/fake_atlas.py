@@ -2,7 +2,7 @@
 """A stand-in for Atlas that hands out Docker containers instead of VMs.
 
 Speaks the shape Cargo expects -- Atlas's tenant API under /api/atlas, an
-`Authorization: token <key>:<secret>` header and an X-Tenant-ID header -- so nothing in the
+`Authorization: Bearer <token>` header and an X-Tenant-ID header -- so nothing in the
 Cargo app changes. Point Cargo Settings' Atlas URL at this and build an image for real.
 
     python3 fake_atlas.py --port 8100
@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
@@ -266,14 +267,15 @@ class Handler(BaseHTTPRequestHandler):
 
 	@property
 	def route(self) -> list[str]:
-		return self.path[len(PREFIX) :].strip("/").split("/")
+		path = urlsplit(self.path).path
+		return path[len(PREFIX) :].strip("/").split("/")
 
 	def authenticated(self) -> bool:
 		if not self.path.startswith(PREFIX):
 			self.fail("unknown endpoint", 404, "not_found")
 			return False
-		if not (self.headers.get("Authorization") or "").startswith("token "):
-			self.fail("Authorization: token <key>:<secret> required", 401, "authentication_required")
+		if not (self.headers.get("Authorization") or "").startswith("Bearer "):
+			self.fail("Authorization: Bearer <token> required", 401, "authentication_required")
 			return False
 		if not self.headers.get("X-Tenant-ID"):
 			self.fail("The request needs a tenant ID.", 400)
