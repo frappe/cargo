@@ -24,9 +24,48 @@ anything calling `systemctl` will fail.
 |---|---|
 | machines | starts one container per machine the request asks for, in the same order |
 | a machine's status | says `Pending` until SSH is up, then `Running` with an address |
-| a snapshot | `docker commit`, tagged `cargo-snapshot/<name>` |
-| a snapshot's status | `docker image inspect` |
+| a snapshot | `docker commit`, tagged `cargo-snapshot/<name>` with its Atlas catalog fields stored as labels |
+| image discovery | lists tagged Docker snapshots, so Central can select `purpose=pilot` |
+| instance metadata | serves each VM's attributes at `169.254.169.254` with the Atlas token protocol |
 | a machine thrown away | `docker rm -f` |
+
+## Pilot images through Central
+
+Cargo's existing Pilot Image builder installs Pilot, initializes the requested Frappe
+branch such as `version-16`, and snapshots the build container. Fake Atlas persists the
+snapshot's image type and tags in Docker labels, so the image remains discoverable after
+Fake Atlas restarts. A later VM request boots that exact snapshot instead of a fresh Ubuntu
+container.
+
+Central's VM metadata is written to an owner-only temporary file and mounted read-only into
+the container. The systemd image serves it at the same URLs as Atlas MMDS v2:
+
+```text
+PUT /latest/api/token
+GET /latest/meta-data/attributes/pilot-central
+```
+
+The metadata contains Central's bootstrap credential and, when configured, the team's
+regional S3 bucket. It is not stored in the Docker image, labels, environment, or logs.
+Fake Atlas also maps the injected Central, JWKS, and S3 hostnames to Docker's host gateway,
+which lets the container reach services running on the development machine.
+
+To exercise the full path:
+
+1. Start Fake Atlas with `--systemd`.
+2. Build a Pilot Image in Cargo with Frappe `version-16`.
+3. Preview the Pilot offering in Central and select the new `purpose=pilot` image.
+4. Provision a server and wait for Pilot's Central bootstrap to finish.
+5. Spawn a site and verify the injected S3 configuration from Pilot.
+
+Useful diagnostics for a provisioned container:
+
+```bash
+docker exec cargo-fake-<vm-id> systemctl status fake-atlas-metadata.service
+docker exec cargo-fake-<vm-id> journalctl -u fake-atlas-metadata.service --no-pager
+docker exec cargo-fake-<vm-id> tail -n 100 /home/frappe/pilot/benches/default-bench/logs/central-bootstrap.log
+docker image inspect cargo-snapshot/<image-name>
+```
 
 ## Addresses, and the two bits of setup
 
@@ -64,9 +103,8 @@ find each other by name there. Cargo sees one address and knows nothing about an
 
 Green here does not mean green in production:
 
-- **Central can't reach the cluster.** Cargo tells Central where the cluster is, using a
-  name that only means something on your machine. Building a cluster works; Central using
-  it does not.
+- **The regional proxy is not emulated.** Fake Atlas closes VM and metadata provisioning;
+  public Pilot admin and site hostnames still need the local proxy/DNS setup used by Central.
 - **Only one cluster at a time.** The gateway publishes Garage's admin API on port 3903 of
   your machine, so a second cluster's gateway cannot start while the first is running.
 - **A snapshot is only a copy of the files.** It says nothing about whether the image boots.
@@ -81,3 +119,7 @@ docker rm -f $(docker ps -aq --filter name=cargo-fake)
 docker network rm cargo-fake
 docker image ls "cargo-snapshot/*"
 ```
+
+Per-VM metadata files are removed on termination and on normal Fake Atlas shutdown. After
+an abnormal exit, the OS temporary directory may retain a `fake-atlas-metadata-*` directory;
+it contains local credentials and should be removed before sharing the machine.
