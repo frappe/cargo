@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
@@ -67,7 +67,7 @@ SSH_CONFIG = os.path.expanduser("~/.ssh/config.d/fake-atlas")
 FAKE_ATLAS_DIRECTORY = Path(__file__).resolve().parent
 METADATA_DIRECTORY = Path(tempfile.mkdtemp(prefix="fake-atlas-metadata-"))
 METADATA_MOUNT = "/var/lib/fake-atlas/metadata.json"
-SYSTEMD_IMAGE_VERSION = 3
+SYSTEMD_IMAGE_VERSION = 5
 IMAGE_TYPE_LABEL = "io.frappe.fake-atlas.image-type"
 TITLE_LABEL = "io.frappe.fake-atlas.title"
 TAGS_LABEL = "io.frappe.fake-atlas.tags"
@@ -77,9 +77,9 @@ SYSTEMD_DOCKERFILE = """
 FROM {base}
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq \
- && apt-get install -y -qq systemd systemd-sysv dbus openssh-server sudo curl ca-certificates python3-minimal iproute2 \
+ && apt-get install -y -qq systemd systemd-sysv dbus openssh-server sudo curl ca-certificates python3-minimal iproute2 iptables \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /run/sshd \
+ && mkdir -p /run/sshd /var/lib/fake-atlas \
  && systemctl enable ssh
 COPY metadata_server.py /usr/local/lib/fake-atlas/metadata_server.py
 COPY fake-atlas-metadata.service /etc/systemd/system/fake-atlas-metadata.service
@@ -339,6 +339,7 @@ def allocate_vm(vm_id: str) -> dict:
 			"slot": slot,
 			"address": f"{HOST_PREFIX}{slot}",
 			"port": FIRST_PORT + slot - 1,
+			"role": None,
 			"container": None,
 			"image_id": None,
 			"metadata_path": None,
@@ -407,8 +408,7 @@ def boot(
 	host, port = machine["address"], machine["port"]
 	command = [
 		"docker",
-		"run",
-		"-d",
+		"create",
 		"--name",
 		name,
 		"--network",
@@ -419,8 +419,6 @@ def boot(
 		host,
 		"-p",
 		f"127.0.0.1:{port}:22",
-		"-v",
-		f"{metadata_path}:{METADATA_MOUNT}:ro",
 	]
 	for hostname in hostnames:
 		command += ["--add-host", f"{hostname}:host-gateway"]
@@ -433,8 +431,25 @@ def boot(
 	try:
 		ensure_network()
 		run(command)
+		if systemd:
+			run(["docker", "cp", metadata_path, f"{name}:{METADATA_MOUNT}"])
+		run(["docker", "start", name])
+		if role == "builder":
+			run(
+				[
+					"docker",
+					"exec",
+					name,
+					"bash",
+					"-c",
+					"printf '\\nUV_HTTP_TIMEOUT=300\\n' >> /etc/environment; "
+					"for command in mkswap swapon swapoff; do "
+					"printf '#!/bin/sh\\nexit 0\\n' > /usr/local/sbin/$command; "
+					"chmod 755 /usr/local/sbin/$command; done",
+				]
+			)
 		with LOCK:
-			VMS[vm_id]["container"] = name
+			VMS[vm_id].update(container=name, role=role)
 		write_ssh_config()
 
 		if systemd:
@@ -537,8 +552,8 @@ class Handler(BaseHTTPRequestHandler):
 				self.reply(self.get_virtual_machine(route[1]))
 			elif route == ["images"]:
 				self.reply(self.list_images())
-			elif len(route) == 2 and route[0] == "images":
-				self.reply(self.get_image(route[1]))
+			elif len(route) >= 2 and route[0] == "images":
+				self.reply(self.get_image(unquote("/".join(route[1:]))))
 			else:
 				self.fail(f"unimplemented: GET {self.path}", 404, "not_found")
 		except KeyError:
@@ -555,9 +570,9 @@ class Handler(BaseHTTPRequestHandler):
 		route = self.route
 		if len(route) == 2 and route[0] == "virtual-machines":
 			self.reply(self.terminate(route[1]), 202)
-		elif len(route) == 2 and route[0] == "images":
+		elif len(route) >= 2 and route[0] == "images":
 			try:
-				self.reply(self.delete_image(route[1]), 202)
+				self.reply(self.delete_image(unquote("/".join(route[1:]))), 202)
 			except KeyError:
 				self.fail("The resource does not exist.", 404, "not_found")
 		else:
@@ -631,6 +646,30 @@ class Handler(BaseHTTPRequestHandler):
 	def create_snapshot(self, vm_id: str, payload: dict) -> dict:
 		"""docker commit is the honest analogue of a disk snapshot."""
 		vm = VMS[vm_id]
+		if vm.get("role") == "builder":
+			run(
+				[
+					"docker",
+					"exec",
+					vm["container"],
+					"rm",
+					"-f",
+					"/usr/local/sbin/mkswap",
+					"/usr/local/sbin/swapon",
+					"/usr/local/sbin/swapoff",
+				]
+			)
+			run(
+				[
+					"docker",
+					"exec",
+					vm["container"],
+					"sed",
+					"-i",
+					"/^UV_HTTP_TIMEOUT=300$/d",
+					"/etc/environment",
+				]
+			)
 		title = str(payload.get("title") or vm_id)
 		suffix = re.sub(r"[^a-z0-9_.-]+", "-", title.lower()).strip(".-") or vm_id
 		tag = f"cargo-snapshot/{suffix}"

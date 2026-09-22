@@ -96,9 +96,11 @@ def serve(metadata_path: str, host: str = "169.254.169.254", port: int = 80) -> 
 
 def main() -> None:
 	parser = argparse.ArgumentParser(description="Serve Fake Atlas instance metadata.")
+	parser.add_argument("--host", default="169.254.169.254")
+	parser.add_argument("--port", type=int, default=80)
 	parser.add_argument("metadata_path")
 	args = parser.parse_args()
-	serve(args.metadata_path)
+	serve(args.metadata_path, args.host, args.port)
 
 
 if __name__ == "__main__":
