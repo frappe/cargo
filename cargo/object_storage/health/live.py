@@ -10,7 +10,7 @@ from pathlib import Path
 import frappe
 from frappe.utils.synchronization import filelock
 
-from cargo.object_storage.garage.client import Client, Error
+from cargo.object_storage.client import Client, Error
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (

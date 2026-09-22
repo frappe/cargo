@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
 
-from cargo.object_storage.garage.client import Client
+from cargo.object_storage.client import Client
 
 
 def client_for(address: str) -> Client:

@@ -6,27 +6,32 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from cargo.object_storage.garage.actions import Actions
-from cargo.object_storage.garage.client import Client, Error
+from cargo.object_storage.client import Client, Error
+from cargo.object_storage.doctype.bucket.bucket import Bucket
 
 BUCKET = "team-alpha"
 BUCKET_ID = "b1"
 KEY = {"accessKeyId": "GK-access", "secretAccessKey": "shh", "name": f"{BUCKET}-key"}
 
 
-class UnitTestBucketActions(UnitTestCase):
+class UnitTestBucket(UnitTestCase):
 	"""What Central and Atlas get when they ask Cargo to work a bucket."""
 
 	def setUp(self):
-		self.actions = Actions(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001"))
+		self.bucket = Bucket({"doctype": "Bucket", "bucket_name": BUCKET, "cluster": "OSC-0001"})
+		self.bucket.name = BUCKET
+		self.patch(Bucket, "garage", Client(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001")))
+		self.saved = self.patch(Bucket, "save")
+
+	def patch(self, target, attribute, *args, **kwargs):
+		patcher = patch.object(target, attribute, *args, **kwargs)
+		self.addCleanup(patcher.stop)
+
+		return patcher.start()
 
 	def answers(self, **endpoints):
 		"""Garage answering each named endpoint, and nothing else reaching the network."""
-		patches = [patch.object(Client, name, **answer) for name, answer in endpoints.items()]
-		for patcher in patches:
-			self.addCleanup(patcher.stop)
-
-		return [patcher.start() for patcher in patches]
+		return [self.patch(Client, name, **answer) for name, answer in endpoints.items()]
 
 	def test_a_bucket_is_named_only_once_it_exists(self):
 		"""An abandoned bucket squats no name, so the alias goes on last."""
@@ -35,7 +40,7 @@ class UnitTestBucketActions(UnitTestCase):
 			add_bucket_alias={"return_value": {}},
 		)
 
-		self.assertEqual(self.actions.add_bucket(BUCKET), BUCKET_ID)
+		self.assertEqual(self.bucket.add_bucket(), BUCKET_ID)
 		self.assertEqual(create.call_args.args, ())
 		self.assertEqual(alias.call_args.args, (BUCKET_ID, BUCKET))
 
@@ -47,7 +52,7 @@ class UnitTestBucketActions(UnitTestCase):
 		)
 
 		with self.assertRaises(frappe.ValidationError) as raised:
-			self.actions.add_bucket(BUCKET)
+			self.bucket.add_bucket()
 
 		self.assertIn("already taken", str(raised.exception))
 		# The bucket it just made is dropped: nothing names it, so nothing can reach it.
@@ -66,9 +71,10 @@ class UnitTestBucketActions(UnitTestCase):
 			},
 			delete_bucket={"return_value": None},
 		)
+		self.bucket.bucket_name = "Team-Alpha"
 
 		with self.assertRaises(frappe.ValidationError) as raised:
-			self.actions.add_bucket("Team-Alpha")
+			self.bucket.add_bucket()
 
 		self.assertIn("not a valid bucket name", str(raised.exception))
 		delete.assert_called_once_with(BUCKET_ID)
@@ -80,7 +86,7 @@ class UnitTestBucketActions(UnitTestCase):
 			allow_bucket_key={"return_value": {}},
 		)
 
-		credentials = self.actions.issue_credentials(BUCKET)
+		credentials = self.bucket.issue_credentials()
 
 		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
 		self.assertEqual(credentials.secret_access_key, KEY["secretAccessKey"])
@@ -95,7 +101,7 @@ class UnitTestBucketActions(UnitTestCase):
 		)
 
 		with self.assertRaises(Error):
-			self.actions.issue_credentials(BUCKET)
+			self.bucket.issue_credentials()
 
 		delete_key.assert_called_once_with(KEY["accessKeyId"])
 
@@ -103,7 +109,7 @@ class UnitTestBucketActions(UnitTestCase):
 		(create_key,) = self.answers(create_key={"return_value": KEY})
 		with patch.object(Client, "bucket", return_value=None):
 			with self.assertRaises(frappe.ValidationError):
-				self.actions.issue_credentials(BUCKET)
+				self.bucket.issue_credentials()
 
 		create_key.assert_not_called()
 
@@ -120,7 +126,7 @@ class UnitTestBucketActions(UnitTestCase):
 			},
 		)
 
-		usage = self.actions.get_usage(BUCKET)
+		usage = self.bucket.get_usage()
 
 		self.assertEqual(usage.used_bytes, 20971520)
 		self.assertEqual(usage.object_count, 4)
@@ -131,7 +137,7 @@ class UnitTestBucketActions(UnitTestCase):
 	def test_an_uncapped_bucket_reports_no_quota(self):
 		self.answers(bucket={"return_value": {"id": BUCKET_ID, "bytes": 0, "objects": 0, "quotas": None}})
 
-		usage = self.actions.get_usage(BUCKET)
+		usage = self.bucket.get_usage()
 
 		self.assertIsNone(usage.quota_bytes)
 		self.assertIsNone(usage.quota_objects)
@@ -140,27 +146,42 @@ class UnitTestBucketActions(UnitTestCase):
 		self.answers(bucket={"return_value": None})
 
 		with self.assertRaises(frappe.ValidationError):
-			self.actions.get_usage(BUCKET)
+			self.bucket.get_usage()
 
 	def test_a_quota_is_sent_to_garage_in_bytes(self):
-		"""Callers think in GiB; Garage counts bytes, so the conversion happens here."""
+		"""The form takes GiB; Garage counts bytes, so the conversion happens here."""
 		_, quota = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
 			set_bucket_quota={"return_value": None},
 		)
+		self.bucket.max_size_gib = 2
 
-		self.actions.set_quota(BUCKET, 2)
+		self.bucket.apply_quota()
 
 		quota.assert_called_once_with(BUCKET_ID, 2 * 1024**3, None)
+
+	def test_a_zero_cap_is_sent_as_no_cap(self):
+		"""Zero is how the form says uncapped. Sent as a zero it would stop every write."""
+		_, quota = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			set_bucket_quota={"return_value": None},
+		)
+		self.bucket.max_size_gib = 0
+		self.bucket.max_objects = 5
+
+		self.bucket.apply_quota()
+
+		quota.assert_called_once_with(BUCKET_ID, None, 5)
 
 	def test_a_quota_on_a_bucket_that_does_not_exist_is_refused(self):
 		_, quota = self.answers(
 			bucket={"return_value": None},
 			set_bucket_quota={"return_value": None},
 		)
+		self.bucket.max_size_gib = 2
 
 		with self.assertRaises(frappe.ValidationError):
-			self.actions.set_quota(BUCKET, 2)
+			self.bucket.apply_quota()
 
 		quota.assert_not_called()
 
@@ -173,7 +194,7 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
 		)
 
-		self.actions.remove_bucket(BUCKET)
+		self.bucket.on_trash()
 
 		delete_key.assert_called_once_with(KEY["accessKeyId"])
 		delete_bucket.assert_called_once_with(BUCKET_ID)
@@ -190,7 +211,7 @@ class UnitTestBucketActions(UnitTestCase):
 		)
 
 		with self.assertRaises(Error):
-			self.actions.remove_bucket(BUCKET)
+			self.bucket.on_trash()
 
 		delete_key.assert_not_called()
 
@@ -198,7 +219,7 @@ class UnitTestBucketActions(UnitTestCase):
 		"""A delete that arrives twice is not a failure."""
 		_, delete_bucket = self.answers(bucket={"return_value": None}, delete_bucket={"return_value": None})
 
-		self.actions.remove_bucket(BUCKET)
+		self.bucket.on_trash()
 
 		delete_bucket.assert_not_called()
 
@@ -209,7 +230,7 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_bucket={"return_value": None},
 		)
 
-		self.actions.revoke_credentials(BUCKET)
+		self.bucket.revoke_credentials()
 
 		delete_key.assert_called_once_with(KEY["accessKeyId"])
 		delete_bucket.assert_not_called()
@@ -226,12 +247,28 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_key={"side_effect": lambda access_key_id: order.append("delete")},
 		)
 
-		credentials = self.actions.rotate_credentials(BUCKET)
+		credentials = self.bucket.rotate_credentials()
 
 		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
 		self.assertEqual(order, ["create", "delete"])
 		delete_key.assert_called_once_with(old["accessKeyId"])
 		allow.assert_called_once_with(BUCKET_ID, KEY["accessKeyId"])
+
+	def test_a_rotated_key_replaces_the_one_on_the_record(self):
+		"""The record is the only place the new secret is kept."""
+		self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			key={"return_value": None},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
+			delete_key={"return_value": None},
+		)
+
+		credentials = self.bucket.rotate_credentials()
+
+		self.assertEqual(self.bucket.access_key, credentials.access_key)
+		self.assertEqual(self.bucket.secret_access_key, credentials.secret_access_key)
+		self.saved.assert_called_once()
 
 	def test_rotating_a_bucket_with_no_key_yet_just_issues_one(self):
 		_, _, _, _, delete_key = self.answers(
@@ -242,7 +279,7 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_key={"return_value": None},
 		)
 
-		self.assertEqual(self.actions.rotate_credentials(BUCKET).access_key, KEY["accessKeyId"])
+		self.assertEqual(self.bucket.rotate_credentials().access_key, KEY["accessKeyId"])
 		delete_key.assert_not_called()
 
 	def test_a_bucket_no_key_could_be_made_for_is_taken_back_out(self):
@@ -256,13 +293,13 @@ class UnitTestBucketActions(UnitTestCase):
 		)
 
 		with self.assertRaises(Error):
-			self.actions.provision_bucket(BUCKET)
+			self.bucket.provision()
 
 		create_key.assert_called_once()
 		# Garage drops the name with the bucket, so nothing unnames it first.
 		delete_bucket.assert_called_once_with(BUCKET_ID)
 
-	def test_a_provisioned_bucket_answers_with_its_key(self):
+	def test_a_provisioned_bucket_keeps_its_key_on_the_record(self):
 		_, _, _, _, _, delete_bucket = self.answers(
 			create_bucket={"return_value": {"id": BUCKET_ID}},
 			add_bucket_alias={"return_value": {}},
@@ -272,9 +309,10 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_bucket={"return_value": None},
 		)
 
-		credentials = self.actions.provision_bucket(BUCKET)
+		self.bucket.provision()
 
-		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
+		self.assertEqual(self.bucket.access_key, KEY["accessKeyId"])
+		self.assertEqual(self.bucket.secret_access_key, KEY["secretAccessKey"])
 		delete_bucket.assert_not_called()
 
 	def test_the_key_is_put_on_the_bucket_that_was_just_made(self):
@@ -288,10 +326,28 @@ class UnitTestBucketActions(UnitTestCase):
 			delete_bucket={"return_value": None},
 		)
 
-		self.actions.provision_bucket(BUCKET)
+		self.bucket.provision()
 
 		allow.assert_called_once_with(BUCKET_ID, KEY["accessKeyId"])
 		lookup.assert_not_called()
+
+	def test_a_new_bucket_with_no_caps_asks_garage_for_no_quota(self):
+		"""Every create would otherwise carry a pointless round trip."""
+		quota = self.patch(Bucket, "apply_quota")
+		self.bucket.flags.in_insert = True
+
+		self.bucket.on_update()
+
+		quota.assert_not_called()
+
+	def test_a_new_bucket_with_a_cap_sends_it_once_the_bucket_exists(self):
+		quota = self.patch(Bucket, "apply_quota")
+		self.bucket.flags.in_insert = True
+		self.bucket.max_size_gib = 2
+
+		self.bucket.on_update()
+
+		quota.assert_called_once()
 
 	def test_every_bucket_operation_holds_that_bucket_name(self):
 		"""Garage arbitrates the name, not the key behind it, so Cargo serialises the rest."""
@@ -300,8 +356,9 @@ class UnitTestBucketActions(UnitTestCase):
 			key={"return_value": None},
 			delete_key={"return_value": None},
 		)
-		with patch.object(Actions, "bucket_lock") as lock:
-			self.actions.remove_bucket(BUCKET)
-			self.actions.revoke_credentials(BUCKET)
+		lock = self.patch(Bucket, "lock")
 
-		self.assertEqual([call.args for call in lock.call_args_list], [(BUCKET,), (BUCKET,)])
+		self.bucket.on_trash()
+		self.bucket.revoke_credentials()
+
+		self.assertEqual(lock.call_count, 2)

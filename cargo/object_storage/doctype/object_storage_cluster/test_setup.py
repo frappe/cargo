@@ -5,7 +5,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.garage.setup import NGINX_CONF, Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import NGINX_CONF, Setup
 from cargo.testing import SETTINGS, use_test_settings
 
 
