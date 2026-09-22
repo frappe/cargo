@@ -28,9 +28,9 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
-SENDER_HEADER = "X-Sender"
-REGION_HEADER = "X-Region"
-SENDER = "cargo"
+SOURCE_HEADER = "X-FC-Source"
+REGION_HEADER = "X-FC-Region"
+SOURCE = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 S3_SITE_NAME = "s3-svc"
@@ -527,7 +527,7 @@ def configure_storage_cluster_webhook(cluster: ObjectStorageCluster) -> None:
 				}
 			),
 			"webhook_headers": [
-				{"key": SENDER_HEADER, "value": SENDER},
+				{"key": SOURCE_HEADER, "value": SOURCE},
 				{"key": REGION_HEADER, "value": settings.region},
 			],
 			"enable_security": True,

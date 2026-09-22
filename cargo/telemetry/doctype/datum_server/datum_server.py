@@ -35,9 +35,9 @@ MAX_PORT = 65535
 SECRET_LENGTH = 32
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
-SENDER_HEADER = "X-Sender"
-REGION_HEADER = "X-Region"
-SENDER = "cargo"
+SOURCE_HEADER = "X-FC-Source"
+REGION_HEADER = "X-FC-Region"
+SOURCE = "cargo"
 REPORTED_STATUSES = ("Active", "Failed")
 
 
@@ -324,7 +324,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 				}
 			),
 			"webhook_headers": [
-				{"key": SENDER_HEADER, "value": SENDER},
+				{"key": SOURCE_HEADER, "value": SOURCE},
 				{"key": REGION_HEADER, "value": settings.region},
 			],
 			"enable_security": True,
