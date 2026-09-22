@@ -313,13 +313,25 @@ def metadata_hostnames(metadata: dict[str, str]) -> list[str]:
 	return sorted(hostnames)
 
 
+def published_ssh_ports() -> set[int]:
+	shown = subprocess.run(
+		["docker", "ps", "--filter", f"name={CONTAINER_PREFIX}-", "--format", "{{.Ports}}"],
+		capture_output=True,
+		text=True,
+	)
+	if shown.returncode:
+		return set()
+	return {int(port) for port in re.findall(r"127\.0\.0\.1:(\d+)->22/tcp", shown.stdout)}
+
+
 def allocate_vm(vm_id: str) -> dict:
 	"""Claim the lowest free slot, which fixes the machine's name and both its ports. Claimed
 	under the lock: two concurrent requests would otherwise pick the same one."""
 	with LOCK:
 		taken = {vm["slot"] for vm in VMS.values()}
+		published = published_ssh_ports()
 		slot = 1
-		while slot in taken:
+		while slot in taken or FIRST_PORT + slot - 1 in published:
 			slot += 1
 
 		VMS[vm_id] = {

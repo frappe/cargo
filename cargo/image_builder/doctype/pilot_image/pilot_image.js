@@ -90,11 +90,8 @@ frappe.ui.form.on("Pilot Image", {
 			frm.dashboard.add_indicator(__("No site baked in"), "blue");
 		}
 
-		if (frm.doc.temporary_vm_id) {
-			frm.dashboard.add_indicator(
-				__("Build machine: {0}", [frm.doc.temporary_vm_id]),
-				"orange"
-			);
+		if (frm.doc.machine) {
+			frm.dashboard.add_indicator(__("Build machine: {0}", [frm.doc.machine]), "orange");
 		}
 	},
 });

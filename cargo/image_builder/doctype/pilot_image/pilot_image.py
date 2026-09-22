@@ -8,21 +8,18 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import (
-	DEAD_STATES,
-	PILOT_IMAGE_OS_TAGS,
-	RUNNING_STATE,
-	AtlasClient,
-	AtlasNotFound,
-)
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, base_image_id
+from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
+from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.builder import (
+	BUILD_SPEC,
 	PING_TIMEOUT,
 	PROVISION_TIMEOUT,
 	SSH_READY_TIMEOUT,
 	Builder,
 )
 from cargo.image_builder.doctype.pilot_image.releases import latest_pilot_release
-from cargo.ssh import OutputLog, create_keypair, script
+from cargo.ssh import OutputLog, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -53,10 +50,8 @@ class PilotImage(WorkflowBuilder):
 		has_site: DF.Check
 		pilot_version: DF.Data
 		snapshot_id: DF.Data | None
-		ssh_private_key: DF.Password | None
-		ssh_public_key: DF.SmallText | None
+		machine: DF.Link | None
 		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Snapshotting", "Failed"]
-		temporary_vm_id: DF.Data | None
 	# end: auto-generated types
 
 	"""One Pilot release baked against one Frappe version, and the snapshot it produced."""
@@ -75,12 +70,12 @@ class PilotImage(WorkflowBuilder):
 
 	@property
 	def atlas_name(self) -> str:
-		"""What the build machine and its snapshot are called at Atlas."""
+		"""What this image's snapshot is called at Atlas."""
 		return f"{self.name}-{self.frappe_version}"
 
 	@property
 	def builder(self) -> Builder:
-		return Builder(self.atlas_name)
+		return Builder()
 
 	@property
 	def image_tags(self) -> dict[str, str]:
@@ -143,46 +138,37 @@ class PilotImage(WorkflowBuilder):
 			frappe.throw(_("Set the region ID in Cargo Settings before building."))
 
 		self.build_log = None
-		self.ssh_public_key, self.ssh_private_key = create_keypair(self.atlas_name)
-		self.temporary_vm_id = self.builder.provision_build_machine(public_key=self.ssh_public_key)
+		self.machine = MachineDoc.request(self, BUILD_SPEC, base_image=base_image_id()).name
 		self.mark("Provisioning")
 
-	def sync_build_vm(self) -> None:
-		"""Move the image on once its machine is up. Scheduled, one machine at a time."""
-		client = AtlasClient.from_settings()
-		try:
-			machine = client.get_vm(self.temporary_vm_id)
-		except AtlasNotFound:
-			self.mark("Failed", error="Atlas no longer has this build machine")
+	def sync_machines(self) -> None:
+		"""What this image's build machine settling means for it. Its state is already
+		recorded; `sync_pending_machines` calls this once it changes."""
+		if self.status != "Provisioning":
 			return
 
-		state = machine.get("current_state")
-		if state in DEAD_STATES:
-			self.mark("Failed", error=f"Atlas reported {state}")
+		machine: MachineDoc = frappe.get_doc("Machine", self.machine)
+		if machine.status in DEAD_MACHINE_STATES:
+			self.mark("Failed", error=machine.error or f"Build machine is {machine.status}")
 			return
 
-		if state != RUNNING_STATE:
-			return
-
-		address = machine.get("network", {}).get("mesh_ipv6")
-		if not address:
-			self.mark("Failed", error="Atlas reported no mesh address for this build machine")
+		if machine.status != "Running":
 			return
 
 		# One transaction, so `retry_workflows` can find a build whose job never started.
 		self.mark("Building")
-		self.run_build.run_as_workflow(address=address, vm_id=self.temporary_vm_id)
+		self.run_build.run_as_workflow(address=machine.address)
 
 	@flow
-	def run_build(self, address: str, vm_id: str) -> None:
+	def run_build(self, address: str) -> None:
 		"""Bake a machine and photograph it"""
 		self.run_provision_script(address)
-		self.take_snapshot(vm_id)
+		self.take_snapshot()
 
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def run_provision_script(self, address: str) -> None:
 		"""Install onto the build machine"""
-		private_key = self.get_password("ssh_private_key")
+		private_key = self.build_machine.get_password("ssh_private_key")
 		self.builder.wait_until_reachable(address, private_key)
 
 		with OutputLog(self, "build_log") as log:
@@ -193,12 +179,9 @@ class PilotImage(WorkflowBuilder):
 				on_output=log.write,
 			)
 
-		# Here, not in the snapshot task: that one runs without a key.
+		# Here, not in the snapshot task: that one works from the machine record alone.
 		self.builder.flush_build_machine(address, private_key)
 
-		# Atlas serves the authorized key from instance metadata on each attempt, so the
-		# disk holds no key to take off it. Cargo drops its own half here.
-		self.drop_ssh_keys()
 		self.mark("Snapshotting")
 
 	@frappe.whitelist()
@@ -212,11 +195,9 @@ class PilotImage(WorkflowBuilder):
 			frappe.get_doc("Press Workflow", workflow).force_fail()
 			return
 
-		if self.temporary_vm_id and not self.builder.destroy_build_machine(self.temporary_vm_id):
-			frappe.throw(_("Atlas did not destroy {0}.").format(self.temporary_vm_id))
+		if not self.release_build_machine():
+			frappe.throw(_("Atlas did not destroy the build machine."))
 
-		self.temporary_vm_id = None
-		self.drop_ssh_keys()
 		self.mark("Failed", error=f"Build stopped by {frappe.session.user}.")
 
 	@property
@@ -232,17 +213,16 @@ class PilotImage(WorkflowBuilder):
 		)
 
 	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
-	def take_snapshot(self, vm_id: str) -> None:
+	def take_snapshot(self) -> None:
 		"""Photograph the machine, then destroy it either way"""
-		builder = self.builder
+		machine = self.build_machine
 		try:
-			snapshot = builder.snapshot_build_machine(vm_id, self.image_tags)
+			snapshot = machine.snapshot(self.atlas_name, self.image_tags)
 		finally:
-			builder.destroy_build_machine(vm_id)
+			machine.terminate()
 
 		self.snapshot_id = snapshot
 		self.built_at = now_datetime()
-		self.temporary_vm_id = None
 		self.save(ignore_permissions=True)
 
 	def on_workflow_success(self, workflow) -> None:
@@ -255,15 +235,23 @@ class PilotImage(WorkflowBuilder):
 		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
 		error = (reason or workflow.workflow_traceback or "").strip()
 
-		if not self.temporary_vm_id or self.builder.destroy_build_machine(self.temporary_vm_id):
-			self.drop_ssh_keys()
-
+		self.release_build_machine()
 		self.mark("Failed", error=f"{stage}\n{error}")
 
-	def drop_ssh_keys(self) -> None:
-		"""Cargo's half of a keypair whose machine is gone."""
-		self.ssh_public_key = None
-		self.ssh_private_key = None
+	@property
+	def build_machine(self) -> MachineDoc:
+		return frappe.get_doc("Machine", self.machine)
+
+	def release_build_machine(self) -> bool:
+		"""Let this build's machine go. False means Atlas still has it running."""
+		if not self.machine:
+			return True
+
+		machine = self.build_machine
+		if machine.status == "Terminated":
+			return True
+
+		return machine.terminate()
 
 	def mark(self, status: str, error: str | None = None) -> None:
 		self.status = status
@@ -288,17 +276,13 @@ class PilotImage(WorkflowBuilder):
 		self.delete(ignore_permissions=True)
 		return True
 
-
-def sync_build_machines() -> None:
-	"""Walk every image still waiting on Atlas. Scheduled in `hooks.py`."""
-	waiting = frappe.get_all(
-		"Pilot Image",
-		filters={"status": "Provisioning", "temporary_vm_id": ["is", "set"]},
-		pluck="name",
-	)
-	for name in waiting:
-		image: PilotImage = frappe.get_doc("Pilot Image", name)
-		image.sync_build_vm()
+	def on_trash(self) -> None:
+		"""Kill machine in case image is deleted"""
+		super().on_trash()
+		if self.release_build_machine():
+			frappe.db.delete("Machine", {"reference_doctype": self.doctype, "reference_name": self.name})
+			return
+		frappe.throw(_("Unable to terminate VM {0} before deleteion.").format(self.name))
 
 
 def sync_pilot_releases() -> None:

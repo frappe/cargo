@@ -272,7 +272,6 @@ scheduler_events = {
 			"cargo.cargo.doctype.machine.machine.sync_pending_machines",
 			"cargo.object_storage.spawn.ensure_cluster",
 			"cargo.telemetry.spawn.ensure_telemetry",
-			"cargo.image_builder.doctype.pilot_image.pilot_image.sync_build_machines",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.sync_pilot_releases",
 			# Machines die without telling anyone, so health is re-read on a clock. A minute
 			# is what sets alerting latency; the read is two calls to the gateway.

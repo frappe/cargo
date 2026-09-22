@@ -20,10 +20,7 @@
   "section_break_log",
   "build_log",
   "section_break_build",
-  "temporary_vm_id",
-  "ssh_public_key",
-  "column_break_build",
-  "ssh_private_key"
+  "machine"
  ],
  "fields": [
   {
@@ -123,33 +120,23 @@
    "label": "Build Machine"
   },
   {
-   "description": "The machine being baked. Cleared once it is snapshotted and destroyed.",
-   "fieldname": "temporary_vm_id",
-   "fieldtype": "Data",
-   "label": "Temporary VM",
-   "read_only": 1
-  },
-  {
-   "description": "Generated per build; the machine is destroyed after.",
-   "fieldname": "ssh_public_key",
-   "fieldtype": "Small Text",
-   "label": "SSH Public Key",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_build",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "ssh_private_key",
-   "fieldtype": "Password",
-   "label": "SSH Private Key",
+   "description": "The machine this image is baked on. It holds the VM id, its keypair and its state.",
+   "fieldname": "machine",
+   "fieldtype": "Link",
+   "label": "Build Machine",
+   "options": "Machine",
    "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 0,
- "links": [],
+ "links": [
+  {
+   "group": "Build Machine",
+   "link_doctype": "Machine",
+   "link_fieldname": "reference_name"
+  }
+ ],
  "modified": "2026-09-17 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
