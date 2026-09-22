@@ -107,6 +107,63 @@ class UnitTestBucketActions(UnitTestCase):
 
 		create_key.assert_not_called()
 
+	def test_usage_is_read_from_the_counters_garage_already_keeps(self):
+		"""One metadata read: no listing, and nothing that grows with the object count."""
+		(info,) = self.answers(
+			bucket={
+				"return_value": {
+					"id": BUCKET_ID,
+					"bytes": 20971520,
+					"objects": 4,
+					"quotas": {"maxSize": 1073741824, "maxObjects": 100},
+				}
+			},
+		)
+
+		usage = self.actions.get_usage(BUCKET)
+
+		self.assertEqual(usage.used_bytes, 20971520)
+		self.assertEqual(usage.object_count, 4)
+		self.assertEqual(usage.quota_bytes, 1073741824)
+		self.assertEqual(usage.quota_objects, 100)
+		info.assert_called_once_with(BUCKET)
+
+	def test_an_uncapped_bucket_reports_no_quota(self):
+		self.answers(bucket={"return_value": {"id": BUCKET_ID, "bytes": 0, "objects": 0, "quotas": None}})
+
+		usage = self.actions.get_usage(BUCKET)
+
+		self.assertIsNone(usage.quota_bytes)
+		self.assertIsNone(usage.quota_objects)
+
+	def test_usage_of_a_bucket_that_does_not_exist_is_refused(self):
+		self.answers(bucket={"return_value": None})
+
+		with self.assertRaises(frappe.ValidationError):
+			self.actions.get_usage(BUCKET)
+
+	def test_a_quota_is_sent_to_garage_in_bytes(self):
+		"""Callers think in GiB; Garage counts bytes, so the conversion happens here."""
+		_, quota = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			set_bucket_quota={"return_value": None},
+		)
+
+		self.actions.set_quota(BUCKET, 2)
+
+		quota.assert_called_once_with(BUCKET_ID, 2 * 1024**3, None)
+
+	def test_a_quota_on_a_bucket_that_does_not_exist_is_refused(self):
+		_, quota = self.answers(
+			bucket={"return_value": None},
+			set_bucket_quota={"return_value": None},
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			self.actions.set_quota(BUCKET, 2)
+
+		quota.assert_not_called()
+
 	def test_removing_a_bucket_takes_its_key_with_it(self):
 		order = []
 		_, _, delete_key, delete_bucket = self.answers(

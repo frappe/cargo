@@ -5,11 +5,12 @@ from frappe import _
 from frappe.utils.synchronization import filelock
 
 from cargo.object_storage.garage.client import Client, Error
-from cargo.object_storage.garage.models import BucketCredentials
+from cargo.object_storage.garage.models import BucketCredentials, BucketUsage
 
 ALIAS_TAKEN = "already exists"
 INVALID_NAME = "InvalidBucketName"
 LOCK_TIMEOUT = 30
+BYTES_PER_GIB = 1024**3
 
 
 class Actions(Client):
@@ -115,3 +116,27 @@ class Actions(Client):
 		with self.bucket_lock(alias):
 			if key := self.key(self.key_name(alias)):
 				self.delete_key(key["accessKeyId"])
+
+	def get_usage(self, alias: str) -> BucketUsage:
+		"""What the bucket holds, and its caps. Garage counts as it writes -- it needs the
+		running total to enforce a quota -- so this reads metadata and scans nothing."""
+		info = self.bucket(alias)
+		if not info:
+			frappe.throw(_("This cluster has no bucket called {0}.").format(alias))
+
+		quotas = info.get("quotas") or {}
+		return BucketUsage(
+			used_bytes=info["bytes"],
+			object_count=info["objects"],
+			quota_bytes=quotas.get("maxSize"),
+			quota_objects=quotas.get("maxObjects"),
+		)
+
+	def set_quota(self, alias: str, size_gib: int, max_objects: int | None = None) -> None:
+		"""Cap the bucket's total object size, in GiB. Garage itself counts bytes."""
+		with self.bucket_lock(alias):
+			bucket_id = self.bucket_id(alias)
+			if not bucket_id:
+				frappe.throw(_("This cluster has no bucket called {0}.").format(alias))
+
+			self.set_bucket_quota(bucket_id, size_gib * BYTES_PER_GIB, max_objects)

@@ -123,3 +123,14 @@ class Client:
 
 	def delete_key(self, access_key_id: str) -> None:
 		self.call("DeleteKey", "POST", params={"id": access_key_id})
+
+	def set_bucket_quota(
+		self, bucket_id: str, max_size_bytes: int | None, max_objects: int | None = None
+	) -> None:
+		"""Cap the bucket's total object size. None lifts the cap."""
+		self.call(
+			"UpdateBucket",
+			"POST",
+			params={"id": bucket_id},
+			json={"quotas": {"maxSize": max_size_bytes, "maxObjects": max_objects}},
+		)
