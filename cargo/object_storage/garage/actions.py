@@ -8,6 +8,7 @@ from cargo.object_storage.garage.client import Client, Error
 from cargo.object_storage.garage.models import BucketCredentials
 
 ALIAS_TAKEN = "already exists"
+INVALID_NAME = "InvalidBucketName"
 LOCK_TIMEOUT = 30
 
 
@@ -41,6 +42,14 @@ class Actions(Client):
 				frappe.throw(
 					_("The bucket name {0} is already taken. Pick another.").format(alias),
 					title=_("Bucket name taken"),
+				)
+			if INVALID_NAME in str(error):
+				frappe.throw(
+					_(
+						"{0} is not a valid bucket name. Use 3 to 63 characters: lowercase"
+						" letters, digits, dots and hyphens."
+					).format(alias),
+					title=_("Invalid bucket name"),
 				)
 
 			raise

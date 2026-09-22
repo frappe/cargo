@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
@@ -552,8 +552,8 @@ class Handler(BaseHTTPRequestHandler):
 				self.reply(self.get_virtual_machine(route[1]))
 			elif route == ["images"]:
 				self.reply(self.list_images())
-			elif len(route) == 2 and route[0] == "images":
-				self.reply(self.get_image(route[1]))
+			elif len(route) >= 2 and route[0] == "images":
+				self.reply(self.get_image(unquote("/".join(route[1:]))))
 			else:
 				self.fail(f"unimplemented: GET {self.path}", 404, "not_found")
 		except KeyError:
@@ -570,9 +570,9 @@ class Handler(BaseHTTPRequestHandler):
 		route = self.route
 		if len(route) == 2 and route[0] == "virtual-machines":
 			self.reply(self.terminate(route[1]), 202)
-		elif len(route) == 2 and route[0] == "images":
+		elif len(route) >= 2 and route[0] == "images":
 			try:
-				self.reply(self.delete_image(route[1]), 202)
+				self.reply(self.delete_image(unquote("/".join(route[1:]))), 202)
 			except KeyError:
 				self.fail("The resource does not exist.", 404, "not_found")
 		else:

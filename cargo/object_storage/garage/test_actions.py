@@ -53,6 +53,26 @@ class UnitTestBucketActions(UnitTestCase):
 		# The bucket it just made is dropped: nothing names it, so nothing can reach it.
 		delete.assert_called_once_with(BUCKET_ID)
 
+	def test_a_name_garage_will_not_accept_is_answered_not_relayed(self):
+		"""Garage judges the name. Relaying its 400 as a 500 would tell the caller to wait
+		for something that will never change."""
+		_, _, delete = self.answers(
+			create_bucket={"return_value": {"id": BUCKET_ID}},
+			add_bucket_alias={
+				"side_effect": Error(
+					'AddBucketAlias answered 400: {"code": "InvalidBucketName",'
+					' "message": "Invalid bucket name: Team-Alpha"}'
+				)
+			},
+			delete_bucket={"return_value": None},
+		)
+
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.actions.add_bucket("Team-Alpha")
+
+		self.assertIn("not a valid bucket name", str(raised.exception))
+		delete.assert_called_once_with(BUCKET_ID)
+
 	def test_credentials_are_scoped_to_the_bucket_that_was_asked_for(self):
 		_, _, allow = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
