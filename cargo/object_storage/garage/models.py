@@ -36,6 +36,28 @@ class DeleteBucketResponse:
 
 
 @dataclass
+class BucketUsage:
+	"""What a bucket holds now, against its caps. A None cap means uncapped."""
+
+	used_bytes: int
+	object_count: int
+	quota_bytes: int | None
+	quota_objects: int | None
+
+
+@dataclass
+class BucketUsageResponse:
+	"""One bucket's usage."""
+
+	name: str
+	region: str
+	usage: BucketUsage
+
+	def asdict(self) -> dict[str, Any]:
+		return asdict(self)
+
+
+@dataclass
 class SetQuotaResponse:
 	"""The cap now on the bucket."""
 

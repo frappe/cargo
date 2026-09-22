@@ -4,6 +4,7 @@ from frappe import _
 from cargo.auth import verify_token
 from cargo.object_storage.garage.actions import Actions
 from cargo.object_storage.garage.models import (
+	BucketUsageResponse,
 	CreateBucketResponse,
 	DeleteBucketResponse,
 	RotateCredentialsResponse,
@@ -63,6 +64,14 @@ def rotate_credentials(name: str, region: str) -> dict:
 	return RotateCredentialsResponse(
 		name=name, region=region, credentials=actions_for(region).rotate_credentials(name)
 	).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def get_usage(name: str, region: str) -> dict:
+	"""What this bucket holds, against its caps. A counter read, not a scan."""
+	return BucketUsageResponse(name=name, region=region, usage=actions_for(region).get_usage(name)).asdict()
 
 
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
