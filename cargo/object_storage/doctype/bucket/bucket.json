@@ -65,13 +65,15 @@
    "description": "Total object size this bucket may hold, in GiB. Zero is uncapped.",
    "fieldname": "max_size_gib",
    "fieldtype": "Int",
-   "label": "Max Size (GiB)"
+   "label": "Max Size (GiB)",
+   "non_negative": 1
   },
   {
    "description": "How many objects this bucket may hold. Zero is uncapped.",
    "fieldname": "max_objects",
    "fieldtype": "Int",
-   "label": "Max Objects"
+   "label": "Max Objects",
+   "non_negative": 1
   },
   {
    "fieldname": "metadata_section",

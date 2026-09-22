@@ -91,7 +91,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 	def test_setting_a_quota_answers_with_the_cap_it_applied(self):
 		with self.caller() as garage:
 			self.existing_bucket()
-			answer = set_quota(name=BUCKET, size_gib=5, region=self.region)
+			answer = set_quota(name=BUCKET, size_gib=5, region=self.region, max_objects=0)
 
 		garage.set_bucket_quota.assert_called_once_with(BUCKET_ID, 5 * 1024**3, None)
 		self.assertEqual(answer, {"name": BUCKET, "region": self.region, "size_gib": 5})
@@ -100,21 +100,30 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		"""Every HTTP argument arrives as a string."""
 		with self.caller() as garage:
 			self.existing_bucket()
-			set_quota(name=BUCKET, size_gib="5", region=self.region)
+			set_quota(name=BUCKET, size_gib="5", region=self.region, max_objects="0")
 
 		garage.set_bucket_quota.assert_called_once_with(BUCKET_ID, 5 * 1024**3, None)
 
-	def test_a_quota_of_zero_or_less_is_refused(self):
-		for size in ("0", "-1"):
-			with self.subTest(size=size), self.caller() as garage:
-				with self.assertRaises(frappe.ValidationError):
-					set_quota(name=BUCKET, size_gib=size, region=self.region)
+	def test_a_negative_quota_is_refused(self):
+		for size, objects in ((-1, 0), (5, -1)):
+			with self.subTest(size=size, objects=objects), self.caller() as garage:
+				with self.assertRaisesRegex(frappe.ValidationError, "cannot be negative"):
+					set_quota(name=BUCKET, size_gib=size, region=self.region, max_objects=objects)
 				garage.set_bucket_quota.assert_not_called()
+
+	def test_a_quota_of_zero_lifts_the_cap(self):
+		"""The field says zero is uncapped and Garage lifts a cap with a null, so zero has to
+		reach it rather than be refused as out of range."""
+		with self.caller() as garage:
+			self.existing_bucket().db_set("max_size_gib", 5)
+			set_quota(name=BUCKET, size_gib=0, region=self.region, max_objects=0)
+
+		garage.set_bucket_quota.assert_called_once_with(BUCKET_ID, None, None)
 
 	def test_a_quota_that_is_not_a_number_is_refused_by_the_signature(self):
 		with self.caller() as garage:
 			with self.assertRaises(FrappeTypeError):
-				set_quota(name=BUCKET, size_gib="not a number", region=self.region)
+				set_quota(name=BUCKET, size_gib="not a number", region=self.region, max_objects=0)
 			garage.set_bucket_quota.assert_not_called()
 
 	def test_usage_answers_with_what_is_held_and_the_caps_on_it(self):

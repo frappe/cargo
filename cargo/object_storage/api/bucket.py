@@ -103,15 +103,14 @@ def get_usage(name: str, region: str) -> dict:
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
-def set_quota(name: str, size_gib: int, region: str, max_objects: int | None = None) -> dict:
-	"""Cap this bucket's total object size, in GiB."""
-	# The annotation is what turns the caller's text into a number; only the range is left.
-	if size_gib <= 0:
-		frappe.throw(_("Bucket quota must be a whole number of GiB above zero."))
+def set_quota(name: str, size_gib: int, region: str, max_objects: int) -> dict:
+	"""This buckets quota in GIB and object count."""
+	if size_gib < 0 or max_objects < 0:
+		frappe.throw(_("A bucket quota cannot be negative. Zero lifts the cap."))
 
 	bucket = bucket_for(name, region)
 	bucket.max_size_gib = size_gib
-	bucket.max_objects = max_objects or 0
+	bucket.max_objects = max_objects
 	bucket.save(ignore_permissions=True)
 
 	return SetQuotaResponse(name=name, region=region, size_gib=size_gib).asdict()
