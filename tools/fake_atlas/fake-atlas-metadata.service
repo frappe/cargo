@@ -5,7 +5,8 @@ Before=multi-user.target
 
 [Service]
 ExecStartPre=/usr/sbin/ip address replace 169.254.169.254/32 dev lo
-ExecStart=/usr/bin/python3 /usr/local/lib/fake-atlas/metadata_server.py /var/lib/fake-atlas/metadata.json
+ExecStartPre=/bin/sh -c "/usr/sbin/iptables -t nat -C OUTPUT -d 169.254.169.254/32 -p tcp --dport 80 -j REDIRECT --to-ports 8181 2>/dev/null || /usr/sbin/iptables -t nat -A OUTPUT -d 169.254.169.254/32 -p tcp --dport 80 -j REDIRECT --to-ports 8181"
+ExecStart=/usr/bin/python3 /usr/local/lib/fake-atlas/metadata_server.py --host 127.0.0.1 --port 8181 /var/lib/fake-atlas/metadata.json
 Restart=on-failure
 RestartSec=1
 
