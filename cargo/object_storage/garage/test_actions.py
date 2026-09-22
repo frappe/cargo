@@ -107,6 +107,28 @@ class UnitTestBucketActions(UnitTestCase):
 
 		create_key.assert_not_called()
 
+	def test_a_quota_is_sent_to_garage_in_bytes(self):
+		"""Callers think in GiB; Garage counts bytes, so the conversion happens here."""
+		_, quota = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			set_bucket_quota={"return_value": None},
+		)
+
+		self.actions.set_quota(BUCKET, 2)
+
+		quota.assert_called_once_with(BUCKET_ID, 2 * 1024**3)
+
+	def test_a_quota_on_a_bucket_that_does_not_exist_is_refused(self):
+		_, quota = self.answers(
+			bucket={"return_value": None},
+			set_bucket_quota={"return_value": None},
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			self.actions.set_quota(BUCKET, 2)
+
+		quota.assert_not_called()
+
 	def test_removing_a_bucket_takes_its_key_with_it(self):
 		order = []
 		_, _, delete_key, delete_bucket = self.answers(

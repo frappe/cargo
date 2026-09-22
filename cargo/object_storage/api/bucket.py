@@ -7,6 +7,7 @@ from cargo.object_storage.garage.models import (
 	CreateBucketResponse,
 	DeleteBucketResponse,
 	RotateCredentialsResponse,
+	SetQuotaResponse,
 )
 
 
@@ -62,3 +63,17 @@ def rotate_credentials(name: str, region: str) -> dict:
 	return RotateCredentialsResponse(
 		name=name, region=region, credentials=actions_for(region).rotate_credentials(name)
 	).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def set_quota(name: str, size_gib: int, region: str, max_objects: int | None = None) -> dict:
+	"""Cap this bucket's total object size, in GiB."""
+	# The annotation is what turns the caller's text into a number; only the range is left.
+	if size_gib <= 0:
+		frappe.throw(_("Bucket quota must be a whole number of GiB above zero."))
+
+	actions_for(region).set_quota(name, size_gib, max_objects)
+
+	return SetQuotaResponse(name=name, region=region, size_gib=size_gib).asdict()

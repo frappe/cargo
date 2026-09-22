@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import frappe
+from frappe.exceptions import FrappeTypeError
 from frappe.tests import IntegrationTestCase
 
 from cargo.object_storage.api.bucket import (
@@ -12,6 +13,7 @@ from cargo.object_storage.api.bucket import (
 	create_bucket,
 	delete_bucket,
 	rotate_credentials,
+	set_quota,
 )
 from cargo.object_storage.garage.actions import Actions
 from cargo.object_storage.garage.models import BucketCredentials
@@ -43,8 +45,9 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 			patch.object(Actions, "provision_bucket", return_value=CREDENTIALS) as add,
 			patch.object(Actions, "remove_bucket") as remove,
 			patch.object(Actions, "rotate_credentials", return_value=CREDENTIALS) as rotate,
+			patch.object(Actions, "set_quota") as quota,
 		):
-			yield frappe._dict(add=add, remove=remove, rotate=rotate)
+			yield frappe._dict(add=add, remove=remove, rotate=rotate, quota=quota)
 
 	def test_creating_hands_back_the_key_that_opens_the_bucket(self):
 		with self.caller() as garage:
@@ -54,6 +57,33 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		self.assertEqual(answer["name"], BUCKET)
 		self.assertEqual(answer["region"], self.region)
 		self.assertEqual(answer["credentials"]["secret_access_key"], "shh")
+
+	def test_setting_a_quota_answers_with_the_cap_it_applied(self):
+		with self.caller() as garage:
+			answer = set_quota(name=BUCKET, size_gib=5, region=self.region)
+
+		garage.quota.assert_called_once_with(BUCKET, 5)
+		self.assertEqual(answer, {"name": BUCKET, "region": self.region, "size_gib": 5})
+
+	def test_a_quota_arriving_as_text_is_read_as_a_number(self):
+		"""Every HTTP argument arrives as a string."""
+		with self.caller() as garage:
+			set_quota(name=BUCKET, size_gib="5", region=self.region)
+
+		garage.quota.assert_called_once_with(BUCKET, 5)
+
+	def test_a_quota_of_zero_or_less_is_refused(self):
+		for size in ("0", "-1"):
+			with self.subTest(size=size), self.caller() as garage:
+				with self.assertRaises(frappe.ValidationError):
+					set_quota(name=BUCKET, size_gib=size, region=self.region)
+				garage.quota.assert_not_called()
+
+	def test_a_quota_that_is_not_a_number_is_refused_by_the_signature(self):
+		with self.caller() as garage:
+			with self.assertRaises(FrappeTypeError):
+				set_quota(name=BUCKET, size_gib="not a number", region=self.region)
+			garage.quota.assert_not_called()
 
 	def test_deleting_names_what_went(self):
 		with self.caller() as garage:

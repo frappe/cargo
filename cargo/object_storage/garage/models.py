@@ -36,6 +36,18 @@ class DeleteBucketResponse:
 
 
 @dataclass
+class SetQuotaResponse:
+	"""The cap now on the bucket."""
+
+	name: str
+	region: str
+	size_gib: int
+
+	def asdict(self) -> dict[str, Any]:
+		return asdict(self)
+
+
+@dataclass
 class RotateCredentialsResponse:
 	"""The bucket's new key. The one it replaces opens nothing."""
 

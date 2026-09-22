@@ -10,6 +10,7 @@ from cargo.object_storage.garage.models import BucketCredentials
 ALIAS_TAKEN = "already exists"
 INVALID_NAME = "InvalidBucketName"
 LOCK_TIMEOUT = 30
+BYTES_PER_GIB = 1024**3
 
 
 class Actions(Client):
@@ -115,3 +116,12 @@ class Actions(Client):
 		with self.bucket_lock(alias):
 			if key := self.key(self.key_name(alias)):
 				self.delete_key(key["accessKeyId"])
+
+	def set_quota(self, alias: str, size_gib: int, max_objects: int | None = None) -> None:
+		"""Cap the bucket's total object size, in GiB. Garage itself counts bytes."""
+		with self.bucket_lock(alias):
+			bucket_id = self.bucket_id(alias)
+			if not bucket_id:
+				frappe.throw(_("This cluster has no bucket called {0}.").format(alias))
+
+			self.set_bucket_quota(bucket_id, size_gib * BYTES_PER_GIB, max_objects)
