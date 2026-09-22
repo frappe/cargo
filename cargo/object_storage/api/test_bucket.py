@@ -17,6 +17,7 @@ from cargo.object_storage.api.bucket import (
 	serving_cluster,
 	set_quota,
 )
+from cargo.object_storage.client import Error
 from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.testing import use_test_settings
 
@@ -189,23 +190,22 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		with self.caller(), self.assertRaises(frappe.MandatoryError):
 			frappe.get_doc({"doctype": "Bucket", "bucket_name": BUCKET}).insert(ignore_permissions=True)
 
-	def test_a_name_the_primary_key_already_holds_is_a_rejection_not_a_server_error(self):
-		"""No read before the write: the name is the primary key. DuplicateEntryError carries
-		no HTTP status of its own, so it would otherwise reach Central as a 500."""
-		with self.caller():
-			self.existing_bucket()
+	def test_a_name_garage_already_holds_never_reaches_the_record(self):
+		"""The usual duplicate. Garage's cluster-global alias answers in before_save, so the
+		primary key is never tried and the bucket it just made is taken back out."""
+		with self.caller() as garage:
+			garage.add_bucket_alias.side_effect = Error("AddBucketAlias answered 400: already exists")
 			with self.assertRaisesRegex(frappe.ValidationError, "already taken"):
 				create_bucket(name=BUCKET, region=self.region)
 
-	def test_a_bucket_made_for_a_refused_insert_does_not_outlive_it(self):
-		"""Garage is not in the transaction, so provisioning registers its own undo."""
-		with self.caller() as garage:
-			self.existing_bucket()
-			garage.reset_mock()
-			with self.assertRaises(frappe.ValidationError):
-				create_bucket(name=BUCKET, region=self.region)
-
-			# The insert was refused after provision() had already made a second bucket.
-			garage.create_bucket.assert_called_once()
-			frappe.db.rollback()
 			garage.delete_bucket.assert_called_once_with(BUCKET_ID)
+			self.assertFalse(frappe.db.exists("Bucket", BUCKET))
+
+	def test_the_primary_key_backstops_a_name_already_recorded(self):
+		"""Only reachable once the two stores have drifted: Garage accepts a name this Cargo
+		already holds a row for. Nothing translates DuplicateEntryError, which carries no HTTP
+		status, so Central reads it as a server error."""
+		with self.caller():
+			self.existing_bucket()
+			with self.assertRaises(frappe.DuplicateEntryError):
+				create_bucket(name=BUCKET, region=self.region)

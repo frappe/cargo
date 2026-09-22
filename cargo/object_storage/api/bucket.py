@@ -2,7 +2,7 @@ import frappe
 from frappe import _
 
 from cargo.auth import verify_token
-from cargo.object_storage.doctype.bucket.bucket import Bucket, throw_name_taken
+from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.object_storage.models import (
 	BucketCredentials,
 	BucketUsageResponse,
@@ -54,17 +54,11 @@ def create_bucket(name: str, region: str) -> dict:
 	"""A bucket and the one key that opens it. The secret is handed back here and nowhere
 	else: Cargo keeps no copy a caller can read back."""
 	check_region(region)
-	try:
-		# The caller is a signed Central token, not a session user, so it carries no role.
-		bucket = frappe.get_doc(
-			{"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()}
-		).insert(ignore_permissions=True)
-	except frappe.DuplicateEntryError:
-		# The primary key, not a read before the write. DuplicateEntryError descends from
-		# frappe.NameError and carries no HTTP status, so it would otherwise reach the caller
-		# as a 500 telling it not to retry something that will never succeed.
-		throw_name_taken(name)
-
+	# There can never be a duplicate name since garage will throw in before save itself
+	# And I trust garage's arbiter.
+	bucket = frappe.get_doc({"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()}).insert(
+		ignore_permissions=True
+	)
 	return CreateBucketResponse(
 		name=name,
 		region=region,

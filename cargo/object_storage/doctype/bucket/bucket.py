@@ -80,23 +80,8 @@ class Bucket(Document):
 				self.garage.delete_bucket(bucket_id)
 				raise
 
-		# Garage is not in the transaction. Whatever refuses the insert that follows -- the
-		# primary key, a mandatory field -- would otherwise leave this bucket behind.
-		frappe.db.after_rollback.add(self.discard)
-
 		self.access_key = credentials.access_key
 		self.secret_access_key = credentials.secret_access_key
-
-	def discard(self) -> None:
-		"""Undo provision() when the transaction that asked for it rolled back. Raising here
-		would mask whatever refused the insert, so a failure is left for an operator."""
-		try:
-			with self.lock():
-				if bucket_id := self.get_bucket_id():
-					self.garage.delete_bucket(bucket_id)
-				self.drop_key()
-		except Exception:
-			frappe.log_error(title=f"Garage bucket {self.bucket_name} left behind after a rollback")
 
 	def get_bucket_id(self) -> str | None:
 		"""The bucket behind this name, or None when nothing answers to it."""
@@ -215,11 +200,3 @@ class Bucket(Document):
 		"""Delete this bucket's key if Garage still holds one. No lock: it runs inside one."""
 		if key := self.garage.key(self.key_name):
 			self.garage.delete_key(key["accessKeyId"])
-
-
-def throw_name_taken(alias: str) -> None:
-	"""One message for both arbiters: Garage's cluster-global alias and the primary key."""
-	frappe.throw(
-		_("The bucket name {0} is already taken. Pick another.").format(alias),
-		title=_("Bucket name taken"),
-	)
