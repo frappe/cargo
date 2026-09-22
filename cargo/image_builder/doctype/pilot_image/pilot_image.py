@@ -248,7 +248,7 @@ class PilotImage(WorkflowBuilder):
 			return True
 
 		machine = self.build_machine
-		if machine.status in DEAD_MACHINE_STATES:
+		if machine.status == "Terminated":
 			return True
 
 		return machine.terminate()
@@ -279,8 +279,10 @@ class PilotImage(WorkflowBuilder):
 	def on_trash(self) -> None:
 		"""Kill machine in case image is deleted"""
 		super().on_trash()
-		self.release_build_machine()
-		frappe.db.delete("Machine", {"reference_doctype": self.doctype, "reference_name": self.name})
+		if self.release_build_machine():
+			frappe.db.delete("Machine", {"reference_doctype": self.doctype, "reference_name": self.name})
+			return
+		frappe.throw(_("Unable to terminate VM {0} before deleteion.").format(self.name))
 
 
 def sync_pilot_releases() -> None:
