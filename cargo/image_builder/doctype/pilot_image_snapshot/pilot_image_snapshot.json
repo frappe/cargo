@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 0,
+ "allow_rename": 0,
+ "creation": "2026-09-23 16:16:13.515497",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_identity",
+  "pilot_image",
+  "app",
+  "column_break_identity",
+  "status",
+  "built_at",
+  "snapshot_id",
+  "error",
+  "section_break_apps",
+  "apps"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_identity",
+   "fieldtype": "Section Break",
+   "label": "Snapshot"
+  },
+  {
+   "description": "The build this snapshot was taken on.",
+   "fieldname": "pilot_image",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Pilot Image",
+   "options": "Pilot Image",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "The signup app this snapshot is for. Empty on a build without apps.",
+   "fieldname": "app",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "App",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nSnapshotting\nAvailable\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "built_at",
+   "fieldtype": "Datetime",
+   "label": "Built At",
+   "read_only": 1
+  },
+  {
+   "description": "What Atlas boots this image from.",
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Why this snapshot failed.",
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error",
+   "max_height": "16rem",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_apps",
+   "fieldtype": "Section Break",
+   "label": "Apps"
+  },
+  {
+   "description": "The apps turned on in this snapshot: the app and what it requires. The rest are installed and turned off.",
+   "fieldname": "apps",
+   "fieldtype": "Table",
+   "label": "Enabled Apps",
+   "options": "Pilot Image Snapshot App",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-23 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Image Builder",
+ "name": "Pilot Image Snapshot",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "autoname": "SNAP-.#####",
+ "naming_rule": "Expression",
+ "search_fields": "pilot_image,app,snapshot_id"
+}

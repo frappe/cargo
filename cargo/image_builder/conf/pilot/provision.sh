@@ -27,6 +27,8 @@ PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
 # Off leaves an initialised bench with no site on it.
 HAS_SITE="${HAS_SITE:-1}"
+# One `repo commit` pair a line, installed on the site in this order. Empty installs none.
+INSTALL_APPS="${INSTALL_APPS:-}"
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 
@@ -81,6 +83,22 @@ as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
 
 if [ "$HAS_SITE" = 1 ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
+fi
+
+# A commit as the branch clones exactly the release Cargo recorded. Each snapshot turns
+# off the apps it does not need, so every one is installed here.
+if [ -n "$INSTALL_APPS" ]; then
+	if [ "$HAS_SITE" != 1 ]; then
+		echo "INSTALL_APPS needs a site to install on" >&2
+		exit 1
+	fi
+
+	apps=()
+	while read -r repo commit; do
+		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+		apps+=("$(basename "$repo" .git)")
+	done <<< "$INSTALL_APPS"
+	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
 fi
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.

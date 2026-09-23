@@ -92,3 +92,15 @@ class Builder:
 		"""Write the page cache out. Atlas photographs a paused disk, and pausing flushes
 		nothing, so unwritten files land in the image empty."""
 		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
+
+	def enable_only_apps(
+		self, address: str, private_key: str, installed: list[str], enabled: list[str]
+	) -> str:
+		"""Leave only `enabled` of the `installed` apps turned on, ready to photograph."""
+		environment = {"INSTALLED_APPS": " ".join(installed), "ENABLED_APPS": " ".join(enabled)}
+		return run_over_ssh(
+			address,
+			script("image_builder", "conf", "pilot", "enable_apps.sh", environment=environment),
+			private_key,
+			timeout=900,
+		)

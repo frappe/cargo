@@ -1,9 +1,7 @@
 {
  "actions": [],
- "allow_bulk_edit": 0,
- "allow_rename": 0,
  "autoname": "IMG-.####",
- "creation": "2026-09-01 11:34:25.577127",
+ "creation": "2026-09-21 23:56:44.688899",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -11,12 +9,10 @@
   "pilot_version",
   "frappe_version",
   "has_site",
+  "has_apps",
   "column_break_identity",
   "status",
   "error",
-  "section_break_artifact",
-  "snapshot_id",
-  "built_at",
   "section_break_log",
   "build_log",
   "section_break_build",
@@ -50,7 +46,7 @@
    "set_only_once": 1
   },
   {
-   "default": "1",
+   "default": "0",
    "description": "Bake a site into the image. Without it the machine carries an initialised bench and no site.",
    "fieldname": "has_site",
    "fieldtype": "Check",
@@ -70,7 +66,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nProvisioning\nBuilding\nAvailable\nSnapshotting\nFailed",
+   "options": "Draft\nProvisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
    "read_only": 1
   },
   {
@@ -80,24 +76,6 @@
    "fieldtype": "Long Text",
    "label": "Error",
    "max_height": "16rem",
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_break_artifact",
-   "fieldtype": "Section Break",
-   "label": "Snapshot"
-  },
-  {
-   "description": "What Atlas boots this image from.",
-   "fieldname": "snapshot_id",
-   "fieldtype": "Data",
-   "label": "Snapshot ID",
-   "read_only": 1
-  },
-  {
-   "fieldname": "built_at",
-   "fieldtype": "Datetime",
-   "label": "Built At",
    "read_only": 1
   },
   {
@@ -126,21 +104,37 @@
    "label": "Build Machine",
    "options": "Machine",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "has_site",
+   "description": "Install every signup app on the site, then take one snapshot per app with only that app and what it requires turned on.",
+   "fieldname": "has_apps",
+   "fieldtype": "Check",
+   "label": "Has Apps",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "set_only_once": 1
   }
  ],
  "grid_page_length": 50,
- "index_web_pages_for_search": 0,
  "links": [
   {
    "group": "Build Machine",
    "link_doctype": "Machine",
    "link_fieldname": "reference_name"
+  },
+  {
+   "group": "Snapshots",
+   "link_doctype": "Pilot Image Snapshot",
+   "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-09-17 10:00:00.000000",
+ "modified": "2026-09-23 17:07:29.280919",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
