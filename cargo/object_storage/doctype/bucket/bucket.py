@@ -185,16 +185,15 @@ class Bucket(Document):
 	def apply_quota(self) -> None:
 		"""Send this record's caps to Garage, which counts bytes as it writes them. Zero is
 		how the form says uncapped, and Garage lifts a cap with a null."""
-		with self.lock():
-			bucket_id = self.get_bucket_id()
-			if not bucket_id:
-				frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
+		bucket_id = self.get_bucket_id()
+		if not bucket_id:
+			frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
 
-			self.garage.set_bucket_quota(
-				bucket_id,
-				self.max_size_gib * 1024**3 if self.max_size_gib else None,
-				self.max_objects or None,
-			)
+		self.garage.set_bucket_quota(
+			bucket_id,
+			self.max_size_gib * 1024**3 if self.max_size_gib else None,
+			self.max_objects or None,
+		)
 
 	def drop_key(self) -> None:
 		"""Delete this bucket's key if Garage still holds one. No lock: it runs inside one."""
