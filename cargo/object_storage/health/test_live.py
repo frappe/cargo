@@ -8,7 +8,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.garage.client import Client, Error
+from cargo.object_storage.client import Client, Error
 from cargo.object_storage.health import live as live_module
 from cargo.object_storage.health.live import (
 	CRITICAL,

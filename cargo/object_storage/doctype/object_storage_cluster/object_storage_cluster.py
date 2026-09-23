@@ -14,7 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
-from cargo.object_storage.garage.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT, OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task

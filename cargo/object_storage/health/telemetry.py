@@ -9,13 +9,13 @@ import frappe
 import requests
 
 from cargo.atlas_client import host_port
-from cargo.object_storage.garage.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
-	from cargo.object_storage.garage.setup import MachineRow
+	from cargo.object_storage.doctype.object_storage_cluster.setup import MachineRow
 
 INGEST_PATH = "/v1/ingest"
 SCRAPE_TIMEOUT = 15

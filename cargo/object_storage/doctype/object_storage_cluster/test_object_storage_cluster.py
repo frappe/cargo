@@ -22,6 +22,7 @@ from frappe.utils.password import (
 )
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage.client import Client
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	CLUSTER_SECRETS,
 	REGION_HEADER,
@@ -30,8 +31,7 @@ from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster 
 	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
 )
-from cargo.object_storage.garage.client import Client
-from cargo.object_storage.garage.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings

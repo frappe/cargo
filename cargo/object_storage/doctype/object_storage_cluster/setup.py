@@ -12,7 +12,7 @@ from frappe.utils.password import get_decrypted_password
 
 from cargo.atlas_client import host_port
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.garage.client import Client, Error
+from cargo.object_storage.client import Client, Error
 from cargo.ssh import run_over_ssh, script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
