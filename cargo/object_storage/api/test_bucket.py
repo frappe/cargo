@@ -199,22 +199,27 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		with self.caller(), self.assertRaises(frappe.MandatoryError):
 			frappe.get_doc({"doctype": "Bucket", "bucket_name": BUCKET}).insert(ignore_permissions=True)
 
-	def test_a_name_garage_already_holds_never_reaches_the_record(self):
-		"""The usual duplicate. Garage's cluster-global alias answers in before_save, so the
-		primary key is never tried and the bucket it just made is taken back out."""
+	def test_a_name_garage_already_holds_leaves_the_winners_bucket_alone(self):
+		"""The usual duplicate. Garage refuses the alias in before_save; add_bucket drops the
+		bucket it just made, and the cleanup for a failed insert must not touch anything
+		further: the name now answers to the caller that won it."""
 		with self.caller() as garage:
 			garage.add_bucket_alias.side_effect = Error("AddBucketAlias answered 400: already exists")
 			with self.assertRaisesRegex(frappe.ValidationError, "already taken"):
 				create_bucket(name=BUCKET, region=self.region)
 
 			garage.delete_bucket.assert_called_once_with(BUCKET_ID)
+			garage.delete_key.assert_not_called()
 			self.assertFalse(frappe.db.exists("Bucket", BUCKET))
 
-	def test_the_primary_key_backstops_a_name_already_recorded(self):
-		"""Only reachable once the two stores have drifted: Garage accepts a name this Cargo
-		already holds a row for. Nothing translates DuplicateEntryError, which carries no HTTP
-		status, so Central reads it as a server error."""
-		with self.caller():
+	def test_a_bucket_made_for_an_insert_that_failed_is_taken_back_out(self):
+		"""Garage accepted, then the primary key refused: the stores had drifted. The bucket
+		and key this call made go with the row that was never written."""
+		with self.caller() as garage:
 			self.existing_bucket()
+			garage.reset_mock()
 			with self.assertRaises(frappe.DuplicateEntryError):
 				create_bucket(name=BUCKET, region=self.region)
+
+			garage.delete_bucket.assert_called_once_with(BUCKET_ID)
+			garage.delete_key.assert_called_once_with(KEY["accessKeyId"])

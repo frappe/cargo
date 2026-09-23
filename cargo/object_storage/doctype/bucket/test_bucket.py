@@ -362,3 +362,41 @@ class UnitTestBucket(UnitTestCase):
 		self.bucket.revoke_credentials()
 
 		self.assertEqual(lock.call_count, 2)
+
+	def test_a_failed_insert_undoes_exactly_what_provision_made(self):
+		"""By id, not by name: the name could by then answer to someone else's bucket."""
+		_, _, _, _, delete_bucket, delete_key = self.answers(
+			create_bucket={"return_value": {"id": BUCKET_ID}},
+			add_bucket_alias={"return_value": {}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
+			delete_bucket={"return_value": None},
+			delete_key={"return_value": None},
+		)
+		self.bucket.provision()
+
+		self.bucket.discard_provisioned()
+
+		delete_bucket.assert_called_once_with(BUCKET_ID)
+		delete_key.assert_called_once_with(KEY["accessKeyId"])
+
+	def test_nothing_is_undone_for_a_document_that_provisioned_nothing(self):
+		"""A name Garage refused never provisioned here, and its bucket belongs to the winner."""
+		delete_bucket, delete_key = self.answers(
+			delete_bucket={"return_value": None}, delete_key={"return_value": None}
+		)
+
+		self.bucket.discard_provisioned()
+
+		delete_bucket.assert_not_called()
+		delete_key.assert_not_called()
+
+	def test_an_undo_that_fails_is_logged_not_raised(self):
+		"""Raising here would replace whatever refused the insert with a Garage error."""
+		self.bucket.flags.provisioned = frappe._dict(bucket_id=BUCKET_ID, access_key=KEY["accessKeyId"])
+		self.answers(delete_bucket={"side_effect": Error("DeleteBucket answered 500: nope")})
+		log_error = self.patch(frappe, "log_error")
+
+		self.bucket.discard_provisioned()
+
+		log_error.assert_called_once()

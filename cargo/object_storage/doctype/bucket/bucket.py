@@ -80,8 +80,21 @@ class Bucket(Document):
 				self.garage.delete_bucket(bucket_id)
 				raise
 
+		self.flags.provisioned = frappe._dict(bucket_id=bucket_id, access_key=credentials.access_key)
 		self.access_key = credentials.access_key
 		self.secret_access_key = credentials.secret_access_key
+
+	def discard_provisioned(self) -> None:
+		"""Undo provision() for an insert that failed after it."""
+		provisioned = self.flags.provisioned
+		if not provisioned:
+			return
+
+		try:
+			self.garage.delete_bucket(provisioned.bucket_id)
+			self.garage.delete_key(provisioned.access_key)
+		except Error:
+			frappe.log_error(title=f"Garage bucket {self.bucket_name} left behind after a failed insert")
 
 	def get_bucket_id(self) -> str | None:
 		"""The bucket behind this name, or None when nothing answers to it."""

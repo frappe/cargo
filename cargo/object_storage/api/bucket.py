@@ -54,11 +54,13 @@ def create_bucket(name: str, region: str) -> dict:
 	"""A bucket and the one key that opens it. The secret is handed back here and nowhere
 	else: Cargo keeps no copy a caller can read back."""
 	check_region(region)
-	# There can never be a duplicate name since garage will throw in before save itself
-	# And I trust garage's arbiter.
-	bucket = frappe.get_doc({"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()}).insert(
-		ignore_permissions=True
-	)
+	bucket: Bucket = frappe.get_doc({"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()})
+	try:
+		bucket.insert(ignore_permissions=True)
+	except Exception:
+		bucket.discard_provisioned()
+		raise
+
 	return CreateBucketResponse(
 		name=name,
 		region=region,
