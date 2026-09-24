@@ -30,6 +30,11 @@ OPTIONS = (
 	"ConnectTimeout=15",
 	"-o",
 	"LogLevel=ERROR",
+	# A machine terminated mid-command sends no reset, so without these ssh would wait forever.
+	"-o",
+	"ServerAliveInterval=15",
+	"-o",
+	"ServerAliveCountMax=3",
 )
 
 
@@ -63,9 +68,7 @@ class OutputLog:
 			self.lines = [live_output(self.document, self.fieldname)]
 			return self
 
-		self.document.db_set(self.fieldname, None, update_modified=False)
-		frappe.cache.delete_value(self.cache_key)
-
+		frappe.cache.set_value(self.cache_key, "", expires_in_sec=LOG_CACHE_TTL)
 		return self
 
 	def __exit__(self, *exception: object) -> None:
@@ -97,12 +100,8 @@ class OutputLog:
 		)
 
 	def store(self) -> None:
-		"""The run is over, so the document takes over from the cache."""
-		text = "".join(self.lines)
-		if not text:
-			return
-
-		self.document.db_set(self.fieldname, text, update_modified=False)
+		"""The run is over, so the document takes over from the cache"""
+		self.document.db_set(self.fieldname, "".join(self.lines), update_modified=False)
 		frappe.cache.delete_value(self.cache_key)
 
 
@@ -125,11 +124,8 @@ def cache_key(doctype: str, name: str, fieldname: str) -> str:
 
 def live_output(document: "Document", fieldname: str) -> str:
 	"""What a command has printed so far: the cache while it runs, the field once it ends."""
-	return (
-		frappe.cache.get_value(cache_key(document.doctype, document.name, fieldname))
-		or document.get(fieldname)
-		or ""
-	)
+	live = frappe.cache.get_value(cache_key(document.doctype, document.name, fieldname))
+	return live if live is not None else (document.get(fieldname) or "")
 
 
 @frappe.whitelist()
