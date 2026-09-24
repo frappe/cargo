@@ -139,6 +139,8 @@ class PilotImageSnapshot(Document):
 		"""Ask Atlas to delete this snapshot's image, and let go of it only once Atlas says it
 		is gone. False while Atlas still has it, so a later call tries again."""
 		try:
+			# A Pilot snapshot is a System image, which Atlas protects from deletion.
+			client.set_image_termination_protection(self.snapshot_id, enabled=False)
 			client.delete_snapshot(self.snapshot_id)
 			status = client.get_snapshot(self.snapshot_id).get("status")
 		except AtlasNotFound:

@@ -198,3 +198,16 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 
 		self.assertFalse(self.delete_at_atlas(snapshot, status="available"))
 		self.assertEqual(snapshot.snapshot_id, "cargo-snapshot/img-1")
+
+	def test_protection_is_cleared_before_the_image_is_deleted(self):
+		"""Atlas refuses to delete a protected System image."""
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+		client = MagicMock()
+		client.get_snapshot.return_value = {"status": "archived"}
+
+		self.assertTrue(snapshot.delete_atlas_image(client))
+		self.assertEqual(
+			[call[0] for call in client.method_calls[:2]],
+			["set_image_termination_protection", "delete_snapshot"],
+		)
+		client.set_image_termination_protection.assert_called_once_with("cargo-snapshot/img-1", enabled=False)

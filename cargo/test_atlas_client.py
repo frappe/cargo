@@ -99,6 +99,14 @@ class UnitTestAtlasClient(UnitTestCase):
 
 		self.assertEqual(request.call_args.kwargs["json"]["tags"], {"purpose": "pilot"})
 
+	def test_clearing_termination_protection_patches_the_image(self):
+		with self.call(response(202, {"id": "img-1"})) as request:
+			self.client.set_image_termination_protection("img-1", enabled=False)
+
+		self.assertEqual(request.call_args.args[0], "PATCH")
+		self.assertTrue(request.call_args.args[1].endswith("/images/img-1/termination-protection"))
+		self.assertEqual(request.call_args.kwargs["json"], {"enabled": False})
+
 	def test_a_snapshot_asks_for_neither_host_flag_by_default(self):
 		with self.call(response(201, {"id": "img-5"})) as request:
 			self.client.create_snapshot("vm-1", "plain")

@@ -151,6 +151,11 @@ class AtlasClient:
 
 		return created["id"]
 
+	def set_image_termination_protection(self, image_id: str, enabled: bool) -> None:
+		"""Set or clear an image's termination protection. Atlas protects every System image
+		when it makes one, and refuses to delete a protected image."""
+		self.call("PATCH", f"/images/{image_id}/termination-protection", {"enabled": enabled})
+
 	def delete_snapshot(self, image_id: str) -> None:
 		"""Retire an image. Atlas archives one a machine still uses and reclaims it later."""
 		self.call("DELETE", f"/images/{image_id}")
