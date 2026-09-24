@@ -17,11 +17,11 @@ from cargo.image_builder.doctype.pilot_image.apps import (
 	get_compatible_app_commit,
 )
 from cargo.image_builder.doctype.pilot_image.builder import (
-	BUILD_SPEC,
 	PING_TIMEOUT,
 	PROVISION_TIMEOUT,
 	SSH_READY_TIMEOUT,
 	Builder,
+	get_build_spec,
 )
 from cargo.image_builder.doctype.pilot_image.releases import get_frappe_release, get_latest_pilot_release
 from cargo.ssh import OutputLog, script
@@ -53,6 +53,7 @@ class PilotImage(WorkflowBuilder):
 		frappe_version: DF.Data | None
 		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
+		manually_failed: DF.Check
 		pilot_version: DF.Data
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
 	# end: auto-generated types
@@ -66,7 +67,7 @@ class PilotImage(WorkflowBuilder):
 
 	def request_build_machine(self) -> None:
 		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
-		machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
+		machine = MachineDoc.request(owner=self, spec=get_build_spec(), base_image=base_image_id()).name
 		self.db_set({"machine": machine, "status": "Provisioning"})
 
 	@property
@@ -107,11 +108,11 @@ class PilotImage(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def stop_build(self) -> None:
-		"""Stop the build. Before the workflow starts, this ends the build itself. After
-		that, the workflow and its callback own the end state."""
+		"""Stop the build."""
 		if self.status == "Provisioning":
 			self.status = "Failed"
 			self.error = _("Build stopped by {0}.").format(frappe.session.user)
+			self.manually_failed = True
 			self.save()
 			self.release_build_machine()
 			return
@@ -132,6 +133,9 @@ class PilotImage(WorkflowBuilder):
 			frappe.throw(_("The build has already finished. Its result is being recorded."))
 
 		frappe.get_doc("Press Workflow", workflow).force_fail()
+		self.manually_failed = True
+		self.save()
+		self.release_build_machine()
 
 	@frappe.whitelist()
 	def restart_build(self) -> None:
@@ -329,6 +333,8 @@ class PilotImage(WorkflowBuilder):
 			as_dict=True,
 		)
 		stage = failed.method_title if failed else _("Build")
+		if workflow.is_force_failure_requested:
+			stage = _("Stopped by request during: {0}").format(stage)
 		traceback = ((failed and failed.traceback) or workflow.workflow_traceback or "").strip()
 
 		# Recorded before the machine goes, so a failed release cannot hide why the build failed.
@@ -446,7 +452,14 @@ def retry_failed_image_types_with_latest_version() -> list[str]:
 	restarted = []
 	for image in get_image_variants(pilot_version):
 		# A variant has one image, so a Completed one or one still building is left alone.
-		failed = frappe.db.get_value("Pilot Image", {**image, "status": "Failed"})
+		failed = frappe.db.get_value(
+			"Pilot Image",
+			{
+				**image,
+				"status": "Failed",
+				"manually_failed": False,
+			},
+		)
 		if not failed:
 			continue
 
