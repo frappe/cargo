@@ -47,6 +47,7 @@ class PilotImage(WorkflowBuilder):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		auto_retry_count: DF.Int
 		build_log: DF.Code | None
 		error: DF.LongText | None
 		frappe_branch: DF.Literal["version-16", "develop"]
@@ -138,8 +139,9 @@ class PilotImage(WorkflowBuilder):
 		self.release_build_machine()
 
 	@frappe.whitelist()
-	def restart_build(self) -> None:
-		"""Build this image again from the start, on a new machine."""
+	def restart_build(self, automatic: bool = False) -> None:
+		"""Build this image again from the start, on a new machine. Only a restart by the
+		scheduler counts towards its automatic retries."""
 		if self.status != "Failed":
 			frappe.throw(_("Cannot restart a build that is not in 'Failed' status."))
 
@@ -154,8 +156,21 @@ class PilotImage(WorkflowBuilder):
 		self.error = None
 		self.build_log = None
 		self.frappe_version = None
+		self.manually_failed = False
+		if automatic:
+			self.auto_retry_count += 1
 		self.save()
 		self.request_build_machine()
+
+	@frappe.whitelist()
+	def set_auto_retry_count(self, count: int) -> None:
+		"""Set how many automatic retries this image has used, such as 0 to let the scheduler
+		retry it again."""
+		if count < 0:
+			frappe.throw(_("Automatic retries cannot be below 0."))
+
+		self.auto_retry_count = count
+		self.save()
 
 	@flow
 	def _create_image(self):
@@ -442,13 +457,14 @@ def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
 
 
 def retry_failed_image_types_with_latest_version() -> list[str]:
-	"""Restart each image variant of the latest Pilot version whose build failed. Returns the
-	restarted images."""
+	"""Restart each image variant of the latest Pilot version whose build failed, up to Cargo
+	Settings' `max_auto_retry_count` times. Returns the restarted images."""
 	# The newest release, even one none of whose builds has finished, so it is not left behind.
 	pilot_version = get_newest_pilot_version()
 	if not pilot_version:
 		return []
 
+	max_retries = frappe.db.get_single_value("Cargo Settings", "max_auto_retry_count")
 	restarted = []
 	for image in get_image_variants(pilot_version):
 		# A variant has one image, so a Completed one or one still building is left alone.
@@ -458,13 +474,14 @@ def retry_failed_image_types_with_latest_version() -> list[str]:
 				**image,
 				"status": "Failed",
 				"manually_failed": False,
+				"auto_retry_count": ("<", max_retries),
 			},
 		)
 		if not failed:
 			continue
 
 		try:
-			frappe.get_doc("Pilot Image", failed).restart_build()
+			frappe.get_doc("Pilot Image", failed).restart_build(automatic=True)
 			# One image's restart must not roll back another's, whose Atlas images are already gone.
 			frappe.db.commit()  # nosemgrep
 		except Exception:
