@@ -22,8 +22,6 @@ BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
 PILOT_IMAGE_OS_TAGS = {key: BASE_IMAGE_TAGS[key] for key in ("os", "os_version")}
 # The most a list route returns in one page.
 IMAGE_PAGE_LIMIT = 100
-# Reaches the mesh and the internet, without a public address of its own.
-EGRESS = "uplink"
 
 
 class AtlasError(RuntimeError):
@@ -110,7 +108,7 @@ class AtlasClient:
 				"ssh_keys": [public_key],
 				"hostname": hostname,
 				"metadata": metadata or {},
-				"egress": EGRESS,
+				"ipv4_internet_access": True,
 			},
 		)
 		if not isinstance(created, dict) or not created.get("id"):

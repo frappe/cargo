@@ -60,7 +60,8 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(body["metadata"], {"role": "storage"})
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
-		self.assertEqual(body["egress"], "uplink")
+		self.assertTrue(body["ipv4_internet_access"])
+		self.assertNotIn("egress", body)
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):

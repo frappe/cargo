@@ -18,7 +18,7 @@ def running_vm(mesh_ipv6: str | None = MESH_ADDRESS) -> dict:
 	"""The parts of a `get_vm` reply Cargo reads, nested the way Atlas nests them."""
 	return {
 		"current_state": "running",
-		"network": {"egress": "uplink", "mesh_ipv6": mesh_ipv6, "public_ipv4": "203.0.113.10"},
+		"network": {"ipv4_internet_access": True, "mesh_ipv6": mesh_ipv6, "public_ipv4": None},
 	}
 
 
@@ -66,9 +66,10 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertIn("mesh address", self.machine.error)
 
 	def test_a_machine_atlas_reports_failed_is_broken(self):
-		status = self.machine.sync(self.client({"current_state": "failed"}))
+		status = self.machine.sync(self.client({"current_state": "failed", "error": "disk full"}))
 
 		self.assertEqual(status, "Broken")
+		self.assertIn("disk full", self.machine.error)
 
 	def test_a_machine_atlas_no_longer_has_is_terminated(self):
 		client = Mock()
