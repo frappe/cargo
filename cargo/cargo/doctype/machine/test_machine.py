@@ -89,6 +89,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertEqual(machine.status, "Pending")
 		self.assertEqual(machine.vm_id, "vm-00003")
 		self.assertIsNone(machine.address)
+		self.assertEqual((machine.cpu_millicores, machine.ram_gb, machine.disk_size_gb), (2000, 4, 20))
 
 	def test_a_machine_is_photographed_as_a_cached_system_image(self):
 		"""Both flags are what lets a host build a warm template from the image."""

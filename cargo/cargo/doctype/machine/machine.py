@@ -32,10 +32,12 @@ class Machine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		address: DF.Data | None
+		cpu_millicores: DF.Int
 		disk_size_gb: DF.Int
 		error: DF.SmallText | None
-		address: DF.Data | None
 		last_synced_at: DF.Datetime | None
+		ram_gb: DF.Int
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
 		role: DF.Data
@@ -71,6 +73,8 @@ class Machine(Document):
 				"reference_doctype": owner.doctype,
 				"reference_name": owner.name,
 				"role": spec.role,
+				"cpu_millicores": spec.cpu_millicores,
+				"ram_gb": spec.ram_gb,
 				"disk_size_gb": spec.disk_gb,
 				"zone": zone,
 				"status": "Draft",
