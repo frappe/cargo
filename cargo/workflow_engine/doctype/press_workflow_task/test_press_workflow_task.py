@@ -6,6 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
 from cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task import retry_tasks
 
 ENQUEUE = "cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task.enqueue_task"
@@ -20,14 +21,16 @@ class IntegrationTestPressWorkflowTask(IntegrationTestCase):
 	def workflow(self) -> str:
 		"""A workflow waiting on a task. `linked_docname` is a real row, as the engine
 		resolves it before running anything."""
-		image = frappe.get_doc(
-			{
-				"doctype": "Pilot Image",
-				"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
-				"frappe_branch": "version-16",
-				"image_type": "Site",
-			}
-		).insert(ignore_permissions=True)
+		# Only the row is needed, so no build machine is rented from Atlas.
+		with patch.object(PilotImage, "after_insert"):
+			image = frappe.get_doc(
+				{
+					"doctype": "Pilot Image",
+					"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
+					"frappe_branch": "version-16",
+					"image_type": "Site",
+				}
+			).insert(ignore_permissions=True)
 
 		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
 			return (
