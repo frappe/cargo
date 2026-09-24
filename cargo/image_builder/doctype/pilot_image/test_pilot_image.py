@@ -399,17 +399,9 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(sorted(restarted), sorted([site.name, apps.name]))
 
-	def test_a_type_that_completed_once_is_not_restarted(self):
-		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
-		self.image("Site", "Completed", version)
-		self.image("Site", "Failed", version)
-
-		self.assertEqual(self.retry_failed_images()[0], [])
-
 	def test_a_build_in_progress_is_left_to_finish(self):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
 		self.image("Base", "Completed", version)
-		self.image("Site", "Failed", version)
 		self.image("Site", "Building", version)
 
 		self.assertEqual(self.retry_failed_images()[0], [])

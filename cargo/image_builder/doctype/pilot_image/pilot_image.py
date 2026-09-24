@@ -414,8 +414,8 @@ def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
 
 
 def retry_failed_image_types_with_latest_version() -> list[str]:
-	"""Restart each image type and Frappe branch of the latest Pilot version that has no
-	Completed image and whose newest build failed. Returns the restarted images."""
+	"""Restart each image variant of the latest Pilot version whose build failed. Returns the
+	restarted images."""
 	# The latest version is the newest one that has built at least once.
 	pilot_version = get_latest_built_pilot_version()
 	if not pilot_version:
@@ -423,26 +423,21 @@ def retry_failed_image_types_with_latest_version() -> list[str]:
 
 	restarted = []
 	for image in get_image_variants(pilot_version):
-		if frappe.db.exists("Pilot Image", {**image, "status": "Completed"}):
-			continue
-
-		# A build still in progress decides for itself.
-		newest = frappe.db.get_value(
-			"Pilot Image", image, ["name", "status"], order_by="creation desc", as_dict=True
-		)
-		if not newest or newest.status != "Failed":
+		# A variant has one image, so a Completed one or one still building is left alone.
+		failed = frappe.db.get_value("Pilot Image", {**image, "status": "Failed"})
+		if not failed:
 			continue
 
 		try:
-			frappe.get_doc("Pilot Image", newest.name).restart_build()
+			frappe.get_doc("Pilot Image", failed).restart_build()
 			# One image's restart must not roll back another's, whose Atlas images are already gone.
 			frappe.db.commit()  # nosemgrep
 		except Exception:
 			frappe.db.rollback()
-			frappe.log_error(title=f"Could not restart Pilot Image {newest.name}")
+			frappe.log_error(title=f"Could not restart Pilot Image {failed}")
 			continue
 
-		restarted.append(newest.name)
+		restarted.append(failed)
 
 	return restarted
 
