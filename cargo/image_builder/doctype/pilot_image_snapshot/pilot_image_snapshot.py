@@ -97,11 +97,13 @@ class PilotImageSnapshot(Document):
 			"pilot_version": image.pilot_version,
 			"frappe_version": image.frappe_branch,
 			"has_site": str(int(image.image_type != "Base")),
-			"has_apps": str(int(bool(self.signup_app))),
 			**PILOT_IMAGE_OS_TAGS,
 		}
 		if self.signup_app:
 			tags["app"] = self.signup_app
+
+		for row in self.required_apps:
+			tags[f"app_{row.app}"] = row.version
 
 		return tags
 

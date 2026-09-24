@@ -128,6 +128,21 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 		self.assertEqual((base_tags["has_site"], base_tags["has_apps"]), ("0", "0"))
 		self.assertEqual(apps_tags["frappe_version"], "version-16")
 
+	def test_tags_name_each_app_with_its_version(self):
+		"""A search for one app matches its own tag, which a single list of apps would not."""
+		apps_image = self.image()
+		site_image = self.image(image_type="Site")
+		base_image = self.image(image_type="Base")
+
+		apps_tags = self.snapshot(apps_image, "hrms", ["erpnext", "hrms"]).get_atlas_tags(apps_image)
+		site_tags = self.snapshot(site_image, None, ["erpnext", "crm"]).get_atlas_tags(site_image)
+		base_tags = self.snapshot(base_image, None, []).get_atlas_tags(base_image)
+
+		self.assertEqual((apps_tags["app_erpnext"], apps_tags["app_hrms"]), ("1.0.0", "1.0.0"))
+		self.assertNotIn("app_crm", apps_tags)
+		self.assertEqual((site_tags["app_erpnext"], site_tags["app_crm"]), ("1.0.0", "1.0.0"))
+		self.assertFalse([key for key in base_tags if key.startswith("app")])
+
 	def atlas_reports(self, snapshot: PilotImageSnapshot, image: dict) -> bool:
 		with patch(f"{CONTROLLER}.AtlasClient") as atlas:
 			atlas.from_settings.return_value.get_snapshot.return_value = image
