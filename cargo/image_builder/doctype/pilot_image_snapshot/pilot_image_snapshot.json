@@ -8,12 +8,13 @@
   "section_break_identity",
   "pilot_image",
   "signup_app",
-  "required_apps",
   "column_break_identity",
   "status",
   "built_at",
   "snapshot_id",
-  "error"
+  "error",
+  "section_break_apps",
+  "required_apps"
  ],
  "fields": [
   {
@@ -73,7 +74,9 @@
    "fieldname": "required_apps",
    "fieldtype": "Table",
    "label": "Required Apps",
-   "options": "Pilot Image Snapshot App"
+   "options": "Pilot Image Snapshot App",
+   "read_only": 1,
+   "description": "The signup app and what it requires, pinned to the commits the build installs. Empty for a Base image."
   },
   {
    "fieldname": "signup_app",
@@ -83,6 +86,11 @@
    "label": "Signup App",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "section_break_apps",
+   "fieldtype": "Section Break",
+   "label": "Apps"
   }
  ],
  "grid_page_length": 50,
@@ -104,7 +112,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
- "search_fields": "pilot_image,snapshot_id",
+ "search_fields": "pilot_image,signup_app,snapshot_id",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

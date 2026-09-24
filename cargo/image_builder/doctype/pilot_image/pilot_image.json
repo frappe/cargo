@@ -108,7 +108,10 @@
    "fieldtype": "Select",
    "label": "Image Type",
    "options": "Base\nSite",
-   "reqd": 1
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "set_only_once": 1
   }
  ],
  "grid_page_length": 50,
@@ -146,7 +149,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
- "search_fields": "pilot_version,frappe_branch,status",
+ "search_fields": "pilot_version,frappe_branch,image_type,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

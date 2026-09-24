@@ -7,16 +7,41 @@ frappe.ui.form.on("Pilot Image", {
 
 		follow_build_log(frm);
 		set_headline(frm);
+		add_actions(frm);
 
 		frm.dashboard.add_indicator(
-			frm.doc.has_site ? __("Site baked in") : __("No site baked in"),
-			frm.doc.has_site ? "green" : "blue"
+			frm.doc.image_type === "Base"
+				? __("Bench only, no site")
+				: __("Site with one snapshot per signup app"),
+			"blue"
 		);
-		if (frm.doc.has_apps) {
-			frm.dashboard.add_indicator(__("One snapshot per signup app"), "blue");
+		if (frm.doc.frappe_version) {
+			frm.dashboard.add_indicator(__("Frappe {0}", [frm.doc.frappe_version]), "gray");
 		}
 	},
 });
+
+function add_actions(frm) {
+	if (["Provisioning", "Building", "Snapshotting"].includes(frm.doc.status)) {
+		frm.add_custom_button(__("Fail Build"), () => {
+			frappe.confirm(
+				__(
+					"Stop this build, fail its unfinished snapshots and release the build machine?"
+				),
+				() => frm.call("fail_build").then(() => frm.reload_doc())
+			);
+		});
+	}
+
+	if (frm.doc.status === "Failed") {
+		frm.add_custom_button(__("Rebuild"), () => {
+			frappe.confirm(
+				__("Rent a new build machine and build this image again from the start?"),
+				() => frm.call("rebuild").then(() => frm.reload_doc())
+			);
+		});
+	}
+}
 
 // The build writes its log as it runs, so follow it rather than making the operator reload.
 function follow_build_log(frm) {
@@ -52,8 +77,8 @@ function follow_build_log(frm) {
 function set_headline(frm) {
 	const headlines = {
 		Provisioning: __("Waiting for build machine {0} to boot.", [frm.doc.machine]),
-		Building: __("Installing on the build machine. The log below follows it."),
-		Completed: __("Every snapshot is at Atlas. The build machine is released."),
+		Building: __("Provisioning the build machine. The log below follows it."),
+		Completed: __("Every snapshot is available at Atlas. The build machine is released."),
 		Failed: __("The build failed and its machine is released. See Error below."),
 	};
 	if (frm.doc.status !== "Snapshotting") {
@@ -70,7 +95,7 @@ function set_headline(frm) {
 		.then((snapshots) => {
 			const taken = snapshots.filter((snapshot) => snapshot.status === "Available").length;
 			frm.dashboard.set_headline(
-				__("Taking snapshots: {0} of {1} at Atlas.", [taken, snapshots.length])
+				__("Taking snapshots: {0} of {1} available at Atlas.", [taken, snapshots.length])
 			);
 		});
 }

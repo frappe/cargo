@@ -6,7 +6,7 @@ import typing
 import frappe
 from frappe import _
 
-from cargo.atlas_client import base_image_id
+from cargo.atlas_client import AtlasClient, AtlasNotFound, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
@@ -59,8 +59,13 @@ class PilotImage(WorkflowBuilder):
 	supplied environment and plan and trigger snapshot creations."""
 
 	def after_insert(self) -> None:
-		"""Request a build machine from atlas. The image is born Provisioning."""
+		"""Request a build machine from atlas."""
+		self.request_build_machine()
+
+	def request_build_machine(self) -> None:
+		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
 		self.machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
+		self.status = "Provisioning"
 		self.save()
 
 	@property
@@ -98,6 +103,48 @@ class PilotImage(WorkflowBuilder):
 			frappe.throw(_("Cannot build a pilot image that is not in 'Building' status."))
 
 		self._create_image.run_as_workflow()
+
+	@frappe.whitelist()
+	def stop_build(self) -> None:
+		"""Stop the build process"""
+		if self.status not in ("Provisioning", "Building", "Snapshotting"):
+			frappe.throw(_("Only a build in progress can be stopped."))
+
+		workflow = frappe.db.get_value(
+			"Press Workflow",
+			{
+				"linked_doctype": self.doctype,
+				"linked_docname": self.name,
+				"status": ("in", ("Queued", "Running")),
+			},
+		)
+		if workflow:
+			frappe.get_doc("Press Workflow", workflow).force_fail()
+			return
+
+		self.status = "Failed"
+		self.error = _("Build stopped by {0}.").format(frappe.session.user)
+		self.save()
+		self.release_build_machine()
+
+	@frappe.whitelist()
+	def restart_build(self) -> None:
+		"""Build this image again from the start, on a new machine."""
+		if self.status != "Failed":
+			frappe.throw(_("Cannot restart a build that is not in 'Failed' status."))
+
+		self.delete_atlas_images()
+		self.release_build_machine()
+
+		for snapshot in frappe.get_all(
+			"Pilot Image Snapshot", filters={"pilot_image": self.name}, pluck="name"
+		):
+			frappe.delete_doc("Pilot Image Snapshot", snapshot)
+
+		self.error = None
+		self.build_log = None
+		self.frappe_version = None
+		self.request_build_machine()
 
 	@flow
 	def _create_image(self):
@@ -295,8 +342,22 @@ class PilotImage(WorkflowBuilder):
 				),
 			},
 		)
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Available"},
+			{
+				"status": "Failed",
+				"error": _(
+					"Its Atlas image is deleted: the build failed at {0}. See Pilot Image {1}."
+				).format(stage, self.name),
+			},
+		)
 
 		self.release_build_machine()
+
+		# Last, so an Atlas refusal cannot keep the machine running. When it throws, the engine
+		# retries this callback, and everything above is safe to repeat.
+		self.delete_atlas_images()
 
 	def on_workflow_success(self, workflow) -> None:
 		"""The workflow engine has finished this image. The machine is still running, but the
@@ -310,8 +371,32 @@ class PilotImage(WorkflowBuilder):
 	def release_build_machine(self) -> None:
 		"""Let the build machine go. A refusal leaves it Broken and in the Error Log, which
 		`Machine.terminate` records."""
-		if not self.build_machine:
-			return
+		machine = self.build_machine
+		if machine and machine.status != "Terminated":
+			machine.terminate()
 
-		if self.build_machine.status != "Terminated":
-			self.build_machine.terminate()
+	def delete_atlas_images(self) -> None:
+		"""Delete the Atlas images this build's snapshots took, so a failed build cannot be
+		booted. Tries every image, then throws if Atlas refused any."""
+		snapshot_ids = frappe.get_all(
+			"Pilot Image Snapshot",
+			filters={"pilot_image": self.name, "snapshot_id": ("is", "set")},
+			pluck="snapshot_id",
+		)
+		client = AtlasClient.from_settings()
+		refused = []
+		for snapshot_id in snapshot_ids:
+			try:
+				client.delete_snapshot(snapshot_id)
+			except AtlasNotFound:
+				# Deleted by an earlier attempt.
+				continue
+			except Exception:
+				frappe.log_error(
+					title=f"Could not delete snapshot {snapshot_id} for failed image {self.name}",
+					message=frappe.get_traceback(with_context=True),
+				)
+				refused.append(snapshot_id)
+
+		if refused:
+			frappe.throw(_("Atlas did not delete images {0}. See the Error Log.").format(", ".join(refused)))
