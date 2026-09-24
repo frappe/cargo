@@ -18,6 +18,9 @@ class CargoSettings(Document):
 		atlas_tenant_id: DF.Int
 		atlas_token: DF.Password
 		atlas_url: DF.Data
+		build_machine_cpu: DF.Int
+		build_machine_disk_gb: DF.Int
+		build_machine_memory: DF.Int
 		cargo_url: DF.Data
 		central_url: DF.Data
 		central_webhook_enabled: DF.Check
