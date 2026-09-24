@@ -28,7 +28,10 @@ function add_actions(frm) {
 				__(
 					"Stop this build? It fails at its next step: its snapshots fail, their Atlas images are deleted and the build machine is released."
 				),
-				() => frm.call({ method: "stop_build", freeze: true }).then(() => frm.reload_doc())
+				() =>
+					frm
+						.call({ doc: frm.doc, method: "stop_build", freeze: true })
+						.then(() => frm.reload_doc())
 			);
 		});
 	}
@@ -41,7 +44,7 @@ function add_actions(frm) {
 				),
 				() =>
 					frm
-						.call({ method: "restart_build", freeze: true })
+						.call({ doc: frm.doc, method: "restart_build", freeze: true })
 						.then(() => frm.reload_doc())
 			);
 		});
