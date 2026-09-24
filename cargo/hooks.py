@@ -274,6 +274,7 @@ scheduler_events = {
 			"cargo.telemetry.spawn.ensure_telemetry",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_image_build_with_latest_pilot_release",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.retry_failed_image_types_with_latest_version",
+			"cargo.image_builder.doctype.pilot_image.pilot_image.retire_older_images",
 			# Machines die without telling anyone, so health is re-read on a clock. A minute
 			# is what sets alerting latency; the read is two calls to the gateway.
 			"cargo.object_storage.health.refresh_health",

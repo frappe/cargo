@@ -531,8 +531,6 @@ def start_image_build_with_latest_pilot_release() -> list[str]:
 
 		started.append(name)
 
-	retire_older_images()
-
 	return started
 
 
