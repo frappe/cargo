@@ -45,9 +45,7 @@ class Builder:
 		"""Whether the machine reached the mesh before the deadline."""
 		deadline = time.monotonic() + PING_TIMEOUT
 		while True:
-			reply = subprocess.run(
-				["ping", "-6", "-c", "1", "-W", "2", address], capture_output=True, check=False
-			)
+			reply = subprocess.run(["ping", "-c", "1", "-W", "2", address], capture_output=True, check=False)
 			if reply.returncode == 0:
 				return True
 

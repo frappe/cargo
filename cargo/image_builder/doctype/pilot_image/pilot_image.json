@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "IMG-.####",
- "creation": "2026-09-23 23:28:53.933519",
+ "creation": "2026-09-24 14:25:22.388056",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -103,14 +103,14 @@
    "read_only": 1
   },
   {
-   "description": "For image type of site we will install all the apps on the bench from before hand.\n\nPilot Image Snapshot will take care of installing apps on site.\n",
+   "description": "Base: a bench with no site. Site: a bench with every signup app fetched and a bare site. Apps: the same bench, with one snapshot per signup app that installs its apps on the site.",
    "fieldname": "image_type",
    "fieldtype": "Select",
-   "label": "Image Type",
-   "options": "Base\nSite",
-   "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
+   "label": "Image Type",
+   "options": "Base\nSite\nApps",
+   "reqd": 1,
    "set_only_once": 1
   }
  ],
@@ -127,7 +127,7 @@
    "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-09-24 11:29:11.598198",
+ "modified": "2026-09-24 15:20:03.680961",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",

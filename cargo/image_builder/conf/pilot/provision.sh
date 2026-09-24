@@ -33,7 +33,7 @@ REQUIRED_APPS="${REQUIRED_APPS:-}"
 
 case "$IMAGE_TYPE" in
 Base) [ -z "$REQUIRED_APPS" ] || { echo "A Base image fetches no apps" >&2; exit 1; } ;;
-Site) [ -n "$REQUIRED_APPS" ] || { echo "A Site image needs REQUIRED_APPS" >&2; exit 1; } ;;
+Site | Apps) [ -n "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image needs REQUIRED_APPS" >&2; exit 1; } ;;
 *) echo "Unknown IMAGE_TYPE: $IMAGE_TYPE" >&2; exit 1 ;;
 esac
 
@@ -74,6 +74,8 @@ as_bench_user() {
 curl -fsSL "$INSTALLER" | bash
 # Pilot asks for the deprecated zone aliases as the bench user, which cannot sudo apt.
 apt-get install -y tzdata-legacy
+# Get app also requires this to be installed.
+apt-get install -y cron
 as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
 # Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
@@ -93,7 +95,7 @@ if [ "$IMAGE_TYPE" != Base ]; then
 fi
 
 # A commit as the branch clones exactly the release Cargo recorded.
-if [ "$IMAGE_TYPE" = Site ]; then
+if [ "$IMAGE_TYPE" != Base ]; then
 	while read -r repo commit; do
 		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
 	done <<< "$REQUIRED_APPS"

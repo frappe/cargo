@@ -9,12 +9,12 @@ frappe.ui.form.on("Pilot Image", {
 		set_headline(frm);
 		add_actions(frm);
 
-		frm.dashboard.add_indicator(
-			frm.doc.image_type === "Base"
-				? __("Bench only, no site")
-				: __("Site with one snapshot per signup app"),
-			"blue"
-		);
+		const image_types = {
+			Base: __("Bench only, no site"),
+			Site: __("Bare site, every signup app fetched"),
+			Apps: __("Site with one snapshot per signup app"),
+		};
+		frm.dashboard.add_indicator(image_types[frm.doc.image_type], "blue");
 		if (frm.doc.frappe_version) {
 			frm.dashboard.add_indicator(__("Frappe {0}", [frm.doc.frappe_version]), "gray");
 		}

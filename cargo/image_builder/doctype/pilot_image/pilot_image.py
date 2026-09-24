@@ -49,7 +49,7 @@ class PilotImage(WorkflowBuilder):
 		error: DF.LongText | None
 		frappe_branch: DF.Literal["version-16", "develop"]
 		frappe_version: DF.Data | None
-		image_type: DF.Literal["Base", "Site"]
+		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
 		pilot_version: DF.Data
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
@@ -223,8 +223,12 @@ class PilotImage(WorkflowBuilder):
 						_("{0} requires {1}, which is not listed with it.").format(app, ", ".join(missing))
 					)
 
-			# Since singup app is the last app in the required apps.
-			self.insert_snapshot(required_apps[-1], [releases[app] for app in required_apps])
+			if self.image_type == "Apps":
+				# Since singup app is the last app in the required apps.
+				self.insert_snapshot(required_apps[-1], [releases[app] for app in required_apps])
+
+		if self.image_type == "Site":
+			self.insert_snapshot(None, list(releases.values()))
 
 	def insert_snapshot(self, signup_app: str | None, releases: list[AppRelease]) -> None:
 		frappe.get_doc(
@@ -301,7 +305,6 @@ class PilotImage(WorkflowBuilder):
 			"WILDCARD_DOMAIN": settings.wildcard_domain or "",
 			"PROXY_SUBNET": proxy_subnet,
 			"DOMAIN_PROVIDER": domain_provider,
-			# A Base image has no site and fetches no apps.
 			"IMAGE_TYPE": self.image_type,
 			"REQUIRED_APPS": ""
 			if self.image_type == "Base"

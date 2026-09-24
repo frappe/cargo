@@ -54,7 +54,7 @@ class PilotImageSnapshot(Document):
 
 	def run_app_prerequisite(self, machine: MachineDoc, image: "PilotImage") -> None:
 		"""Leave the site running this snapshot's apps and nothing else."""
-		if not self.required_apps:
+		if not self.signup_app:
 			return
 
 		builder = Builder()
@@ -75,7 +75,7 @@ class PilotImageSnapshot(Document):
 
 	def run_app_post_requisite(self, machine: MachineDoc, image: "PilotImage") -> None:
 		"""Take this snapshot's apps back off the site, so the next snapshot starts from a bare site."""
-		if not self.required_apps:
+		if not self.signup_app:
 			return
 
 		builder = Builder()
