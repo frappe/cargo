@@ -106,8 +106,16 @@ class PilotImage(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def stop_build(self) -> None:
-		"""Stop the build process"""
-		if self.status not in ("Provisioning", "Building", "Snapshotting"):
+		"""Stop the build. Before the workflow starts, this ends the build itself. After
+		that, the workflow and its callback own the end state."""
+		if self.status == "Provisioning":
+			self.status = "Failed"
+			self.error = _("Build stopped by {0}.").format(frappe.session.user)
+			self.save()
+			self.release_build_machine()
+			return
+
+		if self.status not in ("Building", "Snapshotting"):
 			frappe.throw(_("Only a build in progress can be stopped."))
 
 		workflow = frappe.db.get_value(
@@ -118,14 +126,11 @@ class PilotImage(WorkflowBuilder):
 				"status": ("in", ("Queued", "Running")),
 			},
 		)
-		if workflow:
-			frappe.get_doc("Press Workflow", workflow).force_fail()
-			return
+		if not workflow:
+			# Finished, with its callback still to run. The callback records the result.
+			frappe.throw(_("The build has already finished. Its result is being recorded."))
 
-		self.status = "Failed"
-		self.error = _("Build stopped by {0}.").format(frappe.session.user)
-		self.save()
-		self.release_build_machine()
+		frappe.get_doc("Press Workflow", workflow).force_fail()
 
 	@frappe.whitelist()
 	def restart_build(self) -> None:

@@ -242,6 +242,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		terminate.assert_not_called()
 		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
 
+	def test_a_build_waiting_on_its_success_callback_cannot_be_stopped(self):
+		"""The callback records the result, so a stop here would race it."""
+		image = self.image(status="Snapshotting")
+		self.workflow(image, "Success")
+
+		with patch.object(MachineDoc, "terminate") as terminate, self.assertRaises(frappe.ValidationError):
+			image.stop_build()
+
+		terminate.assert_not_called()
+		self.assertEqual(frappe.db.get_value("Pilot Image", image.name, "status"), "Snapshotting")
+
 	def test_a_build_with_no_workflow_releases_its_own_machine(self):
 		"""A machine that is still booting has no workflow to fail."""
 		image = self.image()
