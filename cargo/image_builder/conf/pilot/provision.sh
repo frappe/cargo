@@ -76,6 +76,9 @@ curl -fsSL "$INSTALLER" | bash
 apt-get install -y tzdata-legacy
 # Get app also requires this to be installed.
 apt-get install -y cron
+# Pilot releases before fix-build-memory-stdlib import psutil on the host's python3 to cap asset builds.
+# Remove once those releases are retired.
+apt-get install -y python3-psutil
 as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
 # Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
