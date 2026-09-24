@@ -408,11 +408,9 @@ class PilotImage(WorkflowBuilder):
 		self.save()
 
 
-def get_latest_built_pilot_version() -> str | None:
-	"""The newest Pilot version with at least one Completed image."""
-	return frappe.db.get_value(
-		"Pilot Image", {"status": "Completed"}, "pilot_version", order_by="creation desc"
-	)
+def get_newest_pilot_version() -> str | None:
+	"""The Pilot version of the newest image, whether or not any of its builds finished."""
+	return frappe.db.get_value("Pilot Image", {}, "pilot_version", order_by="creation desc")
 
 
 def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
@@ -428,8 +426,8 @@ def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
 def retry_failed_image_types_with_latest_version() -> list[str]:
 	"""Restart each image variant of the latest Pilot version whose build failed. Returns the
 	restarted images."""
-	# The latest version is the newest one that has built at least once.
-	pilot_version = get_latest_built_pilot_version()
+	# The newest release, even one none of whose builds has finished, so it is not left behind.
+	pilot_version = get_newest_pilot_version()
 	if not pilot_version:
 		return []
 
@@ -499,17 +497,14 @@ def retire_older_images() -> list[str]:
 
 
 def start_image_build_with_latest_pilot_release() -> list[str]:
-	"""Build every image variant of the newest Pilot release, once it is newer than the latest
-	version that has built. Returns the images started."""
+	"""Start every image variant of the newest Pilot release that has no image yet. Returns the
+	images started."""
 	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
 
 	if not pilot_release_tracking_enabled:
 		return []
 
 	pilot_version = get_latest_pilot_release()
-	if pilot_version == get_latest_built_pilot_version():
-		return []
-
 	started = []
 	for image in get_image_variants(pilot_version):
 		# A variant that already has a build is retried by `retry_failed_image_types_with_latest_version`.

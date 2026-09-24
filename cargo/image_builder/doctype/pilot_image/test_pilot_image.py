@@ -450,11 +450,21 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			),
 		)
 
-	def test_a_release_that_has_built_starts_nothing(self):
+	def test_a_variant_missing_after_another_completed_is_still_started(self):
+		"""An insert Atlas refused left no record, so a finished sibling must not hide it."""
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
-		self.image("Base", "Completed", version)
+		for image_type in ("Base", "Site", "Apps"):
+			self.image(image_type, "Completed", version)
+		self.image("Base", "Completed", version, frappe_branch="develop")
+		self.image("Site", "Completed", version, frappe_branch="develop")
 
-		self.assertEqual(self.start_latest_release(version), [])
+		started = self.start_latest_release(version)
+
+		self.assertEqual(len(started), 1)
+		self.assertEqual(
+			frappe.db.get_value("Pilot Image", started[0], ["image_type", "frappe_branch"]),
+			("Apps", "develop"),
+		)
 
 	def test_a_variant_that_already_has_a_build_is_not_started_again(self):
 		"""Retrying it is the retry job's work."""
@@ -575,3 +585,12 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def test_a_build_in_progress_cannot_be_retired(self):
 		with self.assertRaises(frappe.ValidationError):
 			self.image(status="Building").retire()
+
+	def test_a_release_none_of_whose_builds_finished_is_retried(self):
+		"""The newest release, not the newest that built, is the one left to recover."""
+		self.release(1)
+		unbuilt = self.release(2, status="Failed")
+
+		restarted, _ = self.retry_failed_images()
+
+		self.assertEqual(restarted, [unbuilt.name])
