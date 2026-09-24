@@ -14,6 +14,7 @@
   "status",
   "error",
   "manually_failed",
+  "auto_retry_count",
   "section_break_log",
   "build_log",
   "section_break_build",
@@ -120,6 +121,14 @@
    "fieldname": "manually_failed",
    "fieldtype": "Check",
    "label": "Manually Failed"
+  },
+  {
+   "default": "0",
+   "description": "Restarts made by the scheduler. It stops at Max Automatic Retries in Cargo Settings. Set it with Set Automatic Retries.",
+   "fieldname": "auto_retry_count",
+   "fieldtype": "Int",
+   "label": "Automatic Retries",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,

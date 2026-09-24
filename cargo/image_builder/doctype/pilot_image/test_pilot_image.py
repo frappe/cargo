@@ -393,7 +393,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		restart. The restart of image `fails` raises."""
 		asked: list[str] = []
 
-		def restart_build(image: PilotImage) -> None:
+		def restart_build(image: PilotImage, automatic: bool = False) -> None:
 			asked.append(image.name)
 			if image.name == fails:
 				raise frappe.ValidationError("Atlas is down")
@@ -432,6 +432,49 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(sorted(asked), sorted([site.name, apps.name]))
 		self.assertEqual(restarted, [apps.name])
+
+	def test_an_image_retried_three_times_is_left_failed(self):
+		"""A build that fails the same way every time would rent a machine every minute."""
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		self.image("Site", "Failed", version).db_set("auto_retry_count", 3)
+		apps = self.image("Apps", "Failed", version)
+		apps.db_set("auto_retry_count", 2)
+
+		self.assertEqual(self.retry_failed_images()[0], [apps.name])
+
+	def restart(self, retries: int, automatic: bool) -> PilotImage:
+		image = self.image(status="Failed")
+		image.db_set("auto_retry_count", retries)
+
+		with (
+			patch.object(PilotImage, "delete_atlas_images"),
+			patch.object(PilotImage, "release_build_machine"),
+			patch.object(PilotImage, "request_build_machine"),
+		):
+			image.restart_build(automatic=automatic)
+
+		return image
+
+	def test_an_automatic_restart_is_counted(self):
+		self.assertEqual(self.restart(retries=1, automatic=True).auto_retry_count, 2)
+
+	def test_a_restart_from_the_desk_leaves_the_retries_alone(self):
+		"""The scheduler gave up on it. An operator can still restart it, and only setting the
+		count lets the scheduler try it again."""
+		self.assertEqual(self.restart(retries=3, automatic=False).auto_retry_count, 3)
+
+	def test_the_retries_used_can_be_set_back(self):
+		image = self.image(status="Failed")
+		image.db_set("auto_retry_count", 3)
+
+		image.set_auto_retry_count(0)
+
+		self.assertEqual(frappe.db.get_value("Pilot Image", image.name, "auto_retry_count"), 0)
+
+	def test_the_retries_used_cannot_go_below_zero(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.image(status="Failed").set_auto_retry_count(-1)
 
 	def start_latest_release(self, pilot_version: str, tracking: int = 1) -> list[str]:
 		"""Start builds of `pilot_version` as the newest release, without renting machines."""

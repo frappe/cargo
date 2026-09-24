@@ -15,6 +15,8 @@
   "address",
   "last_synced_at",
   "storage_section",
+  "cpu_millicores",
+  "ram_gb",
   "disk_size_gb",
   "section_break_error",
   "error",
@@ -111,7 +113,21 @@
   {
    "fieldname": "storage_section",
    "fieldtype": "Section Break",
-   "label": "Storage"
+   "label": "Size"
+  },
+  {
+   "description": "CPU this machine was built with, in thousandths of a core.",
+   "fieldname": "cpu_millicores",
+   "fieldtype": "Int",
+   "label": "CPU (millicores)",
+   "read_only": 1
+  },
+  {
+   "description": "Memory this machine was built with.",
+   "fieldname": "ram_gb",
+   "fieldtype": "Int",
+   "label": "Memory (GB)",
+   "read_only": 1
   },
   {
    "description": "Disk this machine was built with. Its service decides the size, so machines of one cluster may differ.",

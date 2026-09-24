@@ -25,7 +25,8 @@
   "build_machine_spec_section",
   "build_machine_disk_gb",
   "build_machine_cpu",
-  "build_machine_memory"
+  "build_machine_memory",
+  "max_auto_retry_count"
  ],
  "fields": [
   {
@@ -182,6 +183,14 @@
    "fieldname": "build_machine_memory",
    "fieldtype": "Int",
    "label": "Build Machine Memory (GB)",
+   "reqd": 1
+  },
+  {
+   "default": "3",
+   "description": "How often the scheduler restarts a failed Pilot Image before it leaves it Failed. Set Automatic Retries on the image lets the scheduler try it again.",
+   "fieldname": "max_auto_retry_count",
+   "fieldtype": "Int",
+   "label": "Max Automatic Retries",
    "reqd": 1
   }
  ],

@@ -44,8 +44,38 @@ function add_actions(frm) {
 				),
 				() =>
 					frm
-						.call({ doc: frm.doc, method: "restart_build", freeze: true })
+						.call({
+							doc: frm.doc,
+							method: "restart_build",
+							args: { automatic: false },
+							freeze: true,
+						})
 						.then(() => frm.reload_doc())
+			);
+		});
+
+		frm.add_custom_button(__("Set Automatic Retries"), () => {
+			frappe.prompt(
+				{
+					fieldname: "count",
+					fieldtype: "Int",
+					label: __("Automatic Retries Used"),
+					description: __(
+						"The scheduler restarts this image while this is below Max Automatic Retries in Cargo Settings."
+					),
+					default: frm.doc.auto_retry_count,
+					reqd: 1,
+				},
+				({ count }) =>
+					frm
+						.call({
+							doc: frm.doc,
+							method: "set_auto_retry_count",
+							args: { count },
+							freeze: true,
+						})
+						.then(() => frm.reload_doc()),
+				__("Set Automatic Retries")
 			);
 		});
 	}
