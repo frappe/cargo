@@ -594,3 +594,32 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		restarted, _ = self.retry_failed_images()
 
 		self.assertEqual(restarted, [unbuilt.name])
+
+	def later_image_of(self, release: PilotImage, day: int, image_type: str) -> PilotImage:
+		"""Another image of an existing release, made by hand on a later `day`."""
+		image = self.image(image_type, "Failed", release.pilot_version)
+		frappe.db.set_value(
+			"Pilot Image", image.name, "creation", f"2099-01-{day:02d}", update_modified=False
+		)
+
+		return image
+
+	def test_building_an_older_release_again_does_not_make_it_the_newest(self):
+		"""A release is placed by its first image, so the newest release is still retried."""
+		older = self.release(1)
+		unbuilt = self.release(2, status="Failed")
+		self.later_image_of(older, 3, "Site")
+
+		restarted, _ = self.retry_failed_images()
+
+		self.assertEqual(restarted, [unbuilt.name])
+
+	def test_an_older_release_built_again_is_still_retired(self):
+		oldest = self.release(1)
+		[self.release(day) for day in (2, 3, 4)]
+		rebuilt = self.later_image_of(oldest, 5, "Site")
+
+		asked = self.retire_older()
+
+		self.assertIn(oldest.name, asked)
+		self.assertIn(rebuilt.name, asked)

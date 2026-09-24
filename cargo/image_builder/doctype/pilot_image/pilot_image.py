@@ -6,7 +6,7 @@ import typing
 import frappe
 from frappe import _
 from frappe.query_builder import Order
-from frappe.query_builder.functions import Max
+from frappe.query_builder.functions import Min
 
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
@@ -66,9 +66,8 @@ class PilotImage(WorkflowBuilder):
 
 	def request_build_machine(self) -> None:
 		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
-		self.machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
-		self.status = "Provisioning"
-		self.save()
+		machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
+		self.db_set({"machine": machine, "status": "Provisioning"})
 
 	@property
 	def build_machine(self) -> MachineDoc | None:
@@ -151,6 +150,7 @@ class PilotImage(WorkflowBuilder):
 		self.error = None
 		self.build_log = None
 		self.frappe_version = None
+		self.save()
 		self.request_build_machine()
 
 	@flow
@@ -409,8 +409,20 @@ class PilotImage(WorkflowBuilder):
 
 
 def get_newest_pilot_version() -> str | None:
-	"""The Pilot version of the newest image, whether or not any of its builds finished."""
-	return frappe.db.get_value("Pilot Image", {}, "pilot_version", order_by="creation desc")
+	"""The Pilot version Cargo first saw most recently, whether or not any of its builds
+	finished. A version is placed by its first image, so building an older release again
+	later does not make it the newest."""
+	image = frappe.qb.DocType("Pilot Image")
+	versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.groupby(image.pilot_version)
+		.orderby(Min(image.creation), order=Order.desc)
+		.limit(1)
+		.run(pluck=True)
+	)
+
+	return versions[0] if versions else None
 
 
 def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
@@ -461,23 +473,30 @@ def retire_older_images() -> list[str]:
 		.select(image.pilot_version)
 		.where(image.status == "Completed")
 		.groupby(image.pilot_version)
-		.orderby(Max(image.creation), order=Order.desc)
+		# Placed by its first image, so building an older release again does not keep it.
+		.orderby(Min(image.creation), order=Order.desc)
 		.limit(3)
 		.run(pluck=True)
 	)
 	if len(kept_versions) < 3:
 		return []
 
-	# A release newer than these has not built yet and is still being retried, so only older
-	# images go.
+	# A release first seen after these has not built yet and is still being retried, so only
+	# releases first seen before the oldest kept one go, with every image they have.
 	oldest_kept = frappe.qb.min("Pilot Image", "creation", {"pilot_version": ("in", kept_versions)})
+	older_versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.groupby(image.pilot_version)
+		.having(Min(image.creation) < oldest_kept)
+		.run(pluck=True)
+	)
+	if not older_versions:
+		return []
+
 	older_images = frappe.get_all(
 		"Pilot Image",
-		filters={
-			"pilot_version": ("not in", kept_versions),
-			"status": ("in", ("Completed", "Failed")),
-			"creation": ("<", oldest_kept),
-		},
+		filters={"pilot_version": ("in", older_versions), "status": ("in", ("Completed", "Failed"))},
 		pluck="name",
 	)
 
