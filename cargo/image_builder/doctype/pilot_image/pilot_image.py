@@ -5,6 +5,8 @@ import typing
 
 import frappe
 from frappe import _
+from frappe.query_builder import Order
+from frappe.query_builder.functions import Max
 
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
@@ -52,7 +54,7 @@ class PilotImage(WorkflowBuilder):
 		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
 		pilot_version: DF.Data
-		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
+		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
 	# end: auto-generated types
 
 	"""This doctype is only responsible to run the provisioning script based on the
@@ -395,6 +397,16 @@ class PilotImage(WorkflowBuilder):
 		if kept:
 			frappe.throw(_("Atlas still has images {0}. See the Error Log.").format(", ".join(kept)))
 
+	def retire(self) -> None:
+		"""Delete this image's Atlas images and mark it Retired. Throws while Atlas keeps any,
+		leaving the image as it was for a later run."""
+		if self.status not in ("Completed", "Failed"):
+			frappe.throw(_("Only a finished build can be retired."))
+
+		self.delete_atlas_images()
+		self.status = "Retired"
+		self.save()
+
 
 def get_latest_built_pilot_version() -> str | None:
 	"""The newest Pilot version with at least one Completed image."""
@@ -442,9 +454,58 @@ def retry_failed_image_types_with_latest_version() -> list[str]:
 	return restarted
 
 
+def retire_older_images() -> list[str]:
+	"""Keep the images of the three newest Pilot releases that have built, and retire the
+	images of every older release. Returns the retired images."""
+	image = frappe.qb.DocType("Pilot Image")
+	kept_versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.where(image.status == "Completed")
+		.groupby(image.pilot_version)
+		.orderby(Max(image.creation), order=Order.desc)
+		.limit(3)
+		.run(pluck=True)
+	)
+	if len(kept_versions) < 3:
+		return []
+
+	# A release newer than these has not built yet and is still being retried, so only older
+	# images go.
+	oldest_kept = frappe.qb.min("Pilot Image", "creation", {"pilot_version": ("in", kept_versions)})
+	older_images = frappe.get_all(
+		"Pilot Image",
+		filters={
+			"pilot_version": ("not in", kept_versions),
+			"status": ("in", ("Completed", "Failed")),
+			"creation": ("<", oldest_kept),
+		},
+		pluck="name",
+	)
+
+	retired = []
+	for name in older_images:
+		try:
+			frappe.get_doc("Pilot Image", name).retire()
+			frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not retire Pilot Image {name}")
+			continue
+
+		retired.append(name)
+
+	return retired
+
+
 def start_image_build_with_latest_pilot_release() -> list[str]:
 	"""Build every image variant of the newest Pilot release, once it is newer than the latest
 	version that has built. Returns the images started."""
+	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
+
+	if not pilot_release_tracking_enabled:
+		return []
+
 	pilot_version = get_latest_pilot_release()
 	if pilot_version == get_latest_built_pilot_version():
 		return []
@@ -469,6 +530,8 @@ def start_image_build_with_latest_pilot_release() -> list[str]:
 			continue
 
 		started.append(name)
+
+	retire_older_images()
 
 	return started
 

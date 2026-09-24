@@ -63,7 +63,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed\nRetired",
    "read_only": 1
   },
   {

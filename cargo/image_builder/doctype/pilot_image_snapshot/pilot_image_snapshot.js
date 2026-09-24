@@ -11,6 +11,7 @@ frappe.ui.form.on("Pilot Image Snapshot", {
 						"Setting up this snapshot's apps on the site, then photographing the machine."
 				  ),
 			Available: __("Atlas image {0} is ready to boot.", [frm.doc.snapshot_id]),
+			Unavailable: __("Its Atlas image is deleted, so nothing can boot this snapshot."),
 			Failed: __("This snapshot was not taken. See Error below."),
 		};
 		frm.dashboard.set_headline(headlines[frm.doc.status]);

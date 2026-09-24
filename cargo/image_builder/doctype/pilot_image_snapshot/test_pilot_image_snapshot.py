@@ -160,15 +160,23 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 
 		return snapshot.delete_atlas_image(client)
 
-	def test_an_image_atlas_is_deleting_lets_the_snapshot_go(self):
+	def test_an_available_snapshot_whose_image_is_deleted_becomes_unavailable(self):
+		"""Retiring deletes images of snapshots that built fine, so this is not a failure."""
 		snapshot = self.snapshot(self.image(), "crm", ["crm"])
-		snapshot.db_set({"status": "Available", "error": "The build failed."})
+		snapshot.db_set("status", "Available")
+
+		self.assertTrue(self.delete_at_atlas(snapshot, status="deleting"))
+		self.assertEqual(snapshot.status, "Unavailable")
+		self.assertIsNone(snapshot.snapshot_id)
+		self.assertIsNone(snapshot.error)
+
+	def test_a_failed_snapshot_whose_image_is_deleted_stays_failed(self):
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+		snapshot.db_set({"status": "Failed", "error": "Atlas image failed: disk full"})
 
 		self.assertTrue(self.delete_at_atlas(snapshot, status="deleting"))
 		self.assertEqual(snapshot.status, "Failed")
-		self.assertIsNone(snapshot.snapshot_id)
-		self.assertIn("The build failed.", snapshot.error)
-		self.assertIn("cargo-snapshot/img-1 is deleted", snapshot.error)
+		self.assertEqual(snapshot.error, "Atlas image failed: disk full")
 
 	def test_an_image_atlas_no_longer_has_lets_the_snapshot_go(self):
 		snapshot = self.snapshot(self.image(), "crm", ["crm"])

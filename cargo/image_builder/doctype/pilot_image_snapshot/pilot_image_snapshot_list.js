@@ -7,6 +7,7 @@ frappe.listview_settings["Pilot Image Snapshot"] = {
 			Pending: "gray",
 			Snapshotting: "blue",
 			Available: "green",
+			Unavailable: "orange",
 			Failed: "red",
 		};
 		return [__(doc.status), colors[doc.status], `status,=,${doc.status}`];

@@ -87,6 +87,7 @@ function set_headline(frm) {
 		Provisioning: __("Waiting for build machine {0} to boot.", [frm.doc.machine]),
 		Building: __("Provisioning the build machine. The log below follows it."),
 		Completed: __("Every snapshot is available at Atlas. The build machine is released."),
+		Retired: __("A newer Pilot release replaced this one. Its Atlas images are deleted."),
 		Failed: __("The build failed and its machine is released. See Error below."),
 	};
 	if (frm.doc.status !== "Snapshotting") {

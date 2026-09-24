@@ -10,6 +10,7 @@ from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import AppRelease
 from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	PilotImage,
+	retire_older_images,
 	retry_failed_image_types_with_latest_version,
 	start_image_build_with_latest_pilot_release,
 )
@@ -37,6 +38,9 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		# The jobs under test read every image, so one test's images must not reach the next.
+		frappe.db.savepoint("pilot_image_test")
+		self.addCleanup(frappe.db.rollback, save_point="pilot_image_test")
 		use_test_settings()
 
 	def image(
@@ -417,8 +421,9 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(sorted(asked), sorted([site.name, apps.name]))
 		self.assertEqual(restarted, [apps.name])
 
-	def start_latest_release(self, pilot_version: str) -> list[str]:
+	def start_latest_release(self, pilot_version: str, tracking: int = 1) -> list[str]:
 		"""Start builds of `pilot_version` as the newest release, without renting machines."""
+		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", tracking)
 		with (
 			patch(f"{CONTROLLER}.get_latest_pilot_release", return_value=pilot_version),
 			patch.object(PilotImage, "after_insert"),
@@ -490,3 +495,83 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(len(started), 5)
 		self.assertNotIn(first.name, started)
+
+	def test_no_release_is_built_while_tracking_is_off(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		self.assertEqual(self.start_latest_release(version, tracking=0), [])
+		self.assertFalse(frappe.db.exists("Pilot Image", {"pilot_version": version}))
+
+	def release(self, day: int, status: str = "Completed", image_type: str = "Base") -> PilotImage:
+		"""An image of its own Pilot release, made on `day` of a month no other test reaches."""
+		image = self.image(image_type, status, f"v9.9.{day}-{frappe.generate_hash(length=6)}")
+		frappe.db.set_value(
+			"Pilot Image", image.name, "creation", f"2099-01-{day:02d}", update_modified=False
+		)
+
+		return image
+
+	def retire_older(self) -> list[str]:
+		"""Run the retire job, recording what it asks to retire instead of deleting anything."""
+		asked: list[str] = []
+		with (
+			patch.object(
+				PilotImage, "retire", autospec=True, side_effect=lambda image: asked.append(image.name)
+			),
+			patch.object(frappe.db, "commit"),
+			patch.object(frappe.db, "rollback"),
+		):
+			retire_older_images()
+
+		return asked
+
+	def test_only_the_three_newest_releases_are_kept(self):
+		oldest = self.release(1)
+		newer = [self.release(day) for day in (2, 3, 4)]
+
+		asked = self.retire_older()
+
+		self.assertIn(oldest.name, asked)
+		for image in newer:
+			self.assertNotIn(image.name, asked)
+
+	def test_a_newer_release_that_has_not_built_is_not_retired(self):
+		"""It is still being retried, and does not count as one of the three."""
+		oldest = self.release(1)
+		[self.release(day) for day in (2, 3, 4)]
+		unbuilt = self.release(5, status="Failed")
+
+		asked = self.retire_older()
+
+		self.assertIn(oldest.name, asked)
+		self.assertNotIn(unbuilt.name, asked)
+
+	def test_an_old_build_in_progress_is_not_retired(self):
+		building = self.release(1, status="Building")
+		[self.release(day) for day in (2, 3, 4)]
+
+		self.assertNotIn(building.name, self.retire_older())
+
+	def test_retiring_deletes_the_atlas_images_first(self):
+		image = self.image(status="Completed")
+
+		with patch.object(PilotImage, "delete_atlas_images") as delete_atlas_images:
+			image.retire()
+
+		delete_atlas_images.assert_called_once()
+		self.assertEqual(image.status, "Retired")
+
+	def test_an_image_atlas_keeps_is_not_retired(self):
+		image = self.image(status="Completed")
+
+		with (
+			patch.object(PilotImage, "delete_atlas_images", side_effect=frappe.ValidationError("kept")),
+			self.assertRaises(frappe.ValidationError),
+		):
+			image.retire()
+
+		self.assertEqual(frappe.db.get_value("Pilot Image", image.name, "status"), "Completed")
+
+	def test_a_build_in_progress_cannot_be_retired(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.image(status="Building").retire()

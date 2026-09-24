@@ -38,7 +38,7 @@ class PilotImageSnapshot(Document):
 		required_apps: DF.Table[PilotImageSnapshotApp]
 		signup_app: DF.Data | None
 		snapshot_id: DF.Data | None
-		status: DF.Literal["Pending", "Snapshotting", "Available", "Failed"]
+		status: DF.Literal["Pending", "Snapshotting", "Available", "Unavailable", "Failed"]
 	# end: auto-generated types
 
 	"""One Atlas image taken off a Pilot Image build, with the apps it has turned on."""
@@ -154,10 +154,9 @@ class PilotImageSnapshot(Document):
 		if status not in ("deleted", "deleting", "archived"):
 			return False
 
-		self.status = "Failed"
-		self.error = "\n".join(
-			filter(None, [self.error, _("Atlas image {0} is deleted.").format(self.snapshot_id)])
-		)
+		if self.status == "Available":
+			self.status = "Unavailable"
+
 		self.snapshot_id = None
 		self.save()
 
