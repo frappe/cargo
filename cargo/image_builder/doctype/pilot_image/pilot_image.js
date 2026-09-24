@@ -23,21 +23,26 @@ frappe.ui.form.on("Pilot Image", {
 
 function add_actions(frm) {
 	if (["Provisioning", "Building", "Snapshotting"].includes(frm.doc.status)) {
-		frm.add_custom_button(__("Fail Build"), () => {
+		frm.add_custom_button(__("Stop Build"), () => {
 			frappe.confirm(
 				__(
-					"Stop this build, fail its unfinished snapshots and release the build machine?"
+					"Stop this build? It fails at its next step: its snapshots fail, their Atlas images are deleted and the build machine is released."
 				),
-				() => frm.call("fail_build").then(() => frm.reload_doc())
+				() => frm.call({ method: "stop_build", freeze: true }).then(() => frm.reload_doc())
 			);
 		});
 	}
 
 	if (frm.doc.status === "Failed") {
-		frm.add_custom_button(__("Rebuild"), () => {
+		frm.add_custom_button(__("Restart Build"), () => {
 			frappe.confirm(
-				__("Rent a new build machine and build this image again from the start?"),
-				() => frm.call("rebuild").then(() => frm.reload_doc())
+				__(
+					"Delete this build's snapshots and their Atlas images, then build again from the start on a new machine?"
+				),
+				() =>
+					frm
+						.call({ method: "restart_build", freeze: true })
+						.then(() => frm.reload_doc())
 			);
 		});
 	}

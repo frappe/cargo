@@ -354,9 +354,6 @@ class PilotImage(WorkflowBuilder):
 		)
 
 		self.release_build_machine()
-
-		# Last, so an Atlas refusal cannot keep the machine running. When it throws, the engine
-		# retries this callback, and everything above is safe to repeat.
 		self.delete_atlas_images()
 
 	def on_workflow_success(self, workflow) -> None:
