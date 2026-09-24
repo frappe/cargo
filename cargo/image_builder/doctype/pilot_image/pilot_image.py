@@ -1,16 +1,21 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
-
 import json
-from itertools import product
+import typing
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.query_builder import Order
+from frappe.query_builder.functions import Min
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, base_image_id
+from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
+from cargo.image_builder.doctype.pilot_image.apps import (
+	SIGNUP_APPS,
+	AppRelease,
+	get_compatible_app_commit,
+)
 from cargo.image_builder.doctype.pilot_image.builder import (
 	BUILD_SPEC,
 	PING_TIMEOUT,
@@ -18,19 +23,18 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	SSH_READY_TIMEOUT,
 	Builder,
 )
-from cargo.image_builder.doctype.pilot_image.releases import latest_pilot_release
+from cargo.image_builder.doctype.pilot_image.releases import get_frappe_release, get_latest_pilot_release
 from cargo.ssh import OutputLog, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
+if typing.TYPE_CHECKING:
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.image_builder.doctype.pilot_image_snapshot.pilot_image_snapshot import PilotImageSnapshot
+
 # The task holds the wait for the machine as well as the script it then runs, so a slow
 # boot cannot eat into the time the script is allowed.
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
-SNAPSHOT_TIMEOUT = 1800
-FRAPPE_VERSIONS = ("version-16", "develop")
-SITE_VARIANTS = (1, 0)
-TRACKED_PILOT_VERSIONS = 3
-BUILDING_STATUSES = ("Provisioning", "Building", "Snapshotting")
 DOMAIN_PROVIDER = ("image_builder", "conf", "pilot", "domain_provider.py")
 
 
@@ -44,166 +48,78 @@ class PilotImage(WorkflowBuilder):
 		from frappe.types import DF
 
 		build_log: DF.Code | None
-		built_at: DF.Datetime | None
 		error: DF.LongText | None
-		frappe_version: DF.Literal["version-16", "develop"]
-		has_site: DF.Check
-		pilot_version: DF.Data
-		snapshot_id: DF.Data | None
+		frappe_branch: DF.Literal["version-16", "develop"]
+		frappe_version: DF.Data | None
+		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
-		status: DF.Literal["Draft", "Provisioning", "Building", "Available", "Snapshotting", "Failed"]
+		pilot_version: DF.Data
+		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
 	# end: auto-generated types
 
-	"""One Pilot release baked against one Frappe version, and the snapshot it produced."""
+	"""This doctype is only responsible to run the provisioning script based on the
+	supplied environment and plan and trigger snapshot creations."""
 
-	def validate(self) -> None:
-		if frappe.db.exists(
-			"Pilot Image",
-			{
-				"pilot_version": self.pilot_version,
-				"frappe_version": self.frappe_version,
-				"has_site": self.has_site,
-				"name": ("!=", self.name),
-			},
-		):
-			frappe.throw(_("{0} on {1} already exists.").format(self.pilot_version, self.frappe_version))
+	def after_insert(self) -> None:
+		"""Request a build machine from atlas."""
+		self.request_build_machine()
+
+	def request_build_machine(self) -> None:
+		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
+		machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
+		self.db_set({"machine": machine, "status": "Provisioning"})
 
 	@property
-	def atlas_name(self) -> str:
-		"""What this image's snapshot is called at Atlas."""
-		return f"{self.name}-{self.frappe_version}"
+	def build_machine(self) -> MachineDoc | None:
+		if not self.machine:
+			return None
 
-	@property
-	def builder(self) -> Builder:
-		return Builder()
-
-	@property
-	def image_tags(self) -> dict[str, str]:
-		"""What the snapshot is labelled with at Atlas, so a search finds it by version."""
-		return {
-			"purpose": "pilot",
-			"pilot_version": self.pilot_version,
-			"frappe_version": self.frappe_version,
-			"has_site": str(int(self.has_site)),
-			**PILOT_IMAGE_OS_TAGS,
-		}
-
-	@property
-	def provision_environment(self) -> dict[str, str]:
-		"""What the provision script reads. The bench, site and admin domain are the same
-		for every image, so the script names those itself."""
-		return {
-			"VERSION": self.pilot_version,
-			"FRAPPE_VERSION": self.frappe_version,
-			"WILDCARD_DOMAIN": self.wildcard_domain,
-			"PROXY_SUBNET": self.proxy_subnet,
-			"DOMAIN_PROVIDER": self.domain_provider,
-			"HAS_SITE": str(int(self.has_site)),
-		}
-
-	@property
-	def wildcard_domain(self) -> str:
-		"""The zone every VM hostname sits under. The aliases are built from it."""
-		return frappe.db.get_single_value("Cargo Settings", "wildcard_domain") or ""
-
-	@property
-	def region_id(self) -> int:
-		return int(frappe.db.get_single_value("Cargo Settings", "region_id") or 0)
-
-	@property
-	def proxy_subnet(self) -> str:
-		"""The tenant-0 subnet holding every edge proxy. A mesh address is
-		fdaa:<region>:<tenant>:<VM>, so one tenant of one region is a /64."""
-		return f"fdaa:{self.region_id:x}::/64"
-
-	@property
-	def domain_provider(self) -> str:
-		"""The provider the image installs, with this region's values baked in."""
-		source = script(*DOMAIN_PROVIDER)
-		return source.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.wildcard_domain}")).replace(
-			'"__PROXY_SUBNET__"', json.dumps(self.proxy_subnet)
-		)
-
-	@frappe.whitelist()
-	def build(self) -> None:
-		"""Ask Atlas for a machine to bake. The scheduler takes it from here."""
-		if self.status in BUILDING_STATUSES:
-			frappe.throw(_("This image is already building."))
-
-		# Checked before a machine is rented: without it the image reaches nothing.
-		if not self.wildcard_domain:
-			frappe.throw(_("Set the wildcard domain in Cargo Settings before building."))
-
-		if not self.region_id:
-			frappe.throw(_("Set the region ID in Cargo Settings before building."))
-
-		self.build_log = None
-		self.machine = MachineDoc.request(self, BUILD_SPEC, base_image=base_image_id()).name
-		self.mark("Provisioning")
+		return frappe.get_doc("Machine", self.machine)
 
 	def sync_machines(self) -> None:
-		"""What this image's build machine settling means for it. Its state is already
-		recorded; `sync_pending_machines` calls this once it changes."""
+		"""Once the machine is live we can start the initial build process."""
+		# Past this, the workflow owns the machine: a finished build terminates it on purpose.
 		if self.status != "Provisioning":
 			return
 
-		machine: MachineDoc = frappe.get_doc("Machine", self.machine)
-		if machine.status in DEAD_MACHINE_STATES:
-			self.mark("Failed", error=machine.error or f"Build machine is {machine.status}")
+		machine_status = frappe.db.get_value("Machine", self.machine, "status")
+		if machine_status in DEAD_MACHINE_STATES:
+			self.status = "Failed"
+			self.error = f"Machine {self.machine} is dead. Status: {machine_status}"
+			self.save()
 			return
 
-		if machine.status != "Running":
+		if machine_status == "Running":
+			self.status = "Building"
+			self.save()
+			self.create_image()
 			return
 
-		# One transaction, so `retry_workflows` can find a build whose job never started.
-		self.mark("Building")
-		self.run_build.run_as_workflow(address=machine.address)
+		# Any thing other than Dead and Running is a transient state, wait for it.
+		return
 
-	@flow
-	def run_build(self, address: str) -> None:
-		"""Bake a machine and photograph it"""
-		self.run_provision_script(address)
-		self.take_snapshot()
+	def create_image(self) -> None:
+		"""Build the pilot image on the machine."""
+		if self.status != "Building":
+			frappe.throw(_("Cannot build a pilot image that is not in 'Building' status."))
 
-	@task(queue="long", timeout=BUILD_TIMEOUT)
-	def run_provision_script(self, address: str) -> None:
-		"""Install onto the build machine"""
-		private_key = self.build_machine.get_password("ssh_private_key")
-		self.builder.wait_until_reachable(address, private_key)
-
-		with OutputLog(self, "build_log") as log:
-			self.builder.run_provision_script_on_build_machine(
-				address,
-				private_key,
-				self.provision_environment,
-				on_output=log.write,
-			)
-
-		# Here, not in the snapshot task: that one works from the machine record alone.
-		self.builder.flush_build_machine(address, private_key)
-
-		self.mark("Snapshotting")
+		self._create_image.run_as_workflow()
 
 	@frappe.whitelist()
 	def stop_build(self) -> None:
-		"""Give up on a build that is not moving, and release the machine it rented."""
-		if self.status not in BUILDING_STATUSES:
-			frappe.throw(_("This image is not building."))
-
-		workflow = self.running_workflow
-		if workflow:
-			frappe.get_doc("Press Workflow", workflow).force_fail()
+		"""Stop the build. Before the workflow starts, this ends the build itself. After
+		that, the workflow and its callback own the end state."""
+		if self.status == "Provisioning":
+			self.status = "Failed"
+			self.error = _("Build stopped by {0}.").format(frappe.session.user)
+			self.save()
+			self.release_build_machine()
 			return
 
-		if not self.release_build_machine():
-			frappe.throw(_("Atlas did not destroy the build machine."))
+		if self.status not in ("Building", "Snapshotting"):
+			frappe.throw(_("Only a build in progress can be stopped."))
 
-		self.mark("Failed", error=f"Build stopped by {frappe.session.user}.")
-
-	@property
-	def running_workflow(self) -> str | None:
-		"""This image's build workflow while it is still going, or None."""
-		return frappe.db.get_value(
+		workflow = frappe.db.get_value(
 			"Press Workflow",
 			{
 				"linked_doctype": self.doctype,
@@ -211,176 +127,430 @@ class PilotImage(WorkflowBuilder):
 				"status": ("in", ("Queued", "Running")),
 			},
 		)
+		if not workflow:
+			# Finished, with its callback still to run. The callback records the result.
+			frappe.throw(_("The build has already finished. Its result is being recorded."))
 
-	@task(queue="long", timeout=SNAPSHOT_TIMEOUT)
-	def take_snapshot(self) -> None:
-		"""Photograph the machine, then destroy it either way"""
+		frappe.get_doc("Press Workflow", workflow).force_fail()
+
+	@frappe.whitelist()
+	def restart_build(self) -> None:
+		"""Build this image again from the start, on a new machine."""
+		if self.status != "Failed":
+			frappe.throw(_("Cannot restart a build that is not in 'Failed' status."))
+
+		self.delete_atlas_images()
+		self.release_build_machine()
+
+		for snapshot in frappe.get_all(
+			"Pilot Image Snapshot", filters={"pilot_image": self.name}, pluck="name"
+		):
+			frappe.delete_doc("Pilot Image Snapshot", snapshot)
+
+		self.error = None
+		self.build_log = None
+		self.frappe_version = None
+		self.save()
+		self.request_build_machine()
+
+	@flow
+	def _create_image(self):
+		# Snapshots come first: their pinned releases are what the provision script fetches.
+		self.create_snapshots()
+		self.run_provision_script()
+
+		snapshots = frappe.get_all(
+			"Pilot Image Snapshot", filters={"pilot_image": self.name}, order_by="creation asc", pluck="name"
+		)
+
+		for snapshot in snapshots:
+			self.mark_snapshotting(snapshot)
+			self.start_snapshotting(snapshot)
+			self.wait_for_snapshot(snapshot)
+			self.finish_snapshotting(snapshot)
+
+	@task(queue="short")
+	def mark_snapshotting(self, snapshot_name: str) -> None:
+		"""Move the snapshot about to be taken, and the image with its first one, to Snapshotting."""
+		if self.status != "Snapshotting":
+			self.status = "Snapshotting"
+			self.save()
+
+		frappe.db.set_value("Pilot Image Snapshot", snapshot_name, "status", "Snapshotting")
+
+	@task(queue="long", timeout=3600)
+	def start_snapshotting(self, snapshot_name: str) -> None:
+		"""Put the site in the snapshot's state, then ask Atlas to photograph the machine."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
 		machine = self.build_machine
-		try:
-			snapshot = machine.snapshot(self.atlas_name, self.image_tags)
-		finally:
-			machine.terminate()
 
-		self.snapshot_id = snapshot
-		self.built_at = now_datetime()
-		self.save(ignore_permissions=True)
+		snapshot.run_app_prerequisite(machine, self)
+		snapshot.take(machine, self)
 
-	def on_workflow_success(self, workflow) -> None:
-		self.mark("Available")
+	@task(queue="short")
+	def wait_for_snapshot(self, snapshot_name: str) -> None:
+		"""Wait for Atlas to make the image. A deferred task is run again about once a minute."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
+		if snapshot.complete_if_available():
+			return
+
+		self.defer_current_task(_("Atlas is still making image {0}.").format(snapshot.snapshot_id))
+
+	@task(queue="long", timeout=3600)
+	def finish_snapshotting(self, snapshot_name: str) -> None:
+		"""Undo the snapshot's site state, so the next snapshot starts from a bare site."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
+		snapshot.run_app_post_requisite(self.build_machine, self)
+
+	@task(queue="short")
+	def create_snapshots(self) -> None:
+		"""Create snapshots for the image based on the image type. Snapshot pre-requisite will
+		prepare the apps to be installed before snapshot."""
+		if frappe.db.exists("Pilot Image Snapshot", {"pilot_image": self.name}):
+			return
+
+		self.frappe_version = get_frappe_release(self.frappe_branch)
+		self.save()
+
+		if self.image_type == "Base":
+			self.insert_snapshot(None, [])
+			return
+
+		releases: dict[str, AppRelease] = {}
+		for signup_app in SIGNUP_APPS:
+			required_apps = signup_app if isinstance(signup_app, tuple) else (signup_app,)
+
+			for app in required_apps:
+				if app not in releases:
+					releases[app] = get_compatible_app_commit(app, self.frappe_version)
+
+				missing = set(releases[app].requires) - set(required_apps)
+				if missing:
+					frappe.throw(
+						_("{0} requires {1}, which is not listed with it.").format(app, ", ".join(missing))
+					)
+
+			if self.image_type == "Apps":
+				# Since singup app is the last app in the required apps.
+				self.insert_snapshot(required_apps[-1], [releases[app] for app in required_apps])
+
+		if self.image_type == "Site":
+			self.insert_snapshot(None, list(releases.values()))
+
+	def insert_snapshot(self, signup_app: str | None, releases: list[AppRelease]) -> None:
+		frappe.get_doc(
+			{
+				"doctype": "Pilot Image Snapshot",
+				"pilot_image": self.name,
+				"status": "Pending",
+				"signup_app": signup_app,
+				"required_apps": [
+					{
+						"app": release.name,
+						"version": release.version,
+						"commit": release.commit,
+						"repo": release.repo,
+					}
+					for release in releases
+				],
+			}
+		).insert()
+
+	@task(queue="long", timeout=BUILD_TIMEOUT)
+	def run_provision_script(self) -> None:
+		"""Based on the image type run the provision script on the machine."""
+		machine: MachineDoc = self.build_machine
+		private_key = machine.get_password("ssh_private_key")
+		builder = Builder()
+		builder.wait_until_reachable(machine.address, private_key)
+
+		# Creating site is handled by the PilotImage doctype itself if required.
+		with OutputLog(self, "build_log") as log:
+			builder.run_provision_script_on_build_machine(
+				machine.address,
+				private_key,
+				self.get_provision_environment(),
+				on_output=log.write,
+			)
+
+	def get_required_apps(self) -> list[dict]:
+		"""Every app this image's snapshots pin, once each, in install order. This is already
+		calculated while creating the snapshot therefore reusing here."""
+		snapshots = frappe.get_all("Pilot Image Snapshot", filters={"pilot_image": self.name}, pluck="name")
+		if not snapshots:
+			frappe.throw(_("Pilot Image {0} has no snapshots to fetch apps for.").format(self.name))
+
+		rows = frappe.get_all(
+			"Pilot Image Snapshot App",
+			filters={
+				"parenttype": "Pilot Image Snapshot",
+				"parentfield": "required_apps",
+				"parent": ("in", snapshots),
+			},
+			fields=["app", "repo", "commit"],
+			order_by="parent asc, idx asc",
+		)
+		# Keyed by app, so an app two snapshots share appears once, where it first appears.
+		apps = {row.app: row for row in rows}
+
+		return list(apps.values())
+
+	def get_provision_environment(self) -> dict[str, str]:
+		"""What provision.sh reads. The bench, site and admin domain are the same for every
+		image, so the script names those itself."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+		proxy_subnet = f"fdaa:{int(settings.region_id or 0):x}::/64"
+		domain_provider = (
+			script(*DOMAIN_PROVIDER)
+			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{settings.wildcard_domain}"))
+			.replace('"__PROXY_SUBNET__"', json.dumps(proxy_subnet))
+		)
+
+		return {
+			"VERSION": self.pilot_version,
+			"FRAPPE_BRANCH": self.frappe_branch,
+			"WILDCARD_DOMAIN": settings.wildcard_domain or "",
+			"PROXY_SUBNET": proxy_subnet,
+			"DOMAIN_PROVIDER": domain_provider,
+			"IMAGE_TYPE": self.image_type,
+			"REQUIRED_APPS": ""
+			if self.image_type == "Base"
+			else "\n".join(f"{app.repo} {app.commit}" for app in self.get_required_apps()),
+		}
 
 	def on_workflow_failure(self, workflow) -> None:
-		"""Record which task failed, and make sure its machine is not left running."""
-		failed = next((row for row in workflow.steps if row.status == "Failure"), None)
-		stage = failed.step_title if failed else "Build"
-		reason = frappe.db.get_value("Press Workflow Task", failed.task, "traceback") if failed else None
-		error = (reason or workflow.workflow_traceback or "").strip()
+		"""The workflow engine has given up on this image. The machine is still running, but
+		the image is not going to be built."""
+		failed = frappe.db.get_value(
+			"Press Workflow Task",
+			{"workflow": workflow.name, "status": "Failure"},
+			["method_title", "traceback"],
+			order_by="creation desc",
+			as_dict=True,
+		)
+		stage = failed.method_title if failed else _("Build")
+		traceback = ((failed and failed.traceback) or workflow.workflow_traceback or "").strip()
+
+		# Recorded before the machine goes, so a failed release cannot hide why the build failed.
+		self.status = "Failed"
+		self.error = f"{stage}\n{traceback}"
+		self.save()
+
+		# Single failed snapshot will fail all other snapshots and the image itself.
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Snapshotting"},
+			{"status": "Failed", "error": traceback},
+		)
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Pending"},
+			{
+				"status": "Failed",
+				"error": _("Not taken: the build failed at {0}. See Pilot Image {1}.").format(
+					stage, self.name
+				),
+			},
+		)
+		# Stays Available until Atlas confirms its image is gone, which `delete_atlas_images` records.
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Available"},
+			"error",
+			_("The build failed at {0}. See Pilot Image {1}.").format(stage, self.name),
+		)
 
 		self.release_build_machine()
-		self.mark("Failed", error=f"{stage}\n{error}")
+		self.delete_atlas_images()
 
-	@property
-	def build_machine(self) -> MachineDoc:
-		return frappe.get_doc("Machine", self.machine)
+	def on_workflow_success(self, workflow) -> None:
+		"""The workflow engine has finished this image. The machine is still running, but the
+		image is built and the snapshots are taken."""
+		self.status = "Completed"
+		self.error = None
+		self.save()
 
-	def release_build_machine(self) -> bool:
-		"""Let this build's machine go. False means Atlas still has it running."""
-		if not self.machine:
-			return True
+		self.release_build_machine()
 
+	def release_build_machine(self) -> None:
+		"""Let the build machine go. A refusal leaves it Broken and in the Error Log, which
+		`Machine.terminate` records."""
 		machine = self.build_machine
-		if machine.status == "Terminated":
-			return True
+		if machine and machine.status != "Terminated":
+			machine.terminate()
 
-		return machine.terminate()
+	def delete_atlas_images(self) -> None:
+		"""Delete the Atlas images this build's snapshots took, so a failed build cannot be
+		booted. Tries every image, then throws if Atlas still has any, so the callback retries."""
+		snapshots = frappe.get_all(
+			"Pilot Image Snapshot",
+			filters={"pilot_image": self.name, "snapshot_id": ("is", "set")},
+			pluck="name",
+		)
+		client = AtlasClient.from_settings()
+		kept = []
+		for name in snapshots:
+			snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", name)
+			if not snapshot.delete_atlas_image(client):
+				kept.append(snapshot.snapshot_id)
 
-	def mark(self, status: str, error: str | None = None) -> None:
-		self.status = status
-		self.error = error
-		self.save(ignore_permissions=True)
+		if kept:
+			frappe.throw(_("Atlas still has images {0}. See the Error Log.").format(", ".join(kept)))
 
-	def retire(self) -> bool:
-		"""Drop the Atlas snapshot, then this record. False leaves both for the next run.
+	def retire(self) -> None:
+		"""Delete this image's Atlas images and mark it Retired. Throws while Atlas keeps any,
+		leaving the image as it was for a later run."""
+		if self.status not in ("Completed", "Failed"):
+			frappe.throw(_("Only a finished build can be retired."))
 
-		Atlas never refuses an image a machine still uses. It archives the image and
-		reclaims it when the last machine goes, so no usage check is needed here."""
-		if self.snapshot_id:
-			try:
-				AtlasClient.from_settings().delete_snapshot(self.snapshot_id)
-			except AtlasNotFound:
-				pass
-			except Exception:
-				frappe.log_error(title=f"Could not delete snapshot {self.snapshot_id}")
-				return False
-
-		# The record goes last, or a failed call above would leak the snapshot.
-		self.delete(ignore_permissions=True)
-		return True
-
-	def on_trash(self) -> None:
-		"""Kill machine in case image is deleted"""
-		super().on_trash()
-		if self.release_build_machine():
-			frappe.db.delete("Machine", {"reference_doctype": self.doctype, "reference_name": self.name})
-			return
-		frappe.throw(_("Unable to terminate VM {0} before deleteion.").format(self.name))
+		self.delete_atlas_images()
+		self.status = "Retired"
+		self.save()
 
 
-def sync_pilot_releases() -> None:
-	"""Build the newest Pilot release, then drop what fell out of the window.
-
-	Off by default. Scheduled in `hooks.py`."""
-	if not frappe.db.get_single_value("Cargo Settings", "track_pilot_releases"):
-		return
-
-	for name in ensure_release(latest_pilot_release()):
-		enqueue_build(name)
-
-	retire_old_releases()
-
-
-def ensure_release(pilot_version: str) -> list[str]:
-	"""One record per Frappe version and site variant. Returns those waiting for a machine.
-
-	A build that never started leaves the image in Draft, so the next run picks it up.
-	A Failed image is left alone, because retrying it hourly would rent a machine hourly."""
-	waiting = []
-	for frappe_version, has_site in product(FRAPPE_VERSIONS, SITE_VARIANTS):
-		identity = {
-			"pilot_version": pilot_version,
-			"frappe_version": frappe_version,
-			"has_site": has_site,
-		}
-		name = frappe.db.exists("Pilot Image", identity)
-		if not name:
-			name = frappe.get_doc({"doctype": "Pilot Image", **identity}).insert().name
-
-		if frappe.db.get_value("Pilot Image", name, "status") == "Draft":
-			waiting.append(name)
-
-	return waiting
-
-
-def enqueue_build(name: str) -> None:
-	"""One job per image, so each rented machine lands in a transaction of its own."""
-	frappe.enqueue(
-		"cargo.image_builder.doctype.pilot_image.pilot_image.build_image",
-		queue="short",
-		job_id=f"cargo||pilot_image||build||{name}",
-		deduplicate=True,
-		enqueue_after_commit=True,
-		name=name,
+def get_newest_pilot_version() -> str | None:
+	"""The Pilot version Cargo first saw most recently, whether or not any of its builds
+	finished. A version is placed by its first image, so building an older release again
+	later does not make it the newest."""
+	image = frappe.qb.DocType("Pilot Image")
+	versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.groupby(image.pilot_version)
+		.orderby(Min(image.creation), order=Order.desc)
+		.limit(1)
+		.run(pluck=True)
 	)
 
-
-def build_image(name: str) -> None:
-	"""Rent a machine for one image. Its own job, so one failure cannot undo another."""
-	image: PilotImage = frappe.get_doc("Pilot Image", name)
-	if image.status != "Draft":
-		return
-
-	image.build()
+	return versions[0] if versions else None
 
 
-def retire_old_releases() -> None:
-	"""Keep the newest few Pilot versions, by the order Cargo first saw each one."""
-	keep = tracked_pilot_versions()
-	if not keep:
-		return
+def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
+	"""Every image a Pilot version is built as: each image type on each Frappe branch."""
+	meta = frappe.get_meta("Pilot Image")
+	return [
+		{"pilot_version": pilot_version, "image_type": image_type, "frappe_branch": frappe_branch}
+		for image_type in meta.get_field("image_type").options.split("\n")
+		for frappe_branch in meta.get_field("frappe_branch").options.split("\n")
+	]
 
-	stale = frappe.get_all(
-		"Pilot Image",
-		filters={"pilot_version": ("not in", keep), "status": ("not in", BUILDING_STATUSES)},
-		pluck="name",
-	)
-	for name in stale:
+
+def retry_failed_image_types_with_latest_version() -> list[str]:
+	"""Restart each image variant of the latest Pilot version whose build failed. Returns the
+	restarted images."""
+	# The newest release, even one none of whose builds has finished, so it is not left behind.
+	pilot_version = get_newest_pilot_version()
+	if not pilot_version:
+		return []
+
+	restarted = []
+	for image in get_image_variants(pilot_version):
+		# A variant has one image, so a Completed one or one still building is left alone.
+		failed = frappe.db.get_value("Pilot Image", {**image, "status": "Failed"})
+		if not failed:
+			continue
+
 		try:
-			image: PilotImage = frappe.get_doc("Pilot Image", name)
-			image.retire()
-
-			if not frappe.flags.in_test:
-				frappe.db.commit()  # nosemgrep
+			frappe.get_doc("Pilot Image", failed).restart_build()
+			# One image's restart must not roll back another's, whose Atlas images are already gone.
+			frappe.db.commit()  # nosemgrep
 		except Exception:
 			frappe.db.rollback()
-			frappe.log_error(title=f"Could not retire image {name}")
+			frappe.log_error(title=f"Could not restart Pilot Image {failed}")
+			continue
+
+		restarted.append(failed)
+
+	return restarted
 
 
-def on_doctype_update() -> None:
-	"""The three together are the identity, so the database holds them, not only `validate`."""
-	frappe.db.add_unique(
+def retire_older_images() -> list[str]:
+	"""Keep the images of the three newest Pilot releases that have built, and retire the
+	images of every older release. Returns the retired images."""
+	image = frappe.qb.DocType("Pilot Image")
+	kept_versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.where(image.status == "Completed")
+		.groupby(image.pilot_version)
+		# Placed by its first image, so building an older release again does not keep it.
+		.orderby(Min(image.creation), order=Order.desc)
+		.limit(3)
+		.run(pluck=True)
+	)
+	if len(kept_versions) < 3:
+		return []
+
+	# A release first seen after these has not built yet and is still being retried, so only
+	# releases first seen before the oldest kept one go, with every image they have.
+	oldest_kept = frappe.qb.min("Pilot Image", "creation", {"pilot_version": ("in", kept_versions)})
+	older_versions = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version)
+		.groupby(image.pilot_version)
+		.having(Min(image.creation) < oldest_kept)
+		.run(pluck=True)
+	)
+	if not older_versions:
+		return []
+
+	older_images = frappe.get_all(
 		"Pilot Image",
-		["pilot_version", "frappe_version", "has_site"],
-		constraint_name="unique_pilot_image_variant",
+		filters={"pilot_version": ("in", older_versions), "status": ("in", ("Completed", "Failed"))},
+		pluck="name",
 	)
 
+	retired = []
+	for name in older_images:
+		try:
+			frappe.get_doc("Pilot Image", name).retire()
+			frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not retire Pilot Image {name}")
+			continue
 
-def tracked_pilot_versions() -> list[str]:
-	"""The Pilot versions inside the window, newest first.
+		retired.append(name)
 
-	A version is placed by the first image Cargo made for it, so building one again
-	later does not move it."""
-	first_seen: list[str] = []
-	for version in frappe.get_all("Pilot Image", order_by="creation asc", pluck="pilot_version"):
-		if version not in first_seen:
-			first_seen.append(version)
+	return retired
 
-	return first_seen[-TRACKED_PILOT_VERSIONS:][::-1]
+
+def start_image_build_with_latest_pilot_release() -> list[str]:
+	"""Start every image variant of the newest Pilot release that has no image yet. Returns the
+	images started."""
+	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
+
+	if not pilot_release_tracking_enabled:
+		return []
+
+	pilot_version = get_latest_pilot_release()
+	started = []
+	for image in get_image_variants(pilot_version):
+		# A variant that already has a build is retried by `retry_failed_image_types_with_latest_version`.
+		if frappe.db.exists("Pilot Image", image):
+			continue
+
+		try:
+			name = frappe.get_doc({"doctype": "Pilot Image", **image}).insert().name
+			# Inserting rents a machine at Atlas, which a later rollback cannot give back.
+			frappe.db.commit()  # nosemgrep
+		except frappe.UniqueValidationError:
+			# A run alongside this one inserted it first, before any machine was rented here.
+			frappe.db.rollback()
+			continue
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not start a {image['image_type']} image of Pilot {pilot_version}")
+			continue
+
+		started.append(name)
+
+	return started
+
+
+def on_doctype_update():
+	frappe.db.add_unique(
+		"Pilot Image",
+		["pilot_version", "image_type", "frappe_branch"],
+		constraint_name="unique_pilot_image_variant",
+	)

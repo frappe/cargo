@@ -5,9 +5,11 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
-: "${FRAPPE_VERSION:?FRAPPE_VERSION is required}"
+: "${FRAPPE_BRANCH:?FRAPPE_BRANCH is required}"
 : "${PROXY_SUBNET:?PROXY_SUBNET is required}"
 : "${DOMAIN_PROVIDER:?DOMAIN_PROVIDER is required}"
+# Base is a bench with no site. Site adds a bare site and fetches REQUIRED_APPS onto the bench.
+: "${IMAGE_TYPE:?IMAGE_TYPE is required}"
 
 # Every image carries the same bench and site. Both are reached through a hostname alias,
 # so neither has to be unique or to resolve anywhere.
@@ -25,8 +27,15 @@ BENCH_GID="${BENCH_GID:-1000}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
-# Off leaves an initialised bench with no site on it.
-HAS_SITE="${HAS_SITE:-1}"
+# One `repo commit` pair a line, fetched onto the bench in this order. Each snapshot
+# installs its own apps on the site, so none is installed here.
+REQUIRED_APPS="${REQUIRED_APPS:-}"
+
+case "$IMAGE_TYPE" in
+Base) [ -z "$REQUIRED_APPS" ] || { echo "A Base image fetches no apps" >&2; exit 1; } ;;
+Site | Apps) [ -n "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image needs REQUIRED_APPS" >&2; exit 1; } ;;
+*) echo "Unknown IMAGE_TYPE: $IMAGE_TYPE" >&2; exit 1 ;;
+esac
 
 INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 
@@ -65,6 +74,8 @@ as_bench_user() {
 curl -fsSL "$INSTALLER" | bash
 # Pilot asks for the deprecated zone aliases as the bench user, which cannot sudo apt.
 apt-get install -y tzdata-legacy
+# Get app also requires this to be installed.
+apt-get install -y cron
 as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
 # Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
@@ -73,14 +84,21 @@ as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMI
 # `new` writes bench.toml; `init` clones the framework app it names. The branch is config,
 # not a flag, so it is set in between.
 bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
-as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_VERSION\"|' '$bench_toml'"
+as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_BRANCH\"|' '$bench_toml'"
 # A silent miss would build the default branch, so check the edit took.
-as_bench_user "grep -q '^branch = \"$FRAPPE_VERSION\"' '$bench_toml'"
+as_bench_user "grep -q '^branch = \"$FRAPPE_BRANCH\"' '$bench_toml'"
 
 as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
 
-if [ "$HAS_SITE" = 1 ]; then
+if [ "$IMAGE_TYPE" != Base ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
+fi
+
+# A commit as the branch clones exactly the release Cargo recorded.
+if [ "$IMAGE_TYPE" != Base ]; then
+	while read -r repo commit; do
+		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+	done <<< "$REQUIRED_APPS"
 fi
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
@@ -105,7 +123,7 @@ probe_site() {
 }
 
 # A siteless image has nothing to answer the probe, so the nginx check above is all it promises.
-if [ "$HAS_SITE" = 1 ]; then
+if [ "$IMAGE_TYPE" != Base ]; then
 	probe_site
 fi
 
@@ -129,7 +147,7 @@ set -u
 
 site="$SITE"
 bench="$BENCH"
-has_site="$HAS_SITE"
+image_type="$IMAGE_TYPE"
 upstream="http://127.0.0.1:8000"
 admin="$ADMIN_UPSTREAM"
 bench_user="$BENCH_USER"
@@ -197,7 +215,7 @@ warm_admin() {
 	[ "\$status" = "200" ] || return 1
 
 	# The read path below is per site, so a siteless image stops at the open probe.
-	[ "\$has_site" = 1 ] || return 0
+	[ "\$image_type" != Base ] || return 0
 
 	token="\$(su - "\$bench_user" -c "pilot -b '\$bench' admin issue-site-token '\$site' --ttl 60" | tail -n 1)"
 	[ -n "\$token" ] || return 1
@@ -208,13 +226,13 @@ warm_admin() {
 }
 
 warm_site() {
-	[ "\$has_site" = 1 ] || return 0
+	[ "\$image_type" != Base ] || return 0
 	request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk
 }
 
 password_is_set=false
 for _ in \$(seq 1 "\$attempts"); do
-	if [ "\$has_site" = 1 ] && [ "\$password_is_set" = false ]; then
+	if [ "\$image_type" != Base ] && [ "\$password_is_set" = false ]; then
 		if ! set_temporary_password; then
 			sleep "\$delay"
 			continue

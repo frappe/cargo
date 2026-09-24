@@ -197,6 +197,8 @@ class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
 		mark_status.assert_called_once_with("Failed", "Proxy route setup failed: proxy unavailable")
 
 	def test_a_second_active_cluster_is_refused(self):
+		# A site that already serves has its own Active cluster, which would be refused first.
+		frappe.db.set_value("Object Storage Cluster", {"status": "Active"}, "status", "Draft")
 		self.cluster.db_set("status", "Active")
 		other_cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		other_cluster.status = "Active"

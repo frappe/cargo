@@ -161,7 +161,8 @@ class Machine(Document):
 
 		state = payload.get("current_state")
 		if state in DEAD_STATES:
-			return self.record("Broken", error=f"Atlas reported {state}")
+			reason = payload.get("error") or _("no reason given")
+			return self.record("Broken", error=f"Atlas reported {state}: {reason}")
 
 		if state != RUNNING_STATE:
 			return self.record(self.status)

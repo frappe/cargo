@@ -20,15 +20,16 @@ class CargoSettings(Document):
 		atlas_url: DF.Data
 		cargo_url: DF.Data
 		central_url: DF.Data
-		central_webhook_url: DF.Data | None
 		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
+		central_webhook_url: DF.Data | None
 		jwks_url: DF.Data
 		proxy_token: DF.Password
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
 		track_pilot_releases: DF.Check
+		version_supporting_app_toggle: DF.Data | None
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 

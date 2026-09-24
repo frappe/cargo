@@ -20,7 +20,8 @@
   "proxy_url",
   "proxy_token",
   "wildcard_domain",
-  "track_pilot_releases"
+  "track_pilot_releases",
+  "version_supporting_app_toggle"
  ],
  "fields": [
   {
@@ -143,13 +144,20 @@
    "fieldname": "track_pilot_releases",
    "fieldtype": "Check",
    "label": "Track Pilot Releases"
+  },
+  {
+   "default": ">=17.0.0",
+   "description": "Framework version that supports app toggle.",
+   "fieldname": "version_supporting_app_toggle",
+   "fieldtype": "Data",
+   "label": "Version supporting app toggle"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-11 13:42:38.961545",
+ "modified": "2026-09-24 13:27:19.396039",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

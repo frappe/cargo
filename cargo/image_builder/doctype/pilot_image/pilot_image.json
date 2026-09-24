@@ -1,22 +1,18 @@
 {
  "actions": [],
- "allow_bulk_edit": 0,
- "allow_rename": 0,
  "autoname": "IMG-.####",
- "creation": "2026-09-01 11:34:25.577127",
+ "creation": "2026-09-24 14:25:22.388056",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_identity",
   "pilot_version",
+  "frappe_branch",
   "frappe_version",
-  "has_site",
+  "image_type",
   "column_break_identity",
   "status",
   "error",
-  "section_break_artifact",
-  "snapshot_id",
-  "built_at",
   "section_break_log",
   "build_log",
   "section_break_build",
@@ -40,37 +36,34 @@
   },
   {
    "description": "The Frappe branch the bench is built against.",
-   "fieldname": "frappe_version",
+   "fieldname": "frappe_branch",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Frappe Version",
+   "label": "Frappe Branch",
    "options": "version-16\ndevelop",
    "reqd": 1,
    "set_only_once": 1
   },
   {
-   "default": "1",
-   "description": "Bake a site into the image. Without it the machine carries an initialised bench and no site.",
-   "fieldname": "has_site",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Has Site",
-   "set_only_once": 1
+   "description": "The Frappe version the branch reported when the build pinned its apps, such as 16.4.0.",
+   "fieldname": "frappe_version",
+   "fieldtype": "Data",
+   "label": "Frappe Version",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_identity",
    "fieldtype": "Column Break"
   },
   {
-   "default": "Draft",
+   "default": "Provisioning",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nProvisioning\nBuilding\nAvailable\nSnapshotting\nFailed",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed\nRetired",
    "read_only": 1
   },
   {
@@ -80,24 +73,6 @@
    "fieldtype": "Long Text",
    "label": "Error",
    "max_height": "16rem",
-   "read_only": 1
-  },
-  {
-   "fieldname": "section_break_artifact",
-   "fieldtype": "Section Break",
-   "label": "Snapshot"
-  },
-  {
-   "description": "What Atlas boots this image from.",
-   "fieldname": "snapshot_id",
-   "fieldtype": "Data",
-   "label": "Snapshot ID",
-   "read_only": 1
-  },
-  {
-   "fieldname": "built_at",
-   "fieldtype": "Datetime",
-   "label": "Built At",
    "read_only": 1
   },
   {
@@ -126,21 +101,37 @@
    "label": "Build Machine",
    "options": "Machine",
    "read_only": 1
+  },
+  {
+   "description": "Base: a bench with no site. Site: a bench with every signup app fetched and a bare site. Apps: the same bench, with one snapshot per signup app that installs its apps on the site.",
+   "fieldname": "image_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Image Type",
+   "options": "Base\nSite\nApps",
+   "reqd": 1,
+   "set_only_once": 1
   }
  ],
  "grid_page_length": 50,
- "index_web_pages_for_search": 0,
  "links": [
   {
    "group": "Build Machine",
    "link_doctype": "Machine",
    "link_fieldname": "reference_name"
+  },
+  {
+   "group": "Snapshots",
+   "link_doctype": "Pilot Image Snapshot",
+   "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-09-17 10:00:00.000000",
+ "modified": "2026-09-24 15:20:03.680961",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
@@ -158,6 +149,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
+ "search_fields": "pilot_version,frappe_branch,image_type,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

@@ -563,6 +563,22 @@ class Handler(BaseHTTPRequestHandler):
 		except Exception as exception:
 			self.fail(str(exception), 500, "internal_error")
 
+	def do_PATCH(self) -> None:
+		if not self.authenticated():
+			return
+
+		# Atlas refuses to delete a protected image. This fake protects nothing, so it only
+		# answers for an image it knows.
+		route = self.route
+		if len(route) >= 3 and route[0] == "images" and route[-1] == "termination-protection":
+			self.body()
+			try:
+				self.reply(self.get_image(unquote("/".join(route[1:-1]))), 202)
+			except KeyError:
+				self.fail("The resource does not exist.", 404, "not_found")
+		else:
+			self.fail(f"unimplemented: PATCH {self.path}", 404, "not_found")
+
 	def do_DELETE(self) -> None:
 		if not self.authenticated():
 			return

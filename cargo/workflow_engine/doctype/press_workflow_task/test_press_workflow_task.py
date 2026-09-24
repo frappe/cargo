@@ -24,8 +24,8 @@ class IntegrationTestPressWorkflowTask(IntegrationTestCase):
 			{
 				"doctype": "Pilot Image",
 				"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
-				"frappe_version": "version-16",
-				"has_site": 1,
+				"frappe_branch": "version-16",
+				"image_type": "Site",
 			}
 		).insert(ignore_permissions=True)
 
