@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
-from cargo.image_builder.doctype.pilot_image.releases import latest_pilot_release
+from cargo.image_builder.doctype.pilot_image.releases import get_latest_pilot_release
 
 
 def response(payload) -> Mock:
@@ -25,7 +25,7 @@ class UnitTestReleases(UnitTestCase):
 			{"tag_name": "v0.0.31-pre-alpha", "draft": False, "prerelease": True},
 		]
 		with self.get(response(payload)):
-			self.assertEqual(latest_pilot_release(), "v0.0.32-pre-alpha")
+			self.assertEqual(get_latest_pilot_release(), "v0.0.32-pre-alpha")
 
 	def test_a_draft_is_skipped(self):
 		payload = [
@@ -33,4 +33,4 @@ class UnitTestReleases(UnitTestCase):
 			{"tag_name": "v0.0.32-pre-alpha", "draft": False, "prerelease": True},
 		]
 		with self.get(response(payload)):
-			self.assertEqual(latest_pilot_release(), "v0.0.32-pre-alpha")
+			self.assertEqual(get_latest_pilot_release(), "v0.0.32-pre-alpha")

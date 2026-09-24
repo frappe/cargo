@@ -21,7 +21,7 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	SSH_READY_TIMEOUT,
 	Builder,
 )
-from cargo.image_builder.doctype.pilot_image.releases import frappe_release
+from cargo.image_builder.doctype.pilot_image.releases import get_frappe_release, get_latest_pilot_release
 from cargo.ssh import OutputLog, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -207,7 +207,7 @@ class PilotImage(WorkflowBuilder):
 		if frappe.db.exists("Pilot Image Snapshot", {"pilot_image": self.name}):
 			return
 
-		self.frappe_version = frappe_release(self.frappe_branch)
+		self.frappe_version = get_frappe_release(self.frappe_branch)
 		self.save()
 
 		if self.image_type == "Base":
@@ -394,3 +394,93 @@ class PilotImage(WorkflowBuilder):
 
 		if kept:
 			frappe.throw(_("Atlas still has images {0}. See the Error Log.").format(", ".join(kept)))
+
+
+def get_latest_built_pilot_version() -> str | None:
+	"""The newest Pilot version with at least one Completed image."""
+	return frappe.db.get_value(
+		"Pilot Image", {"status": "Completed"}, "pilot_version", order_by="creation desc"
+	)
+
+
+def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
+	"""Every image a Pilot version is built as: each image type on each Frappe branch."""
+	meta = frappe.get_meta("Pilot Image")
+	return [
+		{"pilot_version": pilot_version, "image_type": image_type, "frappe_branch": frappe_branch}
+		for image_type in meta.get_field("image_type").options.split("\n")
+		for frappe_branch in meta.get_field("frappe_branch").options.split("\n")
+	]
+
+
+def retry_failed_image_types_with_latest_version() -> list[str]:
+	"""Restart each image type and Frappe branch of the latest Pilot version that has no
+	Completed image and whose newest build failed. Returns the restarted images."""
+	# The latest version is the newest one that has built at least once.
+	pilot_version = get_latest_built_pilot_version()
+	if not pilot_version:
+		return []
+
+	restarted = []
+	for image in get_image_variants(pilot_version):
+		if frappe.db.exists("Pilot Image", {**image, "status": "Completed"}):
+			continue
+
+		# A build still in progress decides for itself.
+		newest = frappe.db.get_value(
+			"Pilot Image", image, ["name", "status"], order_by="creation desc", as_dict=True
+		)
+		if not newest or newest.status != "Failed":
+			continue
+
+		try:
+			frappe.get_doc("Pilot Image", newest.name).restart_build()
+			# One image's restart must not roll back another's, whose Atlas images are already gone.
+			frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not restart Pilot Image {newest.name}")
+			continue
+
+		restarted.append(newest.name)
+
+	return restarted
+
+
+def start_image_build_with_latest_pilot_release() -> list[str]:
+	"""Build every image variant of the newest Pilot release, once it is newer than the latest
+	version that has built. Returns the images started."""
+	pilot_version = get_latest_pilot_release()
+	if pilot_version == get_latest_built_pilot_version():
+		return []
+
+	started = []
+	for image in get_image_variants(pilot_version):
+		# A variant that already has a build is retried by `retry_failed_image_types_with_latest_version`.
+		if frappe.db.exists("Pilot Image", image):
+			continue
+
+		try:
+			name = frappe.get_doc({"doctype": "Pilot Image", **image}).insert().name
+			# Inserting rents a machine at Atlas, which a later rollback cannot give back.
+			frappe.db.commit()  # nosemgrep
+		except frappe.UniqueValidationError:
+			# A run alongside this one inserted it first, before any machine was rented here.
+			frappe.db.rollback()
+			continue
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not start a {image['image_type']} image of Pilot {pilot_version}")
+			continue
+
+		started.append(name)
+
+	return started
+
+
+def on_doctype_update():
+	frappe.db.add_unique(
+		"Pilot Image",
+		["pilot_version", "image_type", "frappe_branch"],
+		constraint_name="unique_pilot_image_variant",
+	)

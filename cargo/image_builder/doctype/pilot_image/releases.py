@@ -9,7 +9,7 @@ FRAPPE_VERSION = re.compile(r'^__version__ = "([^"]+)"', re.MULTILINE)
 TIMEOUT = 30
 
 
-def frappe_release(branch: str) -> str:
+def get_frappe_release(branch: str) -> str:
 	"""The Frappe version a bench built from `branch` reports, such as 17.0.0-dev.
 
 	An app release names a range of Frappe versions, so picking one needs the version
@@ -24,7 +24,7 @@ def frappe_release(branch: str) -> str:
 	return match.group(1)
 
 
-def latest_pilot_release() -> str:
+def get_latest_pilot_release() -> str:
 	"""The newest published Pilot release tag.
 
 	Every Pilot release is a prerelease today, so `releases/latest` answers 404 and

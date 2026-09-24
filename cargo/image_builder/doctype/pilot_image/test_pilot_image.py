@@ -8,7 +8,11 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import AppRelease
-from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
+from cargo.image_builder.doctype.pilot_image.pilot_image import (
+	PilotImage,
+	retry_failed_image_types_with_latest_version,
+	start_image_build_with_latest_pilot_release,
+)
 from cargo.testing import SETTINGS, use_test_settings
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
@@ -35,14 +39,20 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		use_test_settings()
 
-	def image(self, image_type: str = "Site", status: str = "Provisioning") -> PilotImage:
+	def image(
+		self,
+		image_type: str = "Site",
+		status: str = "Provisioning",
+		pilot_version: str | None = None,
+		frappe_branch: str = "version-16",
+	) -> PilotImage:
 		"""An image with a running build machine, without asking Atlas for one."""
 		with patch.object(PilotImage, "after_insert"):
 			image: PilotImage = frappe.get_doc(
 				{
 					"doctype": "Pilot Image",
-					"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
-					"frappe_branch": "version-16",
+					"pilot_version": pilot_version or f"v0.0.1-{frappe.generate_hash(length=6)}",
+					"frappe_branch": frappe_branch,
 					"image_type": image_type,
 				}
 			).insert()
@@ -72,7 +82,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def create_snapshots(self, image: PilotImage) -> list[dict]:
 		with (
-			patch(f"{CONTROLLER}.frappe_release", return_value="16.35.0"),
+			patch(f"{CONTROLLER}.get_frappe_release", return_value="16.35.0"),
 			patch(f"{CONTROLLER}.get_compatible_app_commit", side_effect=release),
 		):
 			image.create_snapshots()
@@ -361,3 +371,130 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			image.delete_atlas_images()
 
 		self.assertEqual(delete_atlas_image.call_count, 2)
+
+	def retry_failed_images(self, fails: str | None = None) -> tuple[list[str], list[str]]:
+		"""Run the retry without committing, returning what it restarted and what it asked to
+		restart. The restart of image `fails` raises."""
+		asked: list[str] = []
+
+		def restart_build(image: PilotImage) -> None:
+			asked.append(image.name)
+			if image.name == fails:
+				raise frappe.ValidationError("Atlas is down")
+
+		with (
+			patch.object(PilotImage, "restart_build", autospec=True, side_effect=restart_build),
+			patch.object(frappe.db, "commit"),
+			patch.object(frappe.db, "rollback"),
+		):
+			return retry_failed_image_types_with_latest_version(), asked
+
+	def test_a_failed_image_type_of_the_latest_version_is_restarted(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		site = self.image("Site", "Failed", version)
+		apps = self.image("Apps", "Failed", version, frappe_branch="develop")
+
+		restarted, _ = self.retry_failed_images()
+
+		self.assertEqual(sorted(restarted), sorted([site.name, apps.name]))
+
+	def test_a_type_that_completed_once_is_not_restarted(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Site", "Completed", version)
+		self.image("Site", "Failed", version)
+
+		self.assertEqual(self.retry_failed_images()[0], [])
+
+	def test_a_build_in_progress_is_left_to_finish(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		self.image("Site", "Failed", version)
+		self.image("Site", "Building", version)
+
+		self.assertEqual(self.retry_failed_images()[0], [])
+
+	def test_one_failed_restart_does_not_stop_the_others(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		site = self.image("Site", "Failed", version)
+		apps = self.image("Apps", "Failed", version)
+
+		restarted, asked = self.retry_failed_images(fails=site.name)
+
+		self.assertEqual(sorted(asked), sorted([site.name, apps.name]))
+		self.assertEqual(restarted, [apps.name])
+
+	def start_latest_release(self, pilot_version: str) -> list[str]:
+		"""Start builds of `pilot_version` as the newest release, without renting machines."""
+		with (
+			patch(f"{CONTROLLER}.get_latest_pilot_release", return_value=pilot_version),
+			patch.object(PilotImage, "after_insert"),
+			patch.object(frappe.db, "commit"),
+			patch.object(frappe.db, "rollback"),
+		):
+			return start_image_build_with_latest_pilot_release()
+
+	def test_a_new_release_is_built_as_every_variant(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		started = self.start_latest_release(version)
+
+		variants = frappe.get_all(
+			"Pilot Image", {"pilot_version": version}, ["name", "image_type", "frappe_branch"]
+		)
+		self.assertEqual(sorted(started), sorted(variant.name for variant in variants))
+		self.assertEqual(
+			sorted((variant.image_type, variant.frappe_branch) for variant in variants),
+			sorted(
+				(image_type, frappe_branch)
+				for image_type in ("Base", "Site", "Apps")
+				for frappe_branch in ("version-16", "develop")
+			),
+		)
+
+	def test_a_release_that_has_built_starts_nothing(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+
+		self.assertEqual(self.start_latest_release(version), [])
+
+	def test_a_variant_that_already_has_a_build_is_not_started_again(self):
+		"""Retrying it is the retry job's work."""
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		failed = self.image("Site", "Failed", version)
+
+		started = self.start_latest_release(version)
+
+		self.assertEqual(len(started), 5)
+		self.assertNotIn(failed.name, started)
+		self.assertEqual(
+			frappe.db.count(
+				"Pilot Image", {"pilot_version": version, "image_type": "Site", "frappe_branch": "version-16"}
+			),
+			1,
+		)
+
+	def test_a_release_takes_each_variant_once(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Site", "Failed", version)
+
+		with self.assertRaises(frappe.UniqueValidationError):
+			self.image("Site", "Provisioning", version)
+
+	def test_a_variant_another_run_started_first_is_skipped(self):
+		"""Both runs saw no image. The index refuses the second before it rents a machine."""
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		first = self.image("Site", "Provisioning", version)
+		checked = frappe.db.exists
+
+		def exists_before_the_other_run(doctype, filters=None, *args, **kwargs):
+			if doctype == "Pilot Image" and isinstance(filters, dict) and "status" not in filters:
+				return None
+			return checked(doctype, filters, *args, **kwargs)
+
+		with patch.object(frappe.db, "exists", side_effect=exists_before_the_other_run):
+			started = self.start_latest_release(version)
+
+		self.assertEqual(len(started), 5)
+		self.assertNotIn(first.name, started)
