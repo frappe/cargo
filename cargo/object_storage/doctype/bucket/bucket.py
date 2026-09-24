@@ -67,7 +67,18 @@ class Bucket(Document):
 
 			# The bucket first: a refused delete would otherwise leave it live with its key
 			# already gone, reachable by nobody. A key outliving its bucket opens nothing.
-			self.garage.delete_bucket(bucket_id)
+			try:
+				self.garage.delete_bucket(bucket_id)
+			except Error as error:
+				if "BucketNotEmpty" in str(error):
+					frappe.throw(
+						_("Bucket {0} still holds objects. Empty it before deleting it.").format(
+							self.bucket_name
+						),
+						title=_("Bucket not empty"),
+					)
+				raise
+
 			self.drop_key()
 
 	def provision(self) -> None:

@@ -12,6 +12,13 @@ from cargo.object_storage.doctype.bucket.bucket import Bucket
 BUCKET = "team-alpha"
 BUCKET_ID = "b1"
 KEY = {"accessKeyId": "GK-access", "secretAccessKey": "shh", "name": f"{BUCKET}-key"}
+# Garage v2 Admin API body for DeleteBucket on a bucket that still holds objects.
+GARAGE_BUCKET_NOT_EMPTY = """{
+  "code": "BucketNotEmpty",
+  "message": "Tried to delete a non-empty bucket",
+  "region": "in-mumbai",
+  "path": "/v2/DeleteBucket"
+}"""
 
 
 class UnitTestBucket(UnitTestCase):
@@ -207,7 +214,20 @@ class UnitTestBucket(UnitTestCase):
 			bucket={"return_value": {"id": BUCKET_ID}},
 			key={"return_value": KEY},
 			delete_key={"return_value": None},
-			delete_bucket={"side_effect": Error("DeleteBucket answered 409: BucketNotEmpty")},
+			delete_bucket={"side_effect": Error(f"DeleteBucket answered 409: {GARAGE_BUCKET_NOT_EMPTY}")},
+		)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "still holds objects"):
+			self.bucket.on_trash()
+
+		delete_key.assert_not_called()
+
+	def test_a_delete_garage_fails_for_another_reason_is_relayed(self):
+		_, _, delete_key, _ = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			key={"return_value": KEY},
+			delete_key={"return_value": None},
+			delete_bucket={"side_effect": Error("DeleteBucket answered 500: internal")},
 		)
 
 		with self.assertRaises(Error):
