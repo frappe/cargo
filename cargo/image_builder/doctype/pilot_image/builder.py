@@ -10,7 +10,7 @@ from cargo.ssh import SshError, run_over_ssh, script
 # Atlas records the snapshotted machine's shape as the warm-start template, so this is the
 # shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
 # on its own, which is why the provision script runs on temporary swap.
-BUILD_SPEC = NodeSpec(role=BUILDER, cpu_millicores=1000, ram_gb=1, disk_gb=8)
+BUILD_SPEC = NodeSpec(role=BUILDER, cpu_millicores=4000, ram_gb=2, disk_gb=8)
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
 # Atlas reports a machine running once it is created, which is before it has booted. It
@@ -93,14 +93,13 @@ class Builder:
 		nothing, so unwritten files land in the image empty."""
 		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
 
-	def enable_only_apps(
-		self, address: str, private_key: str, installed: list[str], enabled: list[str]
-	) -> str:
-		"""Leave only `enabled` of the `installed` apps turned on, ready to photograph."""
-		environment = {"INSTALLED_APPS": " ".join(installed), "ENABLED_APPS": " ".join(enabled)}
+	def change_site_apps(self, address: str, private_key: str, action: str, apps: list[str]) -> str:
+		"""Install, disable or uninstall `apps` on the image's site, or verify it holds exactly
+		`apps`. `apps` is in install order."""
+		environment = {"ACTION": action, "APPS": " ".join(apps)}
 		return run_over_ssh(
 			address,
-			script("image_builder", "conf", "pilot", "enable_apps.sh", environment=environment),
+			script("image_builder", "conf", "pilot", "snapshot_apps.sh", environment=environment),
 			private_key,
-			timeout=900,
+			timeout=1800,
 		)

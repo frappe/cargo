@@ -1,15 +1,15 @@
 {
  "actions": [],
  "autoname": "IMG-.####",
- "creation": "2026-09-21 23:56:44.688899",
+ "creation": "2026-09-23 23:28:53.933519",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_identity",
   "pilot_version",
+  "frappe_branch",
   "frappe_version",
-  "has_site",
-  "has_apps",
+  "image_type",
   "column_break_identity",
   "status",
   "error",
@@ -36,37 +36,34 @@
   },
   {
    "description": "The Frappe branch the bench is built against.",
-   "fieldname": "frappe_version",
+   "fieldname": "frappe_branch",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Frappe Version",
+   "label": "Frappe Branch",
    "options": "version-16\ndevelop",
    "reqd": 1,
    "set_only_once": 1
   },
   {
-   "default": "0",
-   "description": "Bake a site into the image. Without it the machine carries an initialised bench and no site.",
-   "fieldname": "has_site",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Has Site",
-   "set_only_once": 1
+   "description": "The Frappe version the branch reported when the build pinned its apps, such as 16.4.0.",
+   "fieldname": "frappe_version",
+   "fieldtype": "Data",
+   "label": "Frappe Version",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_identity",
    "fieldtype": "Column Break"
   },
   {
-   "default": "Draft",
+   "default": "Provisioning",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nProvisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
    "read_only": 1
   },
   {
@@ -106,15 +103,12 @@
    "read_only": 1
   },
   {
-   "default": "0",
-   "depends_on": "has_site",
-   "description": "Install every signup app on the site, then take one snapshot per app with only that app and what it requires turned on.",
-   "fieldname": "has_apps",
-   "fieldtype": "Check",
-   "label": "Has Apps",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "set_only_once": 1
+   "description": "For image type of site we will install all the apps on the bench from before hand.\n\nPilot Image Snapshot will take care of installing apps on site.\n",
+   "fieldname": "image_type",
+   "fieldtype": "Select",
+   "label": "Image Type",
+   "options": "Base\nSite",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
@@ -130,7 +124,7 @@
    "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-09-23 17:07:29.280919",
+ "modified": "2026-09-24 11:29:11.598198",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
@@ -152,6 +146,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
+ "search_fields": "pilot_version,frappe_branch,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

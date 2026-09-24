@@ -28,6 +28,7 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.image_builder.doctype.pilot_image_snapshot.pilot_image_snapshot import PilotImageSnapshot
 
 # The task holds the wait for the machine as well as the script it then runs, so a slow
 # boot cannot eat into the time the script is allowed.
@@ -96,34 +97,46 @@ class PilotImage(WorkflowBuilder):
 		# Snapshots come first: their pinned releases are what the provision script fetches.
 		self.create_snapshots()
 		self.run_provision_script()
-		self.mark_snapshotting()
+
+		snapshots = frappe.get_all(
+			"Pilot Image Snapshot", filters={"pilot_image": self.name}, order_by="creation asc", pluck="name"
+		)
+
+		for snapshot in snapshots:
+			self.mark_snapshotting(snapshot)
+			self.start_snapshotting(snapshot)
 
 	@task(queue="short")
-	def mark_snapshotting(self) -> None:
-		"""Once the provision script is done, we can start snapshotting the machine."""
-		self.status = "Snapshotting"
-		self.save()
+	def mark_snapshotting(self, snapshot_name: str) -> None:
+		"""Move the snapshot about to be taken, and the image with its first one, to Snapshotting."""
+		if self.status != "Snapshotting":
+			self.status = "Snapshotting"
+			self.save()
+
+		frappe.db.set_value("Pilot Image Snapshot", snapshot_name, "status", "Snapshotting")
+
+	@task(queue="long", timeout=3600)
+	def start_snapshotting(self, snapshot_name: str) -> None:
+		"""Take one snapshot on the build machine."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
+		snapshot.take(frappe.get_doc("Machine", self.machine), self)
 
 	@task(queue="short")
 	def create_snapshots(self) -> None:
 		"""Create snapshots for the image based on the image type. Snapshot pre-requisite will
 		prepare the apps to be installed before snapshot."""
-		# A retried task must not pin a second set of snapshots.
 		if frappe.db.exists("Pilot Image Snapshot", {"pilot_image": self.name}):
 			return
 
 		self.frappe_version = frappe_release(self.frappe_branch)
 		self.save()
 
-		# Pilot will already install the frappe app for us, we just need to create one snapshot.
 		if self.image_type == "Base":
 			self.insert_snapshot(None, [])
 			return
 
-		# Shared across snapshots, so an app two signup apps need is pinned to one commit.
 		releases: dict[str, AppRelease] = {}
 		for signup_app in SIGNUP_APPS:
-			# A tuple lists what the signup app requires first and the signup app itself last.
 			required_apps = signup_app if isinstance(signup_app, tuple) else (signup_app,)
 
 			for app in required_apps:
@@ -136,6 +149,7 @@ class PilotImage(WorkflowBuilder):
 						_("{0} requires {1}, which is not listed with it.").format(app, ", ".join(missing))
 					)
 
+			# Since singup app is the last app in the required apps.
 			self.insert_snapshot(required_apps[-1], [releases[app] for app in required_apps])
 
 	def insert_snapshot(self, signup_app: str | None, releases: list[AppRelease]) -> None:
@@ -174,8 +188,9 @@ class PilotImage(WorkflowBuilder):
 				on_output=log.write,
 			)
 
-	def get_required_apps(self) -> list[str]:
-		"""This is already calculated while creating the snapshot therefore reusing here."""
+	def get_required_apps(self) -> list[dict]:
+		"""Every app this image's snapshots pin, once each, in install order. This is already
+		calculated while creating the snapshot therefore reusing here."""
 		snapshots = frappe.get_all("Pilot Image Snapshot", filters={"pilot_image": self.name}, pluck="name")
 		if not snapshots:
 			frappe.throw(_("Pilot Image {0} has no snapshots to fetch apps for.").format(self.name))
@@ -190,9 +205,10 @@ class PilotImage(WorkflowBuilder):
 			fields=["app", "repo", "commit"],
 			order_by="parent asc, idx asc",
 		)
-		pairs = {row.app: f"{row.repo} {row.commit}" for row in rows}
+		# Keyed by app, so an app two snapshots share appears once, where it first appears.
+		apps = {row.app: row for row in rows}
 
-		return list(pairs.values())
+		return list(apps.values())
 
 	def get_provision_environment(self) -> dict[str, str]:
 		"""What provision.sh reads. The bench, site and admin domain are the same for every
@@ -213,5 +229,7 @@ class PilotImage(WorkflowBuilder):
 			"DOMAIN_PROVIDER": domain_provider,
 			# A Base image has no site and fetches no apps.
 			"IMAGE_TYPE": self.image_type,
-			"REQUIRED_APPS": "" if self.image_type == "Base" else "\n".join(self.get_required_apps()),
+			"REQUIRED_APPS": ""
+			if self.image_type == "Base"
+			else "\n".join(f"{app.repo} {app.commit}" for app in self.get_required_apps()),
 		}

@@ -1,21 +1,19 @@
 {
  "actions": [],
- "allow_bulk_edit": 0,
- "allow_rename": 0,
- "creation": "2026-09-23 16:16:13.515497",
+ "autoname": "SNAP-.#####",
+ "creation": "2026-09-23 17:24:10.266415",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "section_break_identity",
   "pilot_image",
-  "app",
+  "signup_app",
+  "required_apps",
   "column_break_identity",
   "status",
   "built_at",
   "snapshot_id",
-  "error",
-  "section_break_apps",
-  "apps"
+  "error"
  ],
  "fields": [
   {
@@ -33,16 +31,6 @@
    "options": "Pilot Image",
    "read_only": 1,
    "reqd": 1,
-   "search_index": 1
-  },
-  {
-   "description": "The signup app this snapshot is for. Empty on a build without apps.",
-   "fieldname": "app",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "App",
-   "read_only": 1,
    "search_index": 1
   },
   {
@@ -82,26 +70,28 @@
    "read_only": 1
   },
   {
-   "fieldname": "section_break_apps",
-   "fieldtype": "Section Break",
-   "label": "Apps"
+   "fieldname": "required_apps",
+   "fieldtype": "Table",
+   "label": "Required Apps",
+   "options": "Pilot Image Snapshot App"
   },
   {
-   "description": "The apps turned on in this snapshot: the app and what it requires. The rest are installed and turned off.",
-   "fieldname": "apps",
-   "fieldtype": "Table",
-   "label": "Enabled Apps",
-   "options": "Pilot Image Snapshot App",
-   "read_only": 1
+   "fieldname": "signup_app",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Signup App",
+   "read_only": 1,
+   "search_index": 1
   }
  ],
  "grid_page_length": 50,
- "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-09-23 18:00:00.000000",
+ "modified": "2026-09-24 11:05:37.527984",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image Snapshot",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
@@ -114,10 +104,8 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
+ "search_fields": "pilot_image,snapshot_id",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
- "autoname": "SNAP-.#####",
- "naming_rule": "Expression",
- "search_fields": "pilot_image,app,snapshot_id"
+ "states": []
 }
