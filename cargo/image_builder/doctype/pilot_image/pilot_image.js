@@ -44,7 +44,12 @@ function add_actions(frm) {
 				),
 				() =>
 					frm
-						.call({ doc: frm.doc, method: "restart_build", freeze: true })
+						.call({
+							doc: frm.doc,
+							method: "restart_build",
+							args: { automatic: false },
+							freeze: true,
+						})
 						.then(() => frm.reload_doc())
 			);
 		});
