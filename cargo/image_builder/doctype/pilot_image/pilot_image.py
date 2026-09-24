@@ -63,6 +63,13 @@ class PilotImage(WorkflowBuilder):
 		self.machine = MachineDoc.request(owner=self, spec=BUILD_SPEC, base_image=base_image_id()).name
 		self.save()
 
+	@property
+	def build_machine(self) -> MachineDoc | None:
+		if not self.machine:
+			return None
+
+		return frappe.get_doc("Machine", self.machine)
+
 	def sync_machines(self) -> None:
 		"""Once the machine is live we can start the initial build process."""
 		# Past this, the workflow owns the machine: a finished build terminates it on purpose.
@@ -119,7 +126,7 @@ class PilotImage(WorkflowBuilder):
 	def start_snapshotting(self, snapshot_name: str) -> None:
 		"""Take one snapshot on the build machine."""
 		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
-		snapshot.take(frappe.get_doc("Machine", self.machine), self)
+		snapshot.take(self.build_machine, self)
 
 	@task(queue="short")
 	def create_snapshots(self) -> None:
@@ -174,7 +181,7 @@ class PilotImage(WorkflowBuilder):
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def run_provision_script(self) -> None:
 		"""Based on the image type run the provision script on the machine."""
-		machine: MachineDoc = frappe.get_doc("Machine", self.machine)
+		machine: MachineDoc = self.build_machine
 		private_key = machine.get_password("ssh_private_key")
 		builder = Builder()
 		builder.wait_until_reachable(machine.address, private_key)
@@ -233,3 +240,58 @@ class PilotImage(WorkflowBuilder):
 			if self.image_type == "Base"
 			else "\n".join(f"{app.repo} {app.commit}" for app in self.get_required_apps()),
 		}
+
+	def on_workflow_failure(self, workflow) -> None:
+		"""The workflow engine has given up on this image. The machine is still running, but
+		the image is not going to be built."""
+		failed = frappe.db.get_value(
+			"Press Workflow Task",
+			{"workflow": workflow.name, "status": "Failure"},
+			["method_title", "traceback"],
+			order_by="creation desc",
+			as_dict=True,
+		)
+		stage = failed.method_title if failed else _("Build")
+		traceback = ((failed and failed.traceback) or workflow.workflow_traceback or "").strip()
+
+		# Recorded before the machine goes, so a failed release cannot hide why the build failed.
+		self.status = "Failed"
+		self.error = f"{stage}\n{traceback}"
+		self.save()
+
+		# Single failed snapshot will fail all other snapshots and the image itself.
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Snapshotting"},
+			{"status": "Failed", "error": traceback},
+		)
+		frappe.db.set_value(
+			"Pilot Image Snapshot",
+			{"pilot_image": self.name, "status": "Pending"},
+			{
+				"status": "Failed",
+				"error": _("Not taken: the build failed at {0}. See Pilot Image {1}.").format(
+					stage, self.name
+				),
+			},
+		)
+
+		self.release_build_machine()
+
+	def on_workflow_success(self, workflow) -> None:
+		"""The workflow engine has finished this image. The machine is still running, but the
+		image is built and the snapshots are taken."""
+		self.status = "Completed"
+		self.error = None
+		self.save()
+
+		self.release_build_machine()
+
+	def release_build_machine(self) -> None:
+		"""Let the build machine go. A refusal leaves it Broken and in the Error Log, which
+		`Machine.terminate` records."""
+		if not self.build_machine:
+			return
+
+		if self.build_machine.status != "Terminated":
+			self.build_machine.terminate()

@@ -12,6 +12,8 @@ BENCH="default-bench"
 SITE="site.local"
 BENCH_USER="${BENCH_USER:-frappe}"
 PREWARM_MARKER="/var/lib/pilot/prewarm-pending"
+SWAP_FILE="/swapfile"
+SWAP_SIZE="${SWAP_SIZE:-1536M}"
 
 as_bench_user() {
 	su - "$BENCH_USER" -c "$1"
@@ -25,10 +27,30 @@ sorted_words() {
 	printf '%s\n' $1 | sort
 }
 
+# Installing an app outgrows the build machine's memory, as the provision script's build did.
+start_swap() {
+	# A run that failed mid-install leaves its swap behind.
+	stop_swap
+	fallocate -l "$SWAP_SIZE" "$SWAP_FILE"
+	chmod 600 "$SWAP_FILE"
+	mkswap -q "$SWAP_FILE"
+	swapon "$SWAP_FILE"
+}
+
+# Swap on the disk would land in the snapshot, so it goes before this script returns.
+stop_swap() {
+	if swapon --show=NAME --noheadings | grep -qx "$SWAP_FILE"; then
+		swapoff "$SWAP_FILE"
+	fi
+	rm -f "$SWAP_FILE"
+}
+
 case "$ACTION" in
 install)
 	# Pilot turns an app back on when the site holds it disabled, and installs it otherwise.
+	start_swap
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' $APPS"
+	stop_swap
 	;;
 disable)
 	# Frappe runs an app's disable hooks again even when the app is already off, so skip those.
@@ -44,9 +66,11 @@ disable)
 	;;
 uninstall)
 	# Frappe's own command: Pilot's uninstall-app would also delete the app from the bench.
+	start_swap
 	for app in $(printf '%s\n' $APPS | tac); do
 		frappe_site "uninstall-app $app --yes --no-backup"
 	done
+	stop_swap
 	;;
 verify)
 	installed="$(frappe_site list-apps | awk 'NF {print $1}')"
