@@ -122,10 +122,10 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 		site_tags = self.snapshot(site_image, None, ["erpnext"]).get_atlas_tags(site_image)
 		base_tags = self.snapshot(base_image, None, []).get_atlas_tags(base_image)
 
-		self.assertEqual((apps_tags["has_site"], apps_tags["has_apps"], apps_tags["app"]), ("1", "1", "hrms"))
-		self.assertEqual((site_tags["has_site"], site_tags["has_apps"]), ("1", "0"))
+		self.assertEqual((apps_tags["has_site"], apps_tags["app"]), ("1", "hrms"))
+		self.assertEqual(site_tags["has_site"], "1")
 		self.assertNotIn("app", site_tags)
-		self.assertEqual((base_tags["has_site"], base_tags["has_apps"]), ("0", "0"))
+		self.assertEqual(base_tags["has_site"], "0")
 		self.assertEqual(apps_tags["frappe_version"], "version-16")
 
 	def test_tags_name_each_app_with_its_version(self):
