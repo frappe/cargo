@@ -21,7 +21,11 @@
   "proxy_token",
   "wildcard_domain",
   "track_pilot_releases",
-  "version_supporting_app_toggle"
+  "version_supporting_app_toggle",
+  "build_machine_spec_section",
+  "build_machine_disk_gb",
+  "build_machine_cpu",
+  "build_machine_memory"
  ],
  "fields": [
   {
@@ -151,13 +155,41 @@
    "fieldname": "version_supporting_app_toggle",
    "fieldtype": "Data",
    "label": "Version supporting app toggle"
+  },
+  {
+   "description": "Pilot Images are built on a machine of this shape, and Atlas boots every machine made from the image at the same shape.",
+   "fieldname": "build_machine_spec_section",
+   "fieldtype": "Section Break",
+   "label": "Build Machine Spec"
+  },
+  {
+   "default": "16",
+   "description": "Installing every signup app peaks at about 9 GB, before the build cleans up.",
+   "fieldname": "build_machine_disk_gb",
+   "fieldtype": "Int",
+   "label": "Build Machine Disk (GB)",
+   "reqd": 1
+  },
+  {
+   "default": "4000",
+   "fieldname": "build_machine_cpu",
+   "fieldtype": "Int",
+   "label": "Build Machine CPU (millicores)",
+   "reqd": 1
+  },
+  {
+   "default": "4",
+   "fieldname": "build_machine_memory",
+   "fieldtype": "Int",
+   "label": "Build Machine Memory (GB)",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-24 13:27:19.396039",
+ "modified": "2026-09-24 23:16:03.901721",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

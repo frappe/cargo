@@ -245,16 +245,28 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		create_image.assert_not_called()
 		self.assertEqual(image.status, "Provisioning")
 
-	def test_a_running_build_is_asked_to_fail_itself(self):
-		"""Its failure callback releases the machine, so nothing is torn down here."""
+	def test_a_running_build_is_asked_to_fail_and_loses_its_machine(self):
+		"""The flag stops the next step. Terminating the machine ends the running one."""
 		image = self.image(status="Building")
 		workflow = self.workflow(image, "Running")
 
 		with patch.object(MachineDoc, "terminate") as terminate:
 			image.stop_build()
 
-		terminate.assert_not_called()
+		terminate.assert_called_once()
 		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+
+	def test_a_stopped_build_says_so_when_it_fails(self):
+		"""The running step fails on a lost SSH session, which alone would read as a fault."""
+		image = self.image(status="Building")
+		workflow = frappe.get_doc("Press Workflow", self.workflow(image, "Failure"))
+		workflow.is_force_failure_requested = 1
+
+		with patch.object(MachineDoc, "terminate"), patch.object(PilotImage, "delete_atlas_images"):
+			image.on_workflow_failure(workflow)
+
+		self.assertEqual(image.status, "Failed")
+		self.assertIn("Stopped by request", image.error)
 
 	def test_a_build_waiting_on_its_success_callback_cannot_be_stopped(self):
 		"""The callback records the result, so a stop here would race it."""

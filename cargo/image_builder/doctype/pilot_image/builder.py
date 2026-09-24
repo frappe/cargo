@@ -7,10 +7,6 @@ import frappe
 from cargo.client_models import BUILDER, NodeSpec
 from cargo.ssh import SshError, run_over_ssh, script
 
-# Atlas records the snapshotted machine's shape as the warm-start template, so this is the
-# shape a baked image boots at, not only the shape it bakes on. The bake outgrows the memory
-# on its own, which is why the provision script runs on temporary swap.
-BUILD_SPEC = NodeSpec(role=BUILDER, cpu_millicores=4000, ram_gb=2, disk_gb=8)
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
 # Atlas reports a machine running once it is created, which is before it has booted. It
@@ -21,6 +17,18 @@ SSH_READY_TIMEOUT = 180
 SSH_READY_INTERVAL = 5
 SSH_PROBE_TIMEOUT = 15
 FLUSH_TIMEOUT = 300
+
+
+def get_build_spec() -> NodeSpec:
+	"""The build machine's shape, from Cargo Settings. Atlas records the snapshotted machine's
+	shape as the warm-start template, so this is also the shape a baked image boots at."""
+	settings = frappe.get_cached_doc("Cargo Settings")
+	return NodeSpec(
+		role=BUILDER,
+		cpu_millicores=settings.build_machine_cpu,
+		ram_gb=settings.build_machine_memory,
+		disk_gb=settings.build_machine_disk_gb,
+	)
 
 
 class Builder:
