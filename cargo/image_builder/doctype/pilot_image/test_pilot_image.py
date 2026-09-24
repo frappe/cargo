@@ -6,13 +6,13 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.atlas_client import AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import AppRelease
 from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
 from cargo.testing import SETTINGS, use_test_settings
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
+SNAPSHOT_CONTROLLER = "cargo.image_builder.doctype.pilot_image_snapshot.pilot_image_snapshot"
 # What each app needs installed before it, as the marketplace declares it.
 REQUIRES = {"hrms": ("erpnext",), "helpdesk": ("telephony",)}
 
@@ -305,12 +305,31 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			image.on_workflow_failure(workflow)
 
 		self.assertEqual(image.status, "Failed")
-		for snapshot in (available, snapshotting, pending):
+		for snapshot in (snapshotting, pending):
 			self.assertEqual(frappe.db.get_value("Pilot Image Snapshot", snapshot, "status"), "Failed")
-		self.assertIn("deleted", frappe.db.get_value("Pilot Image Snapshot", available, "error"))
 		self.assertIn("Not taken", frappe.db.get_value("Pilot Image Snapshot", pending, "error"))
+		# Its image is deleted next, and only that marks it Failed.
+		self.assertEqual(frappe.db.get_value("Pilot Image Snapshot", available, "status"), "Available")
 		release_build_machine.assert_called_once()
 		delete_atlas_images.assert_called_once()
+
+	def test_a_snapshot_stays_available_until_atlas_deletes_its_image(self):
+		"""Its record must not claim an image is gone that Atlas still serves."""
+		image = self.image(status="Snapshotting")
+		available = self.snapshot(image, "Available", "img-1")
+		workflow = frappe.get_doc("Press Workflow", self.workflow(image, "Failure"))
+
+		with (
+			patch.object(PilotImage, "release_build_machine"),
+			patch(f"{CONTROLLER}.AtlasClient"),
+			patch(f"{SNAPSHOT_CONTROLLER}.PilotImageSnapshot.delete_atlas_image", return_value=False),
+			self.assertRaises(frappe.ValidationError),
+		):
+			image.on_workflow_failure(workflow)
+
+		status, error = frappe.db.get_value("Pilot Image Snapshot", available, ["status", "error"])
+		self.assertEqual(status, "Available")
+		self.assertIn("build failed", error)
 
 	def test_a_finished_build_releases_its_machine(self):
 		image = self.image(status="Snapshotting")
@@ -323,24 +342,22 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertIsNone(image.error)
 		release_build_machine.assert_called_once()
 
-	def test_an_image_atlas_already_deleted_is_not_an_error(self):
+	def test_every_image_is_tried_before_the_kept_ones_are_raised(self):
 		image = self.image(status="Failed")
 		self.snapshot(image, "Failed", "img-1")
-
-		with patch(f"{CONTROLLER}.AtlasClient") as atlas:
-			atlas.from_settings.return_value.delete_snapshot.side_effect = AtlasNotFound("gone")
-			image.delete_atlas_images()
-
-	def test_every_image_is_tried_before_a_refusal_is_raised(self):
-		image = self.image(status="Failed")
-		self.snapshot(image, "Failed", "img-1")
-		self.snapshot(image, "Failed", "img-2")
+		self.snapshot(image, "Available", "img-2")
 		self.snapshot(image, "Failed")
 
-		with patch(f"{CONTROLLER}.AtlasClient") as atlas:
-			delete_snapshot = atlas.from_settings.return_value.delete_snapshot
-			delete_snapshot.side_effect = [Exception("busy"), None]
-			with self.assertRaises(frappe.ValidationError):
-				image.delete_atlas_images()
+		with (
+			patch(f"{CONTROLLER}.AtlasClient"),
+			# Atlas keeps img-1 and lets img-2 go, whichever it is asked about first.
+			patch(
+				f"{SNAPSHOT_CONTROLLER}.PilotImageSnapshot.delete_atlas_image",
+				autospec=True,
+				side_effect=lambda snapshot, client: snapshot.snapshot_id != "img-1",
+			) as delete_atlas_image,
+			self.assertRaisesRegex(frappe.ValidationError, "img-1"),
+		):
+			image.delete_atlas_images()
 
-		self.assertEqual(delete_snapshot.call_count, 2)
+		self.assertEqual(delete_atlas_image.call_count, 2)

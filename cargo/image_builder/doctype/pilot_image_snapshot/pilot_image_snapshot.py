@@ -9,7 +9,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.builder import Builder
 from cargo.ssh import OutputLog, script
@@ -131,6 +131,34 @@ class PilotImageSnapshot(Document):
 
 		self.built_at = now_datetime()
 		self.status = "Available"
+		self.save()
+
+		return True
+
+	def delete_atlas_image(self, client: AtlasClient) -> bool:
+		"""Ask Atlas to delete this snapshot's image, and let go of it only once Atlas says it
+		is gone. False while Atlas still has it, so a later call tries again."""
+		try:
+			client.delete_snapshot(self.snapshot_id)
+			status = client.get_snapshot(self.snapshot_id).get("status")
+		except AtlasNotFound:
+			status = "deleted"
+		except Exception:
+			frappe.log_error(
+				title=f"Could not delete Atlas image {self.snapshot_id} of {self.name}",
+				message=frappe.get_traceback(with_context=True),
+			)
+			return False
+
+		# Atlas reclaims a deleting or archived image itself, and boots neither.
+		if status not in ("deleted", "deleting", "archived"):
+			return False
+
+		self.status = "Failed"
+		self.error = "\n".join(
+			filter(None, [self.error, _("Atlas image {0} is deleted.").format(self.snapshot_id)])
+		)
+		self.snapshot_id = None
 		self.save()
 
 		return True

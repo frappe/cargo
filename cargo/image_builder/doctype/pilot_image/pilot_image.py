@@ -6,7 +6,7 @@ import typing
 import frappe
 from frappe import _
 
-from cargo.atlas_client import AtlasClient, AtlasNotFound, base_image_id
+from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
@@ -350,15 +350,12 @@ class PilotImage(WorkflowBuilder):
 				),
 			},
 		)
+		# Stays Available until Atlas confirms its image is gone, which `delete_atlas_images` records.
 		frappe.db.set_value(
 			"Pilot Image Snapshot",
 			{"pilot_image": self.name, "status": "Available"},
-			{
-				"status": "Failed",
-				"error": _(
-					"Its Atlas image is deleted: the build failed at {0}. See Pilot Image {1}."
-				).format(stage, self.name),
-			},
+			"error",
+			_("The build failed at {0}. See Pilot Image {1}.").format(stage, self.name),
 		)
 
 		self.release_build_machine()
@@ -382,26 +379,18 @@ class PilotImage(WorkflowBuilder):
 
 	def delete_atlas_images(self) -> None:
 		"""Delete the Atlas images this build's snapshots took, so a failed build cannot be
-		booted. Tries every image, then throws if Atlas refused any."""
-		snapshot_ids = frappe.get_all(
+		booted. Tries every image, then throws if Atlas still has any, so the callback retries."""
+		snapshots = frappe.get_all(
 			"Pilot Image Snapshot",
 			filters={"pilot_image": self.name, "snapshot_id": ("is", "set")},
-			pluck="snapshot_id",
+			pluck="name",
 		)
 		client = AtlasClient.from_settings()
-		refused = []
-		for snapshot_id in snapshot_ids:
-			try:
-				client.delete_snapshot(snapshot_id)
-			except AtlasNotFound:
-				# Deleted by an earlier attempt.
-				continue
-			except Exception:
-				frappe.log_error(
-					title=f"Could not delete snapshot {snapshot_id} for failed image {self.name}",
-					message=frappe.get_traceback(with_context=True),
-				)
-				refused.append(snapshot_id)
+		kept = []
+		for name in snapshots:
+			snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", name)
+			if not snapshot.delete_atlas_image(client):
+				kept.append(snapshot.snapshot_id)
 
-		if refused:
-			frappe.throw(_("Atlas did not delete images {0}. See the Error Log.").format(", ".join(refused)))
+		if kept:
+			frappe.throw(_("Atlas still has images {0}. See the Error Log.").format(", ".join(kept)))

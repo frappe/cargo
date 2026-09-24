@@ -2,11 +2,12 @@
 # See license.txt
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.atlas_client import AtlasNotFound
 from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
 from cargo.image_builder.doctype.pilot_image_snapshot.pilot_image_snapshot import PilotImageSnapshot
 from cargo.testing import use_test_settings
@@ -150,3 +151,42 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 
 		with self.assertRaisesRegex(frappe.ValidationError, "disk full"):
 			self.atlas_reports(snapshot, {"status": "failed", "transfer_error": "disk full"})
+
+	def delete_at_atlas(self, snapshot: PilotImageSnapshot, delete=None, status=None) -> bool:
+		"""Delete through an Atlas whose delete raises `delete`, then reports `status`."""
+		client = MagicMock()
+		client.delete_snapshot.side_effect = delete
+		client.get_snapshot.return_value = {"status": status}
+
+		return snapshot.delete_atlas_image(client)
+
+	def test_an_image_atlas_is_deleting_lets_the_snapshot_go(self):
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+		snapshot.db_set({"status": "Available", "error": "The build failed."})
+
+		self.assertTrue(self.delete_at_atlas(snapshot, status="deleting"))
+		self.assertEqual(snapshot.status, "Failed")
+		self.assertIsNone(snapshot.snapshot_id)
+		self.assertIn("The build failed.", snapshot.error)
+		self.assertIn("cargo-snapshot/img-1 is deleted", snapshot.error)
+
+	def test_an_image_atlas_no_longer_has_lets_the_snapshot_go(self):
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+
+		self.assertTrue(self.delete_at_atlas(snapshot, delete=AtlasNotFound("gone")))
+		self.assertIsNone(snapshot.snapshot_id)
+
+	def test_a_refused_delete_keeps_the_snapshot_on_its_image(self):
+		"""A later call tries again, so the id stays where it can find it."""
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+		snapshot.db_set("status", "Available")
+
+		self.assertFalse(self.delete_at_atlas(snapshot, delete=Exception("busy")))
+		self.assertEqual(snapshot.status, "Available")
+		self.assertEqual(snapshot.snapshot_id, "cargo-snapshot/img-1")
+
+	def test_an_image_atlas_still_serves_keeps_the_snapshot_on_it(self):
+		snapshot = self.snapshot(self.image(), "crm", ["crm"])
+
+		self.assertFalse(self.delete_at_atlas(snapshot, status="available"))
+		self.assertEqual(snapshot.snapshot_id, "cargo-snapshot/img-1")
