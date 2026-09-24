@@ -9,7 +9,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.builder import Builder
 from cargo.ssh import OutputLog, script
@@ -106,17 +106,31 @@ class PilotImageSnapshot(Document):
 		return tags
 
 	def take(self, machine: MachineDoc, image: "PilotImage") -> None:
-		"""Put the site in this snapshot's state, photograph the machine, then undo that state.
-		Atlas answers once the copy is staged, so the machine is free to change for the next
-		snapshot."""
-		# The snapshot's status is already set by parent PilotImage.mark_snapshotting.
-		self.run_app_prerequisite(machine, image)
+		"""Ask Atlas to photograph the machine as it is now. `complete_if_available` finishes
+		the snapshot once Atlas has made the image."""
 		Builder().flush_build_machine(machine.address, machine.get_password("ssh_private_key"))
 
 		title = f"{self.pilot_image}-{self.signup_app}" if self.signup_app else self.pilot_image
 		self.snapshot_id = machine.snapshot(title, self.get_atlas_tags(image))
+		self.save()
+
+	def complete_if_available(self) -> bool:
+		"""Mark this snapshot Available once Atlas has made the image. False while Atlas is
+		still making it. Throws when Atlas failed it or is removing it."""
+		atlas_image = AtlasClient.from_settings().get_snapshot(self.snapshot_id)
+		status = atlas_image.get("status")
+		if status in ("failed", "deleting", "archived"):
+			frappe.throw(
+				_("Atlas image {0} is {1}: {2}").format(
+					self.snapshot_id, status, atlas_image.get("transfer_error") or _("Atlas gave no reason.")
+				)
+			)
+
+		if status != "available":
+			return False
+
 		self.built_at = now_datetime()
 		self.status = "Available"
 		self.save()
 
-		self.run_app_post_requisite(machine, image)
+		return True

@@ -112,6 +112,8 @@ class PilotImage(WorkflowBuilder):
 		for snapshot in snapshots:
 			self.mark_snapshotting(snapshot)
 			self.start_snapshotting(snapshot)
+			self.wait_for_snapshot(snapshot)
+			self.finish_snapshotting(snapshot)
 
 	@task(queue="short")
 	def mark_snapshotting(self, snapshot_name: str) -> None:
@@ -124,9 +126,27 @@ class PilotImage(WorkflowBuilder):
 
 	@task(queue="long", timeout=3600)
 	def start_snapshotting(self, snapshot_name: str) -> None:
-		"""Take one snapshot on the build machine."""
+		"""Put the site in the snapshot's state, then ask Atlas to photograph the machine."""
 		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
-		snapshot.take(self.build_machine, self)
+		machine = self.build_machine
+
+		snapshot.run_app_prerequisite(machine, self)
+		snapshot.take(machine, self)
+
+	@task(queue="short")
+	def wait_for_snapshot(self, snapshot_name: str) -> None:
+		"""Wait for Atlas to make the image. A deferred task is run again about once a minute."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
+		if snapshot.complete_if_available():
+			return
+
+		self.defer_current_task(_("Atlas is still making image {0}.").format(snapshot.snapshot_id))
+
+	@task(queue="long", timeout=3600)
+	def finish_snapshotting(self, snapshot_name: str) -> None:
+		"""Undo the snapshot's site state, so the next snapshot starts from a bare site."""
+		snapshot: PilotImageSnapshot = frappe.get_doc("Pilot Image Snapshot", snapshot_name)
+		snapshot.run_app_post_requisite(self.build_machine, self)
 
 	@task(queue="short")
 	def create_snapshots(self) -> None:
