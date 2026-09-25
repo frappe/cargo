@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -11,10 +13,13 @@ from frappe.utils.synchronization import filelock
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.models import BucketCredentials, BucketUsage
 
+if TYPE_CHECKING:
+	from cargo.object_storage.doctype.bucket_credential.bucket_credential import BucketCredential
+
 
 class Bucket(Document):
-	"""One bucket on this region's cluster, and the single key that opens it. Object traffic
-	never comes here: a bench speaks S3 to the gateway."""
+	"""One bucket on this region's cluster, and the keys that open it. Object traffic never
+	comes here: a bench speaks S3 to the gateway."""
 
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
@@ -24,22 +29,18 @@ class Bucket(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		access_key: DF.Data | None
+		from cargo.object_storage.doctype.bucket_credential.bucket_credential import BucketCredential
+
+		bucket_credentials: DF.Table[BucketCredential]
 		bucket_name: DF.Data
 		cluster: DF.Link
 		max_objects: DF.Int
 		max_size_gib: DF.Int
-		secret_access_key: DF.Password | None
 	# end: auto-generated types
 
 	@property
 	def garage(self) -> Client:
 		return Client(frappe.get_cached_doc("Object Storage Cluster", self.cluster))
-
-	@property
-	def key_name(self) -> str:
-		"""One key to a bucket, named after it, so a caller holding neither can find it."""
-		return f"{self.bucket_name}-key"
 
 	def lock(self):
 		"""One caller at a time per bucket name."""
@@ -59,13 +60,13 @@ class Bucket(Document):
 			self.apply_quota()
 
 	def on_trash(self) -> None:
-		"""Drop the bucket and its key. In case deletion is not possible raise."""
+		"""Drop the bucket and its keys. In case deletion is not possible raise."""
 		with self.lock():
 			bucket_id = self.get_bucket_id()
 			if not bucket_id:
 				return
 
-			# The bucket first: a refused delete would otherwise leave it live with its key
+			# The bucket first: a refused delete would otherwise leave it live with its keys
 			# already gone, reachable by nobody. A key outliving its bucket opens nothing.
 			try:
 				self.garage.delete_bucket(bucket_id)
@@ -79,7 +80,8 @@ class Bucket(Document):
 					)
 				raise
 
-			self.drop_key()
+			for credential in self.bucket_credentials:
+				self.garage.delete_key(credential.access_key)
 
 	def provision(self) -> None:
 		"""Ensure a bucket with a key is created, if the key fails the bucket is deleted."""
@@ -92,8 +94,7 @@ class Bucket(Document):
 				raise
 
 		self.flags.provisioned = frappe._dict(bucket_id=bucket_id, access_key=credentials.access_key)
-		self.access_key = credentials.access_key
-		self.secret_access_key = credentials.secret_access_key
+		self.append("bucket_credentials", credentials.asdict())
 
 	def discard_provisioned(self) -> None:
 		"""Undo provision() for an insert that failed after it."""
@@ -145,49 +146,76 @@ class Bucket(Document):
 		if not bucket_id:
 			frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
 
-		key = self.garage.create_key(self.key_name)
+		key = self.garage.create_key(f"{self.bucket_name}-key")
 		try:
 			self.garage.allow_bucket_key(bucket_id, key["accessKeyId"])
 		except Error:
-			# A key that cannot be granted reaches nothing and is tracked by nothing.
 			self.garage.delete_key(key["accessKeyId"])
 			raise
 
 		return BucketCredentials(access_key=key["accessKeyId"], secret_access_key=key["secretAccessKey"])
 
-	@frappe.whitelist()
-	def rotate_credentials(self) -> BucketCredentials:
-		"""Replace this bucket's key and record it."""
-		credentials = self.rotate_key()
-		self.save()
-
-		return credentials
-
-	def rotate_key(self) -> BucketCredentials:
-		"""Replace this bucket's key in Garage and put it on the record, unsaved. Minted
-		before the old one goes, so a rotation that fails halfway leaves the bucket
-		reachable rather than shut."""
+	def add_key(self) -> BucketCredentials:
+		"""Issue one more key onto the record, unsaved."""
 		with self.lock():
-			# Read first: the new key is created under the same name.
-			previous = self.garage.key(self.key_name)
 			credentials = self.issue_credentials()
-			if previous:
-				self.garage.delete_key(previous["accessKeyId"])
 
-		self.access_key = credentials.access_key
-		self.secret_access_key = credentials.secret_access_key
+		self.append("bucket_credentials", credentials.asdict())
+
+		return credentials
+
+	def remove_key(self, access_key: str) -> None:
+		"""Delete one of this bucket's keys in Garage and on the record."""
+		credential = self.get_credential(access_key)
+		with self.lock():
+			info = self.garage.bucket(self.bucket_name)
+			if not info:
+				frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
+
+			if len(info["keys"]) == 1:
+				frappe.throw(_("Bucket {0} must have at least one key.").format(self.bucket_name))
+
+			self.garage.delete_key(access_key)
+
+		self.remove(credential)
+
+	def rotate_key(self, access_key: str) -> BucketCredentials:
+		"""Replace one of this bucket's keys in Garage and on the record."""
+		credential = self.get_credential(access_key)
+		with self.lock():
+			credentials = self.issue_credentials()
+			self.garage.delete_key(access_key)
+
+		credential.update(credentials.asdict())
 
 		return credentials
 
 	@frappe.whitelist()
-	def revoke_credentials(self) -> None:
-		"""Take this bucket's key out of service. The bucket and its objects are untouched."""
-		with self.lock():
-			self.drop_key()
-
-		self.access_key = None
-		self.secret_access_key = None
+	def add_credentials(self) -> BucketCredentials:
+		credentials = self.add_key()
 		self.save()
+
+		return credentials
+
+	@frappe.whitelist()
+	def rotate_credentials(self, access_key: str) -> BucketCredentials:
+		credentials = self.rotate_key(access_key)
+		self.save()
+
+		return credentials
+
+	@frappe.whitelist()
+	def remove_credentials(self, access_key: str) -> None:
+		self.remove_key(access_key)
+		self.save()
+
+	def get_credential(self, access_key: str) -> BucketCredential:
+		"""This bucket's row for `access_key`. Refuses a key it does not hold."""
+		for credential in self.bucket_credentials:
+			if credential.access_key == access_key:
+				return credential
+
+		frappe.throw(_("Bucket {0} holds no key {1}.").format(self.bucket_name, access_key))
 
 	@frappe.whitelist()
 	def get_usage(self) -> BucketUsage:
@@ -218,8 +246,3 @@ class Bucket(Document):
 			self.max_size_gib * 1024**3 if self.max_size_gib else None,
 			self.max_objects or None,
 		)
-
-	def drop_key(self) -> None:
-		"""Delete this bucket's key if Garage still holds one. No lock: it runs inside one."""
-		if key := self.garage.key(self.key_name):
-			self.garage.delete_key(key["accessKeyId"])
