@@ -21,6 +21,7 @@ frappe.ui.form.on("Datum Server", {
 		follow_setup_log(frm);
 		add_machine_button(frm);
 		add_setup_button(frm);
+		add_reset_attempts_button(frm);
 		set_headline(frm);
 	},
 });
@@ -101,6 +102,16 @@ function add_setup_button(frm) {
 				})
 		);
 	}).addClass(first ? "btn-primary" : "");
+}
+
+function add_reset_attempts_button(frm) {
+	if (!frm.doc.auto_spawn || !frm.doc.auto_setup_attempts) return;
+
+	frm.add_custom_button(__("Reset Setup Attempts"), () => {
+		frappe.confirm(__("Let Cargo try setting up this host again by itself?"), () =>
+			frm.call("reset_auto_setup_attempts").then(() => frm.reload_doc())
+		);
+	});
 }
 
 // Setup writes its log as it runs, so follow it rather than making the operator reload.

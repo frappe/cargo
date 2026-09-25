@@ -85,9 +85,10 @@ class SpawnTestCase(IntegrationTestCase):
 	def configured(self, config: dict | None = CONFIG):
 		return patch.dict(frappe.local.conf, {CONFIG_KEY: config})
 
-	def atlas(self):
+	def atlas(self, image_id: str = "img-base"):
 		client = patch("cargo.atlas_client.AtlasClient.from_settings").start()
 		self.addCleanup(patch.stopall)
+		client.return_value.find_system_image.return_value = image_id
 		client.return_value.create_vm.side_effect = lambda **kwargs: {
 			"id": f"vm-{frappe.generate_hash(length=8)}"
 		}
@@ -186,6 +187,22 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu_millicores"])
 		self.assertTrue(self.host().machine)
 
+	def test_the_base_image_comes_from_atlas_and_not_a_name(self):
+		atlas = self.atlas(image_id="img-42")
+		with self.configured():
+			ensure_telemetry()
+
+		self.assertEqual(atlas.create_vm.call_args.kwargs["image_id"], "img-42")
+
+	def test_a_base_image_set_on_the_host_is_used_as_is(self):
+		atlas = self.atlas()
+		self.server.db_set("base_image", "img-pinned")
+		with self.configured():
+			ensure_telemetry()
+
+		self.assertEqual(atlas.create_vm.call_args.kwargs["image_id"], "img-pinned")
+		atlas.find_system_image.assert_not_called()
+
 	def test_the_next_run_asks_for_nothing_more(self):
 		atlas = self.atlas()
 		self.machine_of(self.server, status="Pending")
@@ -254,3 +271,12 @@ class IntegrationTestTelemetrySpawnSetup(SpawnTestCase):
 		self.server.db_set({"status": "Failed", "auto_setup_attempts": MAX_SETUP_ATTEMPTS})
 
 		self.run_once().assert_not_called()
+
+	def test_a_reset_budget_lets_the_spawner_try_again(self):
+		self.machine_of(self.server)
+		self.server.db_set({"status": "Failed", "auto_setup_attempts": MAX_SETUP_ATTEMPTS})
+
+		self.host().reset_auto_setup_attempts()
+
+		self.run_once().assert_called_once()
+		self.assertEqual(self.host().auto_setup_attempts, 1)

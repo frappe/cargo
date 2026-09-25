@@ -108,9 +108,6 @@ class DatumServer(WorkflowBuilder):
 			if not self.get(field):
 				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
 
-		if not self.base_image:
-			self.base_image = base_image_id()
-
 	def on_update(self) -> None:
 		"""Tell Central when the host settles. Install writes this Single blank, and an empty
 		one is no host."""
@@ -136,12 +133,18 @@ class DatumServer(WorkflowBuilder):
 				ram_gb=cint(ram_gb),
 				disk_gb=cint(disk_gb),
 			),
-			base_image=self.base_image,
+			base_image=self.base_image or base_image_id(),
 		)
 		self.machine = machine.name
 		self.save()
 
 		return self.machine
+
+	@frappe.whitelist()
+	def reset_auto_setup_attempts(self) -> None:
+		"""Give the spawner its setup attempts back, so it tries again by itself."""
+		self.check_permission("write")
+		self.db_set("auto_setup_attempts", 0)
 
 	@frappe.whitelist()
 	def setup(self) -> None:
