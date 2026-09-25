@@ -9,6 +9,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
+from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
@@ -106,6 +107,9 @@ class DatumServer(WorkflowBuilder):
 		for field in USER_PASSWORDS:
 			if not self.get(field):
 				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
+
+		if not self.base_image:
+			self.base_image = base_image_id()
 
 	def on_update(self) -> None:
 		"""Tell Central when the host settles. Install writes this Single blank, and an empty
