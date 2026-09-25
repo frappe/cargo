@@ -33,12 +33,10 @@
    "label": "Host"
   },
   {
-   "default": "ubuntu-22.04",
-   "description": "What Atlas boots the machine from. install.sh expects a Debian or Ubuntu image: it installs with apt.",
+   "description": "The Atlas image id the machine boots from. Left empty, it is found by tag at Atlas. install.sh expects a Debian or Ubuntu image: it installs with apt.",
    "fieldname": "base_image",
    "fieldtype": "Data",
-   "label": "Base Image",
-   "reqd": 1
+   "label": "Base Image"
   },
   {
    "description": "The VM datum runs on, built by Atlas. Set when the node is requested.",
@@ -55,7 +53,7 @@
   },
   {
    "default": "Draft",
-   "description": "Draft \u2014 no machine yet, or it is still booting.\nSetting Up \u2014 installing datum on the machine.\nActive \u2014 datum is running and answering.\nFailed \u2014 the machine died, or the last install did not finish. See the Setup Log.",
+   "description": "Draft — no machine yet, or it is still booting.\nSetting Up — installing datum on the machine.\nActive — datum is running and answering.\nFailed — the machine died, or the last install did not finish. See the Setup Log.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -176,7 +174,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-18 11:16:12.700500",
+ "modified": "2026-09-25 18:17:09.397184",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
