@@ -46,10 +46,9 @@ class Bucket(Document):
 		"""One caller at a time per bucket name."""
 		return filelock(f"garage-bucket-{self.bucket_name}", timeout=30)
 
-	def before_save(self) -> None:
-		"""Since passwords are not nicely handled in after insert."""
-		if self.is_new():
-			self.provision()
+	def before_insert(self) -> None:
+		"""Before Frappe names the key rows, so their secrets can be saved."""
+		self.provision()
 
 	def on_update(self) -> None:
 		# An uncapped new bucket needs no call: Garage caps nothing until it is told to.
