@@ -55,7 +55,7 @@ class DatumServer(WorkflowBuilder):
 
 		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
-		base_image: DF.Data
+		base_image: DF.Data | None
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
 		datum_user_password: DF.Password | None
