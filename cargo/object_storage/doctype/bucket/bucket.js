@@ -7,36 +7,65 @@ frappe.ui.form.on("Bucket", {
 
 		frm.add_custom_button(__("Show Usage"), () => show_usage(frm));
 
-		// Central issues and holds these keys. Rotating or revoking one here leaves Central
-		// and the bench that uses it holding a key that opens nothing, so both are last
-		// resorts rather than routine.
+		frm.add_custom_button(
+			__("Add Credentials"),
+			() =>
+				frappe.confirm(
+					__("Issue one more key for this bucket? Its other keys keep working."),
+					() => frm.call("add_credentials").then(() => frm.reload_doc())
+				),
+			__("Credentials")
+		);
+
+		if (!frm.doc.bucket_credentials?.length) return;
+
+		// Central holds these keys, so rotating or removing one here breaks its clients.
 		frm.add_custom_button(
 			__("Rotate Credentials"),
 			() =>
-				frappe.confirm(
+				pick_key(
+					frm,
+					__("Rotate Credentials"),
 					__(
 						"Central will still hold the old key. Every client using it stops working. Continue?"
 					),
-					() => frm.call("rotate_credentials").then(() => frm.reload_doc())
+					"rotate_credentials"
 				),
-			__("Emergency")
+			__("Credentials")
 		);
 
-		if (frm.doc.access_key) {
+		if (frm.doc.bucket_credentials.length > 1) {
 			frm.add_custom_button(
-				__("Revoke Credentials"),
+				__("Remove Credentials"),
 				() =>
-					frappe.confirm(
-						__(
-							"This bucket becomes unreachable until a key is issued again. Continue?"
-						),
-						() => frm.call("revoke_credentials").then(() => frm.reload_doc())
+					pick_key(
+						frm,
+						__("Remove Credentials"),
+						__("Every client using this key loses access to the bucket. Continue?"),
+						"remove_credentials"
 					),
-				__("Emergency")
+				__("Credentials")
 			);
 		}
 	},
 });
+
+function pick_key(frm, title, warning, method) {
+	frappe.prompt(
+		{
+			fieldname: "access_key",
+			fieldtype: "Select",
+			label: __("Access Key"),
+			options: frm.doc.bucket_credentials.map((credential) => credential.access_key),
+			reqd: 1,
+		},
+		({ access_key }) =>
+			frappe.confirm(warning, () =>
+				frm.call(method, { access_key }).then(() => frm.reload_doc())
+			),
+		title
+	);
+}
 
 function show_usage(frm) {
 	frm.call("get_usage").then(({ message }) => {

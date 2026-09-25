@@ -6,10 +6,13 @@ from typing import Any
 
 @dataclass
 class BucketCredentials:
-	"""The one key that opens a bucket."""
+	"""One key that opens a bucket."""
 
 	access_key: str
 	secret_access_key: str
+
+	def asdict(self) -> dict[str, Any]:
+		return asdict(self)
 
 
 @dataclass
@@ -30,6 +33,18 @@ class DeleteBucketResponse:
 
 	name: str
 	region: str
+
+	def asdict(self) -> dict[str, Any]:
+		return asdict(self)
+
+
+@dataclass
+class RemoveKeyResponse:
+	"""The key that went. The bucket's other keys still open it."""
+
+	name: str
+	region: str
+	access_key: str
 
 	def asdict(self) -> dict[str, Any]:
 		return asdict(self)
@@ -71,7 +86,7 @@ class SetQuotaResponse:
 
 @dataclass
 class RotateCredentialsResponse:
-	"""The bucket's new key. The one it replaces opens nothing."""
+	"""The bucket's new key. The one it replaces, if any, opens nothing."""
 
 	name: str
 	region: str

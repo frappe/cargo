@@ -12,6 +12,8 @@ from cargo.object_storage.doctype.bucket.bucket import Bucket
 BUCKET = "team-alpha"
 BUCKET_ID = "b1"
 KEY = {"accessKeyId": "GK-access", "secretAccessKey": "shh", "name": f"{BUCKET}-key"}
+OLD = {"access_key": "GK-old", "secret_access_key": "was"}
+OTHER = {"access_key": "GK-other", "secret_access_key": "also"}
 # Garage v2 Admin API body for DeleteBucket on a bucket that still holds objects.
 GARAGE_BUCKET_NOT_EMPTY = """{
   "code": "BucketNotEmpty",
@@ -35,6 +37,11 @@ class UnitTestBucket(UnitTestCase):
 		self.addCleanup(patcher.stop)
 
 		return patcher.start()
+
+	def holds(self, *credentials):
+		"""The bucket's key rows."""
+		for credential in credentials:
+			self.bucket.append("bucket_credentials", credential)
 
 	def answers(self, **endpoints):
 		"""Garage answering each named endpoint, and nothing else reaching the network."""
@@ -192,27 +199,27 @@ class UnitTestBucket(UnitTestCase):
 
 		quota.assert_not_called()
 
-	def test_removing_a_bucket_takes_its_key_with_it(self):
+	def test_removing_a_bucket_takes_every_key_with_it(self):
 		order = []
-		_, _, delete_key, delete_bucket = self.answers(
+		self.holds(OLD, OTHER)
+		_, delete_key, delete_bucket = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": KEY},
-			delete_key={"side_effect": lambda access_key_id: order.append("key")},
+			delete_key={"side_effect": lambda access_key_id: order.append(access_key_id)},
 			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
 		)
 
 		self.bucket.on_trash()
 
-		delete_key.assert_called_once_with(KEY["accessKeyId"])
 		delete_bucket.assert_called_once_with(BUCKET_ID)
-		# The bucket first: a 409 must not leave it live with its key already revoked.
-		self.assertEqual(order, ["bucket", "key"])
+		self.assertEqual(delete_key.call_count, 2)
+		# The bucket first: a 409 must not leave it live with its keys already gone.
+		self.assertEqual(order, ["bucket", "GK-old", "GK-other"])
 
-	def test_a_bucket_whose_delete_is_refused_keeps_its_key(self):
+	def test_a_bucket_whose_delete_is_refused_keeps_its_keys(self):
 		"""Garage answers 409 while objects remain, so the bucket stays reachable."""
-		_, _, delete_key, _ = self.answers(
+		self.holds(OLD)
+		_, delete_key, _ = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": KEY},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error(f"DeleteBucket answered 409: {GARAGE_BUCKET_NOT_EMPTY}")},
 		)
@@ -223,9 +230,9 @@ class UnitTestBucket(UnitTestCase):
 		delete_key.assert_not_called()
 
 	def test_a_delete_garage_fails_for_another_reason_is_relayed(self):
-		_, _, delete_key, _ = self.answers(
+		self.holds(OLD)
+		_, delete_key, _ = self.answers(
 			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": KEY},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error("DeleteBucket answered 500: internal")},
 		)
@@ -243,64 +250,133 @@ class UnitTestBucket(UnitTestCase):
 
 		delete_bucket.assert_not_called()
 
-	def test_revoking_leaves_the_bucket_alone(self):
-		_, delete_key, delete_bucket = self.answers(
-			key={"return_value": KEY},
+	def test_adding_a_key_keeps_the_others(self):
+		self.holds(OLD)
+		_, _, allow = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
+		)
+
+		credentials = self.bucket.add_credentials()
+
+		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
+		self.assertEqual(
+			[credential.access_key for credential in self.bucket.bucket_credentials],
+			["GK-old", KEY["accessKeyId"]],
+		)
+		allow.assert_called_once_with(BUCKET_ID, KEY["accessKeyId"])
+		self.saved.assert_called_once_with(ignore_permissions=False)
+
+	def test_a_key_that_could_not_be_recorded_is_deleted(self):
+		"""Unrecorded, nothing could ever find it to delete."""
+		self.saved.side_effect = frappe.TimestampMismatchError
+		_, _, _, delete_key = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
 			delete_key={"return_value": None},
+		)
+
+		with self.assertRaises(frappe.TimestampMismatchError):
+			self.bucket.add_credentials()
+
+		delete_key.assert_called_once_with(KEY["accessKeyId"])
+
+	def test_rotating_records_the_new_key_before_dropping_the_old(self):
+		"""A rotation that fails halfway leaves the bucket reachable, not shut."""
+		order = []
+		self.holds(OLD, OTHER)
+		self.saved.side_effect = lambda **kwargs: order.append("save")
+		self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			create_key={"side_effect": lambda name: order.append("create") or KEY},
+			allow_bucket_key={"return_value": {}},
+			delete_key={"side_effect": lambda access_key_id: order.append(access_key_id)},
+		)
+
+		credentials = self.bucket.rotate_credentials("GK-old")
+
+		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
+		self.assertEqual(order, ["create", "save", "GK-old"])
+
+	def test_rotating_replaces_only_the_chosen_key_on_the_record(self):
+		self.holds(OLD, OTHER)
+		self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
+			delete_key={"return_value": None},
+		)
+
+		self.bucket.rotate_credentials("GK-old")
+
+		rows = self.bucket.bucket_credentials
+		self.assertEqual([row.access_key for row in rows], [KEY["accessKeyId"], "GK-other"])
+		self.assertEqual(rows[0].secret_access_key, KEY["secretAccessKey"])
+
+	def test_a_rotation_that_could_not_be_recorded_keeps_the_old_key(self):
+		self.holds(OLD)
+		self.saved.side_effect = frappe.TimestampMismatchError
+		_, _, _, delete_key = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
+			delete_key={"return_value": None},
+		)
+
+		with self.assertRaises(frappe.TimestampMismatchError):
+			self.bucket.rotate_credentials("GK-old")
+
+		delete_key.assert_called_once_with(KEY["accessKeyId"])
+
+	def test_a_key_the_bucket_does_not_hold_is_refused(self):
+		"""Otherwise one bucket's record could reach another bucket's key."""
+		self.holds(OLD)
+		create_key, delete_key = self.answers(
+			create_key={"return_value": KEY}, delete_key={"return_value": None}
+		)
+
+		for action in (self.bucket.rotate_credentials, self.bucket.remove_credentials):
+			with (
+				self.subTest(action=action.__name__),
+				self.assertRaisesRegex(frappe.ValidationError, "holds no key"),
+			):
+				action("GK-someone-else")
+
+		create_key.assert_not_called()
+		delete_key.assert_not_called()
+
+	def test_removing_a_key_leaves_the_bucket_and_its_other_keys(self):
+		order = []
+		self.holds(OLD, OTHER)
+		self.saved.side_effect = lambda **kwargs: order.append("save")
+		_, _, delete_bucket = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID, "keys": [{}, {}]}},
+			delete_key={"side_effect": lambda access_key_id: order.append(access_key_id)},
 			delete_bucket={"return_value": None},
 		)
 
-		self.bucket.revoke_credentials()
+		self.bucket.remove_credentials("GK-old")
 
-		delete_key.assert_called_once_with(KEY["accessKeyId"])
+		self.assertEqual([row.access_key for row in self.bucket.bucket_credentials], ["GK-other"])
+		# Recorded first: a failed Garage delete rolls the row back onto a key that still works.
+		self.assertEqual(order, ["save", "GK-old"])
 		delete_bucket.assert_not_called()
 
-	def test_rotating_mints_the_new_key_before_dropping_the_old(self):
-		"""A rotation that fails halfway leaves the bucket reachable, not shut."""
-		order = []
-		old = {"accessKeyId": "GK-old", "secretAccessKey": "was", "name": f"{BUCKET}-key"}
-		_, _, _, allow, delete_key = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": old},
-			create_key={"return_value": KEY, "side_effect": lambda name: order.append("create") or KEY},
-			allow_bucket_key={"return_value": {}},
-			delete_key={"side_effect": lambda access_key_id: order.append("delete")},
-		)
-
-		credentials = self.bucket.rotate_credentials()
-
-		self.assertEqual(credentials.access_key, KEY["accessKeyId"])
-		self.assertEqual(order, ["create", "delete"])
-		delete_key.assert_called_once_with(old["accessKeyId"])
-		allow.assert_called_once_with(BUCKET_ID, KEY["accessKeyId"])
-
-	def test_a_rotated_key_replaces_the_one_on_the_record(self):
-		"""The record is the only place the new secret is kept."""
-		self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": None},
-			create_key={"return_value": KEY},
-			allow_bucket_key={"return_value": {}},
+	def test_the_last_key_is_not_removed(self):
+		"""Counted in Garage, which two overlapping removes cannot both see as two."""
+		self.holds(OLD, OTHER)
+		_, delete_key = self.answers(
+			bucket={"return_value": {"id": BUCKET_ID, "keys": [{}]}},
 			delete_key={"return_value": None},
 		)
 
-		credentials = self.bucket.rotate_credentials()
+		with self.assertRaisesRegex(frappe.ValidationError, "at least one key"):
+			self.bucket.remove_credentials("GK-old")
 
-		self.assertEqual(self.bucket.access_key, credentials.access_key)
-		self.assertEqual(self.bucket.secret_access_key, credentials.secret_access_key)
-		self.saved.assert_called_once()
-
-	def test_rotating_a_bucket_with_no_key_yet_just_issues_one(self):
-		_, _, _, _, delete_key = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
-			key={"return_value": None},
-			create_key={"return_value": KEY},
-			allow_bucket_key={"return_value": {}},
-			delete_key={"return_value": None},
-		)
-
-		self.assertEqual(self.bucket.rotate_credentials().access_key, KEY["accessKeyId"])
 		delete_key.assert_not_called()
+		self.saved.assert_not_called()
 
 	def test_a_bucket_no_key_could_be_made_for_is_taken_back_out(self):
 		"""Nobody was handed a way in, so leaving it would leave something unreachable."""
@@ -331,8 +407,9 @@ class UnitTestBucket(UnitTestCase):
 
 		self.bucket.provision()
 
-		self.assertEqual(self.bucket.access_key, KEY["accessKeyId"])
-		self.assertEqual(self.bucket.secret_access_key, KEY["secretAccessKey"])
+		(credential,) = self.bucket.bucket_credentials
+		self.assertEqual(credential.access_key, KEY["accessKeyId"])
+		self.assertEqual(credential.secret_access_key, KEY["secretAccessKey"])
 		delete_bucket.assert_not_called()
 
 	def test_the_key_is_put_on_the_bucket_that_was_just_made(self):
@@ -371,17 +448,22 @@ class UnitTestBucket(UnitTestCase):
 
 	def test_every_bucket_operation_holds_that_bucket_name(self):
 		"""Garage arbitrates the name, not the key behind it, so Cargo serialises the rest."""
+		self.holds(OLD, OTHER)
 		self.answers(
-			bucket={"return_value": None},
-			key={"return_value": None},
+			bucket={"return_value": {"id": BUCKET_ID, "keys": [{}, {}]}},
+			create_key={"return_value": KEY},
+			allow_bucket_key={"return_value": {}},
 			delete_key={"return_value": None},
+			delete_bucket={"return_value": None},
 		)
 		lock = self.patch(Bucket, "lock")
 
+		self.bucket.add_credentials()
+		self.bucket.rotate_credentials("GK-old")
+		self.bucket.remove_credentials("GK-other")
 		self.bucket.on_trash()
-		self.bucket.revoke_credentials()
 
-		self.assertEqual(lock.call_count, 2)
+		self.assertEqual(lock.call_count, 4)
 
 	def test_a_failed_insert_undoes_exactly_what_provision_made(self):
 		"""By id, not by name: the name could by then answer to someone else's bucket."""

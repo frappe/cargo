@@ -20,7 +20,7 @@ as_bench_user() {
 }
 
 frappe_site() {
-	as_bench_user "pilot --yes -b '$BENCH' frappe --site '$SITE' $1"
+	as_bench_user "pilot -b '$BENCH' frappe --site '$SITE' $1"
 }
 
 sorted_words() {

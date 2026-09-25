@@ -5,7 +5,7 @@ Two conversations, each one way.
 **Cargo → Central** is one webhook, and nothing else: a cluster reports whether it can be
 used. Cargo holds no Central credential and calls no Central endpoint.
 
-**Central → Cargo** is bucket work: make a bucket, drop it, rotate or revoke its key. Cargo
+**Central → Cargo** is bucket work: make a bucket, drop it, add, rotate or remove its keys. Cargo
 owns the cluster's admin token, so Central asks rather than acts.
 
 Cargo's side is `cargo/object_storage/api/bucket.py` and the webhook built in
@@ -112,7 +112,7 @@ belongs on, and guessing is worse than refusing.
 
 ### `create_bucket`
 
-The bucket and the one key that opens it:
+The bucket and the first key that opens it:
 
 ```json
 {
@@ -131,25 +131,32 @@ already taken is refused before anything is made.
 
 ### `delete_bucket`
 
-Drops the bucket and its key, and frees the name with them. Garage refuses a bucket that
+Drops the bucket and all its keys, and frees the name with them. Garage refuses a bucket that
 still holds objects with a 409, which is what stops this ever taking data with it.
+
+A bucket can have more than one key. Each key has full read and write access to the bucket.
+
+### `add_credentials`
+
+One more key for the bucket. The other keys keep working. Returns the same `credentials`
+shape as `create_bucket`, once.
 
 ### `rotate_credentials`
 
-A new key for the bucket, and the end of the one it replaces. Returns the same `credentials`
-shape as `create_bucket`, once. The new key is minted before the old one goes, so a rotation
-that fails halfway leaves the bucket reachable rather than shut.
+Takes `access_key`. Replaces that key and returns the new one in the `credentials` shape,
+once. The new key is made before the old one is deleted, so a failed rotation does not lock
+the bucket.
 
-### `revoke_credentials`
+### `remove_credentials`
 
-Takes the bucket's key out of service. The bucket and its objects stay, so this is how a
-credential is withdrawn without destroying anything.
+Takes `access_key`. Deletes that key and returns `name`, `region` and `access_key`. The
+bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's last key.
 
 ## Who holds which key
 
 Cargo keeps the powerful token. Central never sees one.
 
 The cluster's `rpc_secret`, admin token and metrics token are minted on the host and stay
-there. Central's reach is exactly the four calls above — it cannot change a layout, read a
+there. Central's reach is exactly the calls above — it cannot change a layout, read a
 node, or touch an object. Object traffic never goes near either of them: a bench speaks S3 to
 the gateway directly, so a Cargo host being down stops new buckets, not existing ones.

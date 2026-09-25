@@ -9,8 +9,7 @@
   "bucket_name",
   "cluster",
   "credentials_section",
-  "access_key",
-  "secret_access_key",
+  "bucket_credentials",
   "quota_section",
   "max_size_gib",
   "max_objects"
@@ -43,20 +42,6 @@
    "label": "Credentials"
   },
   {
-   "description": "Issued by Garage when the bucket is created. Rotate it from the menu.",
-   "fieldname": "access_key",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Access Key",
-   "read_only": 1
-  },
-  {
-   "fieldname": "secret_access_key",
-   "fieldtype": "Password",
-   "label": "Secret Access Key",
-   "read_only": 1
-  },
-  {
    "fieldname": "quota_section",
    "fieldtype": "Section Break",
    "label": "Quota"
@@ -79,12 +64,20 @@
    "fieldname": "metadata_section",
    "fieldtype": "Section Break",
    "label": "Metadata"
+  },
+  {
+   "fieldname": "bucket_credentials",
+   "fieldtype": "Table",
+   "options": "Bucket Credential",
+   "label": "Keys",
+   "description": "Every key that opens this bucket. Add, rotate or remove one from the Credentials menu.",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-22 22:54:06.782102",
+ "modified": "2026-09-25 13:24:08.379716",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket",
@@ -100,7 +93,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
- "search_fields": "cluster,access_key",
+ "search_fields": "cluster",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
