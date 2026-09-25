@@ -8,6 +8,7 @@ from cargo.object_storage.models import (
 	BucketUsageResponse,
 	CreateBucketResponse,
 	DeleteBucketResponse,
+	RemoveKeyResponse,
 	RotateCredentialsResponse,
 	SetQuotaResponse,
 )
@@ -51,7 +52,7 @@ def bucket_for(name: str, region: str) -> Bucket:
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
 def create_bucket(name: str, region: str) -> dict:
-	"""A bucket and the one key that opens it. The secret is handed back here and nowhere
+	"""A bucket and the first key that opens it. The secret is handed back here and nowhere
 	else: Cargo keeps no copy a caller can read back."""
 	check_region(region)
 	bucket: Bucket = frappe.get_doc({"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()})
@@ -61,13 +62,14 @@ def create_bucket(name: str, region: str) -> dict:
 		bucket.discard_provisioned()
 		raise
 
+	credential = bucket.bucket_credentials[0]
 	return CreateBucketResponse(
 		name=name,
 		region=region,
 		credentials=BucketCredentials(
 			# Frappe masks the field once it is encrypted, so the secret is read back out.
-			access_key=bucket.access_key,
-			secret_access_key=bucket.get_password("secret_access_key"),
+			access_key=credential.access_key,
+			secret_access_key=credential.get_password("secret_access_key"),
 		),
 	).asdict()
 
@@ -76,7 +78,7 @@ def create_bucket(name: str, region: str) -> dict:
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
 def delete_bucket(name: str, region: str) -> dict:
-	"""Drop a bucket and its key. Garage refuses a non-empty bucket, so objects are safe."""
+	"""Drop a bucket and its keys. Garage refuses a non-empty bucket, so objects are safe."""
 	bucket_for(name, region).delete(ignore_permissions=True)
 
 	return DeleteBucketResponse(name=name, region=region).asdict()
@@ -85,13 +87,38 @@ def delete_bucket(name: str, region: str) -> dict:
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
-def rotate_credentials(name: str, region: str) -> dict:
-	"""A new key for this bucket, and the end of the one it replaces. Returned once."""
+def add_credentials(name: str, region: str) -> dict:
+	"""One more key for this bucket. The others keep working. Returned once."""
 	bucket = bucket_for(name, region)
-	credentials = bucket.rotate_key()
+	credentials = bucket.add_key()
 	bucket.save(ignore_permissions=True)
 
 	return RotateCredentialsResponse(name=name, region=region, credentials=credentials).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def rotate_credentials(name: str, region: str, access_key: str) -> dict:
+	"""A new key for this bucket, and the end of the one it replaces. Returned once."""
+	bucket = bucket_for(name, region)
+	credentials = bucket.rotate_key(access_key)
+	bucket.save(ignore_permissions=True)
+
+	return RotateCredentialsResponse(name=name, region=region, credentials=credentials).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def remove_credentials(name: str, region: str, access_key: str) -> dict:
+	"""Take one key out of service. The bucket, its objects and its other keys stay."""
+	bucket = bucket_for(name, region)
+	bucket.remove_key(access_key)
+	# verify_token authenticated the caller, but the request still runs as Guest.
+	bucket.save(ignore_permissions=True)
+
+	return RemoveKeyResponse(name=name, region=region, access_key=access_key).asdict()
 
 
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.

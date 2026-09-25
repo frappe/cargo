@@ -104,13 +104,6 @@ class Client:
 	def delete_bucket(self, bucket_id: str) -> None:
 		self.call("DeleteBucket", "POST", params={"id": bucket_id})
 
-	def key(self, name: str) -> dict[str, Any] | None:
-		"""The key by exact name, secret included. `search` is a prefix match, so the name
-		is checked again here."""
-		found = self.call("GetKeyInfo", params={"search": name, "showSecretKey": "true"})
-
-		return found if found and found.get("name") == name else None
-
 	def create_key(self, name: str) -> dict[str, Any]:
 		return self.call("CreateKey", "POST", json={"name": name})
 
