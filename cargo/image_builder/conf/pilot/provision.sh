@@ -27,6 +27,9 @@ BENCH_GID="${BENCH_GID:-1000}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
+# Node sizes its heap from its own guess of host memory, about 2GB on an 8GB machine,
+# which a frontend such as CRM's outgrows. Keep it under Pilot's build memory cap.
+NODE_HEAP_MB="${NODE_HEAP_MB:-4096}"
 # One `repo commit` pair a line, fetched onto the bench in this order. Each snapshot
 # installs its own apps on the site, so none is installed here.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
@@ -100,7 +103,7 @@ fi
 # A commit as the branch clones exactly the release Cargo recorded.
 if [ "$IMAGE_TYPE" != Base ]; then
 	while read -r repo commit; do
-		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
 	done <<< "$REQUIRED_APPS"
 fi
 
