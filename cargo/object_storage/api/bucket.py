@@ -45,7 +45,8 @@ def bucket_for(name: str, region: str) -> Bucket:
 	"""The record for a bucket this Cargo keeps, or a not-found for one it does not."""
 	check_region(region)
 
-	return frappe.get_doc("Bucket", name)
+	# Row locked until commit, so an overlapping call loads this one's saved keys.
+	return frappe.get_doc("Bucket", name, for_update=True)
 
 
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
@@ -90,8 +91,8 @@ def delete_bucket(name: str, region: str) -> dict:
 def add_credentials(name: str, region: str) -> dict:
 	"""One more key for this bucket. The others keep working. Returned once."""
 	bucket = bucket_for(name, region)
-	credentials = bucket.add_key()
-	bucket.save(ignore_permissions=True)
+	# verify_token authenticated the caller, but the request still runs as Guest.
+	credentials = bucket.add_key(ignore_permissions=True)
 
 	return RotateCredentialsResponse(name=name, region=region, credentials=credentials).asdict()
 
@@ -102,8 +103,8 @@ def add_credentials(name: str, region: str) -> dict:
 def rotate_credentials(name: str, region: str, access_key: str) -> dict:
 	"""A new key for this bucket, and the end of the one it replaces. Returned once."""
 	bucket = bucket_for(name, region)
-	credentials = bucket.rotate_key(access_key)
-	bucket.save(ignore_permissions=True)
+	# verify_token authenticated the caller, but the request still runs as Guest.
+	credentials = bucket.rotate_key(access_key, ignore_permissions=True)
 
 	return RotateCredentialsResponse(name=name, region=region, credentials=credentials).asdict()
 
@@ -114,9 +115,8 @@ def rotate_credentials(name: str, region: str, access_key: str) -> dict:
 def remove_credentials(name: str, region: str, access_key: str) -> dict:
 	"""Take one key out of service. The bucket, its objects and its other keys stay."""
 	bucket = bucket_for(name, region)
-	bucket.remove_key(access_key)
 	# verify_token authenticated the caller, but the request still runs as Guest.
-	bucket.save(ignore_permissions=True)
+	bucket.remove_key(access_key, ignore_permissions=True)
 
 	return RemoveKeyResponse(name=name, region=region, access_key=access_key).asdict()
 

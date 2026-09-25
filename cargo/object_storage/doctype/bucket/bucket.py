@@ -154,59 +154,63 @@ class Bucket(Document):
 
 		return BucketCredentials(access_key=key["accessKeyId"], secret_access_key=key["secretAccessKey"])
 
-	def add_key(self) -> BucketCredentials:
-		"""Issue one more key onto the record, unsaved."""
+	def add_key(self, ignore_permissions: bool = False) -> BucketCredentials:
+		"""Issue one more key and record it."""
 		with self.lock():
 			credentials = self.issue_credentials()
-
-		self.append("bucket_credentials", credentials.asdict())
+			self.append("bucket_credentials", credentials.asdict())
+			try:
+				self.save(ignore_permissions=ignore_permissions)
+			except Exception:
+				# An unrecorded key can never be found to delete.
+				self.garage.delete_key(credentials.access_key)
+				raise
 
 		return credentials
 
-	def remove_key(self, access_key: str) -> None:
-		"""Delete one of this bucket's keys in Garage and on the record."""
+	def rotate_key(self, access_key: str, ignore_permissions: bool = False) -> BucketCredentials:
+		"""Replace one of this bucket's keys and record it."""
+		credential = self.get_credential(access_key)
+		with self.lock():
+			credentials = self.issue_credentials()
+			credential.update(credentials.asdict())
+			try:
+				self.save(ignore_permissions=ignore_permissions)
+				self.garage.delete_key(access_key)
+			except Exception:
+				# An unrecorded key can never be found to delete.
+				self.garage.delete_key(credentials.access_key)
+				raise
+
+		return credentials
+
+	def remove_key(self, access_key: str, ignore_permissions: bool = False) -> None:
+		"""Delete one of this bucket's keys and record it."""
 		credential = self.get_credential(access_key)
 		with self.lock():
 			info = self.garage.bucket(self.bucket_name)
 			if not info:
 				frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
 
+			# Counted in Garage: the record is committed after the lock is released.
 			if len(info["keys"]) == 1:
 				frappe.throw(_("Bucket {0} must have at least one key.").format(self.bucket_name))
 
+			self.remove(credential)
+			self.save(ignore_permissions=ignore_permissions)
 			self.garage.delete_key(access_key)
-
-		self.remove(credential)
-
-	def rotate_key(self, access_key: str) -> BucketCredentials:
-		"""Replace one of this bucket's keys in Garage and on the record."""
-		credential = self.get_credential(access_key)
-		with self.lock():
-			credentials = self.issue_credentials()
-			self.garage.delete_key(access_key)
-
-		credential.update(credentials.asdict())
-
-		return credentials
 
 	@frappe.whitelist()
 	def add_credentials(self) -> BucketCredentials:
-		credentials = self.add_key()
-		self.save()
-
-		return credentials
+		return self.add_key()
 
 	@frappe.whitelist()
 	def rotate_credentials(self, access_key: str) -> BucketCredentials:
-		credentials = self.rotate_key(access_key)
-		self.save()
-
-		return credentials
+		return self.rotate_key(access_key)
 
 	@frappe.whitelist()
 	def remove_credentials(self, access_key: str) -> None:
 		self.remove_key(access_key)
-		self.save()
 
 	def get_credential(self, access_key: str) -> BucketCredential:
 		"""This bucket's row for `access_key`. Refuses a key it does not hold."""
