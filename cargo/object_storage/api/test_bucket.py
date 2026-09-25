@@ -49,6 +49,8 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		self.cluster.db_set({"status": "Active", "health": "Healthy"})
 		frappe.db.delete("Bucket", {"bucket_name": BUCKET})
+		# A raw delete leaves the child rows, which a new bucket of the same name would load.
+		frappe.db.delete("Bucket Credential", {"parent": BUCKET})
 
 	@contextmanager
 	def caller(self):
