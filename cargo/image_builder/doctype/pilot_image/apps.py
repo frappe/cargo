@@ -7,7 +7,14 @@ from frappe import _
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-SIGNUP_APPS = ("erpnext", "crm", ("erpnext", "hrms"), ("telephony", "helpdesk"), "gameplan")
+SIGNUP_APPS = (
+	"erpnext",
+	("erpnext", "hrms"),
+	("telephony", "helpdesk"),
+	"gameplan",
+	"raven",
+	"builder",
+)
 
 
 @dataclass(frozen=True)

@@ -160,7 +160,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(len(snapshots), 1)
 		self.assertIsNone(snapshots[0].signup_app)
-		self.assertEqual(snapshots[0].apps, ["erpnext", "crm", "hrms", "telephony", "helpdesk", "gameplan"])
+		self.assertEqual(
+			snapshots[0].apps,
+			["erpnext", "hrms", "telephony", "helpdesk", "gameplan", "raven", "builder"],
+		)
 
 	def test_an_apps_image_takes_a_snapshot_per_signup_app(self):
 		snapshots = self.create_snapshots(self.image("Apps"))
@@ -169,10 +172,11 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[(snapshot.signup_app, snapshot.apps) for snapshot in snapshots],
 			[
 				("erpnext", ["erpnext"]),
-				("crm", ["crm"]),
 				("hrms", ["erpnext", "hrms"]),
 				("helpdesk", ["telephony", "helpdesk"]),
 				("gameplan", ["gameplan"]),
+				("raven", ["raven"]),
+				("builder", ["builder"]),
 			],
 		)
 
@@ -181,10 +185,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image = self.image("Apps")
 		self.create_snapshots(image)
 
-		self.assertEqual(len(self.create_snapshots(image)), 5)
+		self.assertEqual(len(self.create_snapshots(image)), 6)
 
 	def test_an_app_whose_requirement_is_not_listed_with_it_is_refused(self):
-		with patch.dict(REQUIRES, {"crm": ("erpnext",)}), self.assertRaises(frappe.ValidationError):
+		with patch.dict(REQUIRES, {"raven": ("erpnext",)}), self.assertRaises(frappe.ValidationError):
 			self.create_snapshots(self.image("Apps"))
 
 	def test_the_provision_script_gets_the_region_and_the_release(self):
@@ -212,7 +216,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		lines = image.get_provision_environment()["REQUIRED_APPS"].splitlines()
 
-		self.assertEqual(len(lines), 6)
+		self.assertEqual(len(lines), 7)
 		self.assertEqual(lines[0], "https://github.com/frappe/erpnext erpnext-commit")
 
 	def test_a_running_machine_starts_the_build(self):
