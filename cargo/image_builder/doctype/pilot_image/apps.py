@@ -9,7 +9,6 @@ from packaging.version import InvalidVersion, Version
 
 SIGNUP_APPS = (
 	"erpnext",
-	"crm",
 	("erpnext", "hrms"),
 	("telephony", "helpdesk"),
 	"gameplan",
