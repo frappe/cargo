@@ -7,15 +7,6 @@ from frappe import _
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
-SIGNUP_APPS = (
-	"erpnext",
-	("erpnext", "hrms"),
-	("telephony", "helpdesk"),
-	"gameplan",
-	"raven",
-	"builder",
-)
-
 
 @dataclass(frozen=True)
 class AppRelease:
@@ -71,3 +62,29 @@ def get_compatible_app_commit(app: str, frappe_version: str) -> AppRelease:
 		commit=release["commit"],
 		requires=tuple(release.get("dependencies") or {}),
 	)
+
+
+def get_signup_apps() -> list[str]:
+	"""The signup apps listed in Cargo Settings."""
+	return frappe.get_all(
+		"Signup App",
+		filters={"parenttype": "Cargo Settings", "parentfield": "signup_apps"},
+		pluck="app",
+		order_by="idx asc",
+	)
+
+
+def get_install_order(app: str, frappe_version: str, releases: dict[str, AppRelease]) -> list[AppRelease]:
+	"""`app` and every app it requires, each after what it requires. `releases` caches the
+	releases already looked up."""
+	if app not in releases:
+		releases[app] = get_compatible_app_commit(app, frappe_version)
+
+	install_order = []
+	for requirement in releases[app].requires:
+		for release in get_install_order(requirement, frappe_version, releases):
+			if release not in install_order:
+				install_order.append(release)
+
+	install_order.append(releases[app])
+	return install_order

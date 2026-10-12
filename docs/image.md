@@ -6,17 +6,19 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_branch` is one of the branches listed in **Frappe Branches** in Cargo Settings, such as `version-16` or `develop`. An image cannot be created for a branch that is not listed. `has_site` says whether a site is baked in.
+A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_branch` is one of the branches listed in **Frappe Branches** in Cargo Settings, such as `version-16` or `develop`. An image cannot be created for a branch that is not listed. `frappe_commit` is the frappe/frappe commit the image installs. A Base image created without one takes the head commit of its branch. A Site or Apps image must name one, and boots on the Base image with the same Pilot version, branch, and commit. `has_site` says whether a site is baked in.
 
 Every image carries the same bench `default-bench`, and one with `has_site` carries the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
 Turn `has_site` off to bake an initialised bench with no site on it. The image is then verified by nginx coming back at boot alone, and its prewarm warms only the admin API, so it boots warm but colder than a site image.
 
-The three together are the identity, in `validate` and in a unique database constraint, so the same release and Frappe version can exist once with a site and once without.
+`pilot_version`, `frappe_branch`, `frappe_commit`, and `image_type` together are the identity, in a unique database constraint. A new Frappe commit on the same Pilot release is therefore a new build, and each build has one image of each type.
 
 ## Requirements
 
 Set `wildcard_domain` in Cargo Settings before you build. The hostname aliases are built from it, and a build stops with an error when it is empty.
+
+List the apps in **Signup Apps** in Cargo Settings before you build a Site or Apps image, such as `erpnext` or `helpdesk`. A Site image installs all of them on its bench, and an Apps image takes one snapshot for each. Cargo reads the apps each one requires from the marketplace registry and installs them first, so `hrms` brings `erpnext`. A Site or Apps build stops with an error when the list is empty.
 
 Use Pilot `v0.0.32-pre-alpha` or later. Earlier releases have no Central bootstrap state, and their production setup does not enable nginx at boot.
 
@@ -44,12 +46,12 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 ## What the provision script installs
 
-`cargo/image_builder/conf/pilot/provision.sh` runs as root. A Base image builds on bare Ubuntu 24.04. A Site or Apps image builds on the Base image of the same Pilot release and Frappe branch, which already holds the bench user, Pilot and the initialised bench, so steps 2 and 3 and the bench part of step 4 run for Base only.
+`cargo/image_builder/conf/pilot/provision.sh` runs as root. A Base image builds on bare Ubuntu 24.04. A Site or Apps image builds on the Base image of the same build, which already holds the bench user, Pilot and the initialised bench, so steps 2 and 3 and the bench part of step 4 run for Base only.
 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
 3. Runs the Pilot installer as root, installs `tzdata-legacy` for the deprecated zone aliases such as `Asia/Calcutta`, then runs the installer as the bench user.
-4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site. `HAS_SITE=0` stops after the bench is initialised.
+4. Makes the site Administrator password, creates the bench with the admin domain, initialises the bench at `FRAPPE_COMMIT`, and creates the site. The commit is set as the branch in `bench.toml` so `init` fetches exactly that commit, then the branch name goes back so the bench follows the branch on update. The build stops if Frappe is at another commit. `HAS_SITE=0` stops after the bench is initialised.
 5. Runs `pilot setup production`.
 6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image. Without a site there is nothing to answer it, so only the nginx check runs.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. It comes last because it puts the host in the awaiting-bootstrap state, where the pending screen replaces the site the step above probes.
@@ -83,13 +85,18 @@ The aliases are written after `pilot setup production`, so `pilot setup central`
 
 Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Settings. It is off by default, and a person or another system can turn it on.
 
-An hourly job then:
+A build is one Pilot version on one Frappe commit of one branch. Three jobs then run:
 
-1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
-2. Creates the images a release needs if they are absent, one of each type for each branch in **Frappe Branches**, and builds each one. A Site or Apps image is created only after the Base image of its branch completes, because it boots on that image.
-3. Retires everything outside the newest 3 Pilot versions, which keeps 12 images.
+| Job | Runs | Does |
+|---|---|---|
+| `start_image_build_with_latest_releases` | Every 2 hours | Reads the newest published Pilot release and the head commit of each branch in **Frappe Branches**, and starts a Base image for that pair if it has none. A new Pilot release and a new Frappe commit both lead to the same check, so each build starts once. |
+| `start_site_images` | Every minute | Starts a Site image on each Completed Base image that has none. It boots on that Base image. |
+| `retry_failed_image_types_with_latest_version` | Every minute | Restarts the failed Base and Site images of the newest build on each branch, up to **Max Automatic Retries** times. |
+| `retire_older_images` | Every minute | Keeps the 3 newest completed builds on each branch and retires the images of every older build on it. |
 
-A version is newest by the time Cargo first created an image for it.
+Every Pilot release is a prerelease today, so the first job reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour.
+
+A build is newest by the time Cargo first created an image for it.
 
 Retiring deletes the Atlas snapshot and then the Cargo record. The record goes last, so a failed Atlas call cannot leave a snapshot behind. An image that is building is never retired. Atlas does not refuse an image that a machine still uses: it archives the image and reclaims it when the last machine goes.
 

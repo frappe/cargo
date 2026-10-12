@@ -27,6 +27,8 @@
   "frappe_branches",
   "version_supporting_app_toggle",
   "max_auto_retry_count",
+  "signup_apps_section",
+  "signup_apps",
   "build_machine_spec_section",
   "build_machine_disk_gb",
   "build_machine_cpu",
@@ -218,13 +220,25 @@
    "fieldtype": "Table",
    "label": "Frappe Branches",
    "options": "Frappe Branch"
+  },
+  {
+   "description": "A Site image installs every app below on its bench. An Apps image takes one snapshot for each, with that app installed on the site. The apps an app requires come from the marketplace registry and are installed before it.",
+   "fieldname": "signup_apps_section",
+   "fieldtype": "Section Break",
+   "label": "Signup Apps"
+  },
+  {
+   "fieldname": "signup_apps",
+   "fieldtype": "Table",
+   "label": "Signup Apps",
+   "options": "Signup App"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 18:00:00.000000",
+ "modified": "2026-10-12 21:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

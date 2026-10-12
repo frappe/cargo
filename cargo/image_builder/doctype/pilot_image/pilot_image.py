@@ -12,9 +12,9 @@ from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
-	SIGNUP_APPS,
 	AppRelease,
-	get_compatible_app_commit,
+	get_install_order,
+	get_signup_apps,
 )
 from cargo.image_builder.doctype.pilot_image.builder import (
 	PING_TIMEOUT,
@@ -23,7 +23,11 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	Builder,
 	get_build_spec,
 )
-from cargo.image_builder.doctype.pilot_image.releases import get_frappe_release, get_latest_pilot_release
+from cargo.image_builder.doctype.pilot_image.releases import (
+	get_frappe_head_commit,
+	get_frappe_release,
+	get_latest_pilot_release,
+)
 from cargo.ssh import OutputLog, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -51,6 +55,7 @@ class PilotImage(WorkflowBuilder):
 		build_log: DF.Code | None
 		error: DF.LongText | None
 		frappe_branch: DF.Data
+		frappe_commit: DF.Data | None
 		frappe_version: DF.Data | None
 		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
@@ -65,6 +70,13 @@ class PilotImage(WorkflowBuilder):
 	def before_insert(self) -> None:
 		if self.frappe_branch not in get_frappe_branches():
 			frappe.throw(_("Frappe branch {0} is not listed in Cargo Settings.").format(self.frappe_branch))
+
+		if not self.frappe_commit:
+			if self.image_type != "Base":
+				frappe.throw(
+					_("{0} images need the Frappe commit of their Base image.").format(self.image_type)
+				)
+			self.frappe_commit = get_frappe_head_commit(self.frappe_branch)
 
 	def after_insert(self) -> None:
 		"""Request a build machine from atlas."""
@@ -81,7 +93,7 @@ class PilotImage(WorkflowBuilder):
 		if self.image_type == "Base":
 			return base_image_id()
 
-		base_image = get_base_image(self.pilot_version, self.frappe_branch)
+		base_image = get_base_image(self.pilot_version, self.frappe_branch, self.frappe_commit)
 		snapshot_id = None
 		if base_image:
 			snapshot_id = frappe.db.get_value(
@@ -90,8 +102,8 @@ class PilotImage(WorkflowBuilder):
 
 		if not snapshot_id:
 			frappe.throw(
-				_("The Base image of Pilot {0} on {1} has not built yet.").format(
-					self.pilot_version, self.frappe_branch
+				_("The Base image of Pilot {0} on Frappe {1} at {2} has not built yet.").format(
+					self.pilot_version, self.frappe_branch, self.frappe_commit[:7]
 				)
 			)
 
@@ -254,33 +266,34 @@ class PilotImage(WorkflowBuilder):
 		if frappe.db.exists("Pilot Image Snapshot", {"pilot_image": self.name}):
 			return
 
-		self.frappe_version = get_frappe_release(self.frappe_branch)
+		self.frappe_version = get_frappe_release(self.frappe_commit)
 		self.save()
 
 		if self.image_type == "Base":
 			self.insert_snapshot(None, [])
 			return
 
+		signup_apps = get_signup_apps()
+		if not signup_apps:
+			frappe.throw(
+				_("List the signup apps in Cargo Settings before you build a {0} image.").format(
+					self.image_type
+				)
+			)
+
 		releases: dict[str, AppRelease] = {}
-		for signup_app in SIGNUP_APPS:
-			required_apps = signup_app if isinstance(signup_app, tuple) else (signup_app,)
-
-			for app in required_apps:
-				if app not in releases:
-					releases[app] = get_compatible_app_commit(app, self.frappe_version)
-
-				missing = set(releases[app].requires) - set(required_apps)
-				if missing:
-					frappe.throw(
-						_("{0} requires {1}, which is not listed with it.").format(app, ", ".join(missing))
-					)
-
+		site_apps: list[AppRelease] = []
+		for signup_app in signup_apps:
+			install_order = get_install_order(signup_app, self.frappe_version, releases)
 			if self.image_type == "Apps":
-				# Since singup app is the last app in the required apps.
-				self.insert_snapshot(required_apps[-1], [releases[app] for app in required_apps])
+				self.insert_snapshot(signup_app, install_order)
+
+			for release in install_order:
+				if release not in site_apps:
+					site_apps.append(release)
 
 		if self.image_type == "Site":
-			self.insert_snapshot(None, list(releases.values()))
+			self.insert_snapshot(None, site_apps)
 
 	def insert_snapshot(self, signup_app: str | None, releases: list[AppRelease]) -> None:
 		frappe.get_doc(
@@ -354,6 +367,7 @@ class PilotImage(WorkflowBuilder):
 		return {
 			"VERSION": self.pilot_version,
 			"FRAPPE_BRANCH": self.frappe_branch,
+			"FRAPPE_COMMIT": self.frappe_commit,
 			"WILDCARD_DOMAIN": settings.wildcard_domain or "",
 			"PROXY_SUBNET": proxy_subnet,
 			"DOMAIN_PROVIDER": domain_provider,
@@ -455,34 +469,18 @@ class PilotImage(WorkflowBuilder):
 		self.save()
 
 
-def get_base_image(pilot_version: str, frappe_branch: str) -> str | None:
-	"""The Completed Base image that Site and Apps images of this release build on."""
+def get_base_image(pilot_version: str, frappe_branch: str, frappe_commit: str) -> str | None:
+	"""The Completed Base image that Site and Apps images of this build boot on."""
 	return frappe.db.get_value(
 		"Pilot Image",
 		{
 			"pilot_version": pilot_version,
 			"frappe_branch": frappe_branch,
+			"frappe_commit": frappe_commit,
 			"image_type": "Base",
 			"status": "Completed",
 		},
 	)
-
-
-def get_newest_pilot_version() -> str | None:
-	"""The Pilot version Cargo first saw most recently, whether or not any of its builds
-	finished. A version is placed by its first image, so building an older release again
-	later does not make it the newest."""
-	image = frappe.qb.DocType("Pilot Image")
-	versions = (
-		frappe.qb.from_(image)
-		.select(image.pilot_version)
-		.groupby(image.pilot_version)
-		.orderby(Min(image.creation), order=Order.desc)
-		.limit(1)
-		.run(pluck=True)
-	)
-
-	return versions[0] if versions else None
 
 
 def get_frappe_branches() -> list[str]:
@@ -495,93 +493,131 @@ def get_frappe_branches() -> list[str]:
 	)
 
 
-def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
-	"""Every image a Pilot version is built as: each image type on each Frappe branch."""
-	image_types = frappe.get_meta("Pilot Image").get_field("image_type").options.split("\n")
-	frappe_branches = get_frappe_branches()
-	return [
-		{"pilot_version": pilot_version, "image_type": image_type, "frappe_branch": frappe_branch}
-		for image_type in image_types
-		for frappe_branch in frappe_branches
-	]
+def get_builds(frappe_branch: str, completed_only: bool = False) -> list[dict]:
+	"""The Pilot version and Frappe commit pairs built on `frappe_branch`, newest first. A pair
+	is placed by its first image, so building an older pair again does not make it the newest."""
+	image = frappe.qb.DocType("Pilot Image")
+	query = (
+		frappe.qb.from_(image)
+		.select(image.pilot_version, image.frappe_commit, Min(image.creation).as_("first_created"))
+		.where(image.frappe_branch == frappe_branch)
+		.groupby(image.pilot_version, image.frappe_commit)
+		.orderby(Min(image.creation), order=Order.desc)
+	)
+	if completed_only:
+		query = query.where(image.status == "Completed")
+
+	return query.run(as_dict=True)
+
+
+def start_image(image: dict[str, str]) -> str | None:
+	"""Insert `image`, which rents its build machine, unless it already has a build. Returns
+	the image started."""
+	# A failed build is retried by `retry_failed_image_types_with_latest_version`.
+	if frappe.db.exists("Pilot Image", image):
+		return None
+
+	try:
+		name = frappe.get_doc({"doctype": "Pilot Image", **image}).insert().name
+		# Inserting rents a machine at Atlas, which a later rollback cannot give back.
+		frappe.db.commit()  # nosemgrep
+	except frappe.UniqueValidationError:
+		# A run alongside this one inserted it first, before any machine was rented here.
+		frappe.db.rollback()
+		return None
+	except Exception:
+		frappe.db.rollback()
+		frappe.log_error(
+			title=f"Could not start a {image['image_type']} image of Pilot {image['pilot_version']}"
+		)
+		return None
+
+	return name
+
+
+def start_image_build_with_latest_releases() -> list[str]:
+	"""Start a Base image of the newest Pilot release on the head commit of each Frappe branch.
+	A new Pilot release and a new Frappe commit both lead here, and the image is built once."""
+	if not frappe.db.get_single_value("Cargo Settings", "track_pilot_releases"):
+		return []
+
+	pilot_version = get_latest_pilot_release()
+	started = []
+	for frappe_branch in get_frappe_branches():
+		image = {
+			"pilot_version": pilot_version,
+			"frappe_branch": frappe_branch,
+			"frappe_commit": get_frappe_head_commit(frappe_branch),
+			"image_type": "Base",
+		}
+		if name := start_image(image):
+			started.append(name)
+
+	return started
+
+
+def start_site_images() -> list[str]:
+	"""Start a Site image on each Completed Base image that has none. Returns the images started."""
+	if not frappe.db.get_single_value("Cargo Settings", "track_pilot_releases"):
+		return []
+
+	base_images = frappe.get_all(
+		"Pilot Image",
+		filters={"image_type": "Base", "status": "Completed", "frappe_branch": ("in", get_frappe_branches())},
+		fields=["pilot_version", "frappe_branch", "frappe_commit"],
+	)
+	started = []
+	for base_image in base_images:
+		if name := start_image({**base_image, "image_type": "Site"}):
+			started.append(name)
+
+	return started
 
 
 def retry_failed_image_types_with_latest_version() -> list[str]:
-	"""Restart each image variant of the latest Pilot version whose build failed, up to Cargo
-	Settings' `max_auto_retry_count` times. Returns the restarted images."""
-	# The newest release, even one none of whose builds has finished, so it is not left behind.
-	pilot_version = get_newest_pilot_version()
-	if not pilot_version:
-		return []
-
+	"""Restart the failed Base and Site images of the newest build on each Frappe branch, up to
+	Cargo Settings' `max_auto_retry_count` times. Returns the restarted images."""
 	max_retries = frappe.db.get_single_value("Cargo Settings", "max_auto_retry_count")
 	restarted = []
-	for image in get_image_variants(pilot_version):
-		# A variant has one image, so a Completed one or one still building is left alone.
-		failed = frappe.db.get_value(
+	for frappe_branch in get_frappe_branches():
+		# The newest build, even one that has not finished, so it is not left behind.
+		builds = get_builds(frappe_branch)
+		if not builds:
+			continue
+
+		failed_images = frappe.get_all(
 			"Pilot Image",
-			{
-				**image,
+			filters={
+				"frappe_branch": frappe_branch,
+				"pilot_version": builds[0].pilot_version,
+				"frappe_commit": builds[0].frappe_commit,
+				"image_type": ("in", ("Base", "Site")),
 				"status": "Failed",
 				"manually_failed": False,
 				"auto_retry_count": ("<", max_retries),
 			},
+			pluck="name",
 		)
-		if not failed:
-			continue
+		for name in failed_images:
+			try:
+				frappe.get_doc("Pilot Image", name).restart_build(automatic=True)
+				# One image's restart must not roll back another's, whose Atlas images are already gone.
+				frappe.db.commit()  # nosemgrep
+			except Exception:
+				frappe.db.rollback()
+				frappe.log_error(title=f"Could not restart Pilot Image {name}")
+				continue
 
-		try:
-			frappe.get_doc("Pilot Image", failed).restart_build(automatic=True)
-			# One image's restart must not roll back another's, whose Atlas images are already gone.
-			frappe.db.commit()  # nosemgrep
-		except Exception:
-			frappe.db.rollback()
-			frappe.log_error(title=f"Could not restart Pilot Image {failed}")
-			continue
-
-		restarted.append(failed)
+			restarted.append(name)
 
 	return restarted
 
 
 def retire_older_images() -> list[str]:
-	"""Keep the images of the three newest Pilot releases that have built, and retire the
-	images of every older release. Returns the retired images."""
-	image = frappe.qb.DocType("Pilot Image")
-	kept_versions = (
-		frappe.qb.from_(image)
-		.select(image.pilot_version)
-		.where(image.status == "Completed")
-		.groupby(image.pilot_version)
-		# Placed by its first image, so building an older release again does not keep it.
-		.orderby(Min(image.creation), order=Order.desc)
-		.limit(3)
-		.run(pluck=True)
-	)
-	if len(kept_versions) < 3:
-		return []
-
-	# A release first seen after these has not built yet and is still being retried, so only
-	# releases first seen before the oldest kept one go, with every image they have.
-	oldest_kept = frappe.qb.min("Pilot Image", "creation", {"pilot_version": ("in", kept_versions)})
-	older_versions = (
-		frappe.qb.from_(image)
-		.select(image.pilot_version)
-		.groupby(image.pilot_version)
-		.having(Min(image.creation) < oldest_kept)
-		.run(pluck=True)
-	)
-	if not older_versions:
-		return []
-
-	older_images = frappe.get_all(
-		"Pilot Image",
-		filters={"pilot_version": ("in", older_versions), "status": ("in", ("Completed", "Failed"))},
-		pluck="name",
-	)
-
+	"""Keep the images of the three newest builds on each Frappe branch that have completed,
+	and retire the images of every older build. Returns the retired images."""
 	retired = []
-	for name in older_images:
+	for name in get_older_images():
 		try:
 			frappe.get_doc("Pilot Image", name).retire()
 			frappe.db.commit()  # nosemgrep
@@ -595,56 +631,38 @@ def retire_older_images() -> list[str]:
 	return retired
 
 
-def start_image_build_with_latest_pilot_release() -> list[str]:
-	"""This only builds pilot base images and nothing more. — Keeps latest 3 releases."""
-	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
-
-	if not pilot_release_tracking_enabled:
-		return []
-
-	pilot_version = get_latest_pilot_release()
-	started = []
-	for image in get_image_variants(pilot_version):
-		# Site and Apps boot on the Base image, so they wait for it to complete.
-		if image["image_type"] != "Base" and not get_base_image(pilot_version, image["frappe_branch"]):
+def get_older_images() -> list[str]:
+	"""The finished images of builds older than the three newest completed ones on their branch."""
+	older_images = []
+	for frappe_branch in get_frappe_branches():
+		kept = get_builds(frappe_branch, completed_only=True)[:3]
+		if len(kept) < 3:
 			continue
 
-		# A variant that already has a build is retried by `retry_failed_image_types_with_latest_version`.
-		if frappe.db.exists("Pilot Image", image):
-			continue
+		# A build first seen after these has not completed and is still being retried, so only
+		# builds first seen before the oldest kept one go, with every image they have.
+		oldest_kept = min(build.first_created for build in kept)
+		for build in get_builds(frappe_branch):
+			if build.first_created >= oldest_kept:
+				continue
 
-		try:
-			name = frappe.get_doc({"doctype": "Pilot Image", **image}).insert().name
-			# Inserting rents a machine at Atlas, which a later rollback cannot give back.
-			frappe.db.commit()  # nosemgrep
-		except frappe.UniqueValidationError:
-			# A run alongside this one inserted it first, before any machine was rented here.
-			frappe.db.rollback()
-			continue
-		except Exception:
-			frappe.db.rollback()
-			frappe.log_error(title=f"Could not start a {image['image_type']} image of Pilot {pilot_version}")
-			continue
+			older_images += frappe.get_all(
+				"Pilot Image",
+				filters={
+					"frappe_branch": frappe_branch,
+					"pilot_version": build.pilot_version,
+					"frappe_commit": build.frappe_commit,
+					"status": ("in", ("Completed", "Failed")),
+				},
+				pluck="name",
+			)
 
-		started.append(name)
-
-	return started
-
-
-def start_image_build_with_latest_framework_release() -> list[str]:
-	"""Check the updates in frappe/frappe [develop, version-16] and build site images from this.
-	This is run periodically every 2 hours Keeps latest 3 releases of each branch."""
-
-
-def start_image_build_with_latest_app_release() -> list[str]:
-	"""Fetch individual signup app releases and build individual image with compatible framework [version-16, develop]
-	branches, this keeps latest 3 releases of each app as well.
-	"""
+	return older_images
 
 
 def on_doctype_update():
 	frappe.db.add_unique(
 		"Pilot Image",
-		["pilot_version", "image_type", "frappe_branch"],
-		constraint_name="unique_pilot_image_variant",
+		["pilot_version", "image_type", "frappe_branch", "frappe_commit"],
+		constraint_name="unique_pilot_image_build",
 	)

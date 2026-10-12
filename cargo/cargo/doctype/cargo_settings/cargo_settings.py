@@ -16,6 +16,7 @@ class CargoSettings(Document):
 		from frappe.types import DF
 
 		from cargo.cargo.doctype.frappe_branch.frappe_branch import FrappeBranch
+		from cargo.cargo.doctype.signup_app.signup_app import SignupApp
 
 		atlas_tenant_id: DF.Int
 		atlas_token: DF.Password
@@ -35,6 +36,7 @@ class CargoSettings(Document):
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
+		signup_apps: DF.Table[SignupApp]
 		track_pilot_releases: DF.Check
 		version_supporting_app_toggle: DF.Data | None
 		wildcard_domain: DF.Data

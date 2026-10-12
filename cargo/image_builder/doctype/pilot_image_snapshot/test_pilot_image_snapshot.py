@@ -32,6 +32,7 @@ class IntegrationTestPilotImageSnapshot(IntegrationTestCase):
 					"doctype": "Pilot Image",
 					"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
 					"frappe_branch": "develop" if frappe_version.startswith("17") else "version-16",
+					"frappe_commit": "a" * 40,
 					"frappe_version": frappe_version,
 					"image_type": image_type,
 				}

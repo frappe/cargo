@@ -8,6 +8,7 @@
   "section_break_identity",
   "pilot_version",
   "frappe_branch",
+  "frappe_commit",
   "frappe_version",
   "image_type",
   "column_break_identity",
@@ -128,6 +129,15 @@
    "fieldtype": "Int",
    "label": "Automatic Retries",
    "read_only": 1
+  },
+  {
+   "description": "The frappe/frappe commit the image installs. A Base image created without one takes the branch's head commit.",
+   "fieldname": "frappe_commit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Frappe Commit",
+   "length": 40,
+   "set_only_once": 1
   }
  ],
  "grid_page_length": 50,
@@ -143,7 +153,7 @@
    "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-10-12 18:00:00.000000",
+ "modified": "2026-10-12 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
@@ -165,7 +175,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
- "search_fields": "pilot_version,frappe_branch,image_type,status",
+ "search_fields": "pilot_version,frappe_branch,frappe_commit,image_type,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

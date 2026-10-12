@@ -7,6 +7,7 @@ export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
 : "${FRAPPE_BRANCH:?FRAPPE_BRANCH is required}"
+: "${FRAPPE_COMMIT:?FRAPPE_COMMIT is required}"
 : "${PROXY_SUBNET:?PROXY_SUBNET is required}"
 : "${DOMAIN_PROVIDER:?DOMAIN_PROVIDER is required}"
 # Base is a bench with no site. Site and Apps add a bare site and fetch REQUIRED_APPS onto its bench.
@@ -88,14 +89,22 @@ if [ "$IMAGE_TYPE" = Base ]; then
 	# Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
 	as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
 
-	# `new` writes bench.toml; `init` clones the framework app it names. The branch is config,
-	# not a flag, so it is set in between.
+	# `new` writes bench.toml; `init` clones the framework app it names. A commit as the
+	# branch makes `init` fetch exactly that commit. The branch goes back afterwards, so the
+	# bench still follows it on update.
 	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
-	as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_BRANCH\"|' '$bench_toml'"
-	# A silent miss would build the default branch, so check the edit took.
-	as_bench_user "grep -q '^branch = \"$FRAPPE_BRANCH\"' '$bench_toml'"
+	set_frappe_branch() {
+		as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$1\"|' '$bench_toml'"
+		# A silent miss would build the default branch, so check the edit took.
+		as_bench_user "grep -q '^branch = \"$1\"' '$bench_toml'"
+	}
 
+	set_frappe_branch "$FRAPPE_COMMIT"
 	as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
+	set_frappe_branch "$FRAPPE_BRANCH"
+
+	checked_out=$(as_bench_user "git -C /home/$BENCH_USER/pilot/benches/$BENCH/apps/frappe rev-parse HEAD")
+	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
 fi
 
 if [ "$IMAGE_TYPE" != Base ]; then
