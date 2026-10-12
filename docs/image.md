@@ -106,7 +106,7 @@ A build is one Pilot version on one Frappe commit of one branch. These jobs then
 | `start_site_images` | Every minute | Starts a Site image on the newest Completed Base image of each branch, if it has none. |
 | `start_apps_images` | Every minute | For each signup app, reads its newest stable release that runs on the newest Completed Site image of each branch. If no Apps image has that release, it starts one on that Site image. A new Site image alone rebuilds no app: the app's next release builds on it. |
 | `retry_failed_images` | Every minute | Restarts the failed Base and Site images of the newest build on each branch, and the newest Apps image of each signup app, up to **Max Automatic Retries** times each. |
-| `retire_older_images` | Every minute | Keeps the Base and Site images of the 3 newest completed builds on each branch, and the 3 newest completed Apps images of each signup app. It retires the older ones. |
+| `retire_older_images` | Every minute | Keeps the Base and Site images of the 3 newest completed builds on each branch, and the 3 newest completed Apps images of each signup app. It retires the older ones. An older Site image stays until every Apps image that boots on it has built, so a failed Apps image can still be retried. |
 
 Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads only the local registry, so it asks GitHub nothing.
 

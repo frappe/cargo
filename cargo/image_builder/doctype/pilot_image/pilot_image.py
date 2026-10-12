@@ -655,13 +655,23 @@ def get_older_builds_images(frappe_branch: str) -> list[str]:
 		if build.first_created >= oldest_kept:
 			continue
 
+		build_filters = {
+			"frappe_branch": frappe_branch,
+			"pilot_version": build.pilot_version,
+			"frappe_commit": build.frappe_commit,
+		}
+		image_types = ["Base", "Site"]
+		if frappe.db.exists(
+			"Pilot Image",
+			{**build_filters, "image_type": "Apps", "status": ("not in", ("Completed", "Retired"))},
+		):
+			image_types = ["Base"]
+
 		older_images += frappe.get_all(
 			"Pilot Image",
 			filters={
-				"frappe_branch": frappe_branch,
-				"pilot_version": build.pilot_version,
-				"frappe_commit": build.frappe_commit,
-				"image_type": ("in", ("Base", "Site")),
+				**build_filters,
+				"image_type": ("in", image_types),
 				"status": ("in", ("Completed", "Failed")),
 			},
 			pluck="name",

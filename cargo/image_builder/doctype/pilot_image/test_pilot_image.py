@@ -850,6 +850,21 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertNotIn(building.name, self.retire_older())
 
+	def test_an_old_site_image_an_apps_image_still_boots_on_is_kept(self):
+		"""Retrying the Apps image needs that exact Site image."""
+		site = self.release(1, image_type="Site")
+		self.image("Apps", "Failed", site.pilot_version)
+		[self.release(day) for day in (2, 3, 4)]
+
+		self.assertNotIn(site.name, self.retire_older())
+
+	def test_an_old_site_image_is_retired_once_its_apps_images_have_built(self):
+		site = self.release(1, image_type="Site")
+		self.image("Apps", "Completed", site.pilot_version)
+		[self.release(day) for day in (2, 3, 4)]
+
+		self.assertIn(site.name, self.retire_older())
+
 	def test_retiring_deletes_the_atlas_images_first(self):
 		image = self.image(status="Completed")
 
