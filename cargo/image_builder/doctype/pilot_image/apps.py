@@ -5,7 +5,7 @@ from pathlib import Path
 import frappe
 from frappe import _
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
 
 @dataclass(frozen=True)
@@ -20,48 +20,60 @@ class AppRelease:
 
 
 def get_registry_path() -> Path:
-	"""Get registry cache path"""
+	"""Pilot keeps the marketplace registry here and refreshes it on its own."""
 	return Path(frappe.utils.get_bench_path()).parent.parent / "system" / "registry-cache"
 
 
-def get_compatible_app_commit(app: str, frappe_version: str) -> AppRelease:
-	"""Get the newest stable release if stable is not found get the compatible release."""
-	registry_path = get_registry_path()
-
-	if not registry_path.exists() or not registry_path.is_dir():
-		frappe.throw(_("Registry cache not found."))
-
-	app_registry_file = registry_path / "apps" / f"{app}.json"
+def get_registry_releases(app: str) -> list[dict]:
+	app_registry_file = get_registry_path() / "apps" / f"{app}.json"
 	if not app_registry_file.exists():
 		frappe.throw(_("App registry file not found for {0}.").format(app))
 
-	app_registry = json.loads(app_registry_file.read_text())
-	version = Version(frappe_version)
+	return json.loads(app_registry_file.read_text())["releases"]
 
-	compatible = []
-	for release in app_registry["releases"]:
-		try:
-			# A develop Frappe reports a pre-release, which only matches when allowed, as in Pilot.
-			if release.get("frappe_core") and version in SpecifierSet(
-				release["frappe_core"], prereleases=True
-			):
-				compatible.append(release)
-		except InvalidSpecifier:
-			continue
 
-	stable = [release for release in compatible if release.get("channel") != "nightly"]
-	if not (stable or compatible):
-		frappe.throw(_("{0} has no release for Frappe {1}.").format(app, frappe_version))
-
-	release = max(stable or compatible, key=lambda release: Version(release["version"]))
+def to_app_release(app: str, release: dict) -> AppRelease:
 	return AppRelease(
 		name=app,
 		version=release["version"],
-		# Can fetch from apps.json as well but it's fine since only signup apps
+		# Every signup app lives under frappe on GitHub.
 		repo=f"https://github.com/frappe/{app}.git",
 		commit=release["commit"],
 		requires=tuple(release.get("dependencies") or {}),
 	)
+
+
+def is_compatible(release: dict, frappe_version: Version) -> bool:
+	# A develop Frappe reports a pre-release, which only matches when allowed, as in Pilot.
+	try:
+		return bool(release.get("frappe_core")) and frappe_version in SpecifierSet(
+			release["frappe_core"], prereleases=True
+		)
+	except InvalidSpecifier:
+		return False
+
+
+def get_latest_stable_release(app: str, frappe_version: str) -> AppRelease | None:
+	"""The newest stable release of `app` that runs on `frappe_version`, if it has one."""
+	version = Version(frappe_version)
+	stable = [
+		release
+		for release in get_registry_releases(app)
+		if release.get("channel") != "nightly" and is_compatible(release, version)
+	]
+	if not stable:
+		return None
+
+	return to_app_release(app, max(stable, key=lambda release: Version(release["version"])))
+
+
+def get_release_at(app: str, commit: str) -> AppRelease:
+	"""The release of `app` made from `commit`."""
+	for release in get_registry_releases(app):
+		if release["commit"] == commit:
+			return to_app_release(app, release)
+
+	frappe.throw(_("{0} has no release at commit {1}.").format(app, commit))
 
 
 def get_signup_apps() -> list[str]:
@@ -74,17 +86,22 @@ def get_signup_apps() -> list[str]:
 	)
 
 
-def get_install_order(app: str, frappe_version: str, releases: dict[str, AppRelease]) -> list[AppRelease]:
-	"""`app` and every app it requires, each after what it requires. `releases` caches the
-	releases already looked up."""
-	if app not in releases:
-		releases[app] = get_compatible_app_commit(app, frappe_version)
-
+def get_install_order(release: AppRelease, frappe_version: str) -> list[AppRelease]:
+	"""`release` and every app it requires, each after what it requires. A requirement takes
+	its newest stable release."""
 	install_order = []
-	for requirement in releases[app].requires:
-		for release in get_install_order(requirement, frappe_version, releases):
-			if release not in install_order:
-				install_order.append(release)
+	for requirement in release.requires:
+		requirement_release = get_latest_stable_release(requirement, frappe_version)
+		if not requirement_release:
+			frappe.throw(
+				_("{0} requires {1}, which has no stable release for Frappe {2}.").format(
+					release.name, requirement, frappe_version
+				)
+			)
 
-	install_order.append(releases[app])
+		for required in get_install_order(requirement_release, frappe_version):
+			if required not in install_order:
+				install_order.append(required)
+
+	install_order.append(release)
 	return install_order

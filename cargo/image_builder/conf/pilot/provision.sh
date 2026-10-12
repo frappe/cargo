@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs over SSH on an Atlas VM. Its exit status is the build's, so no status file. Base
-# starts from bare Ubuntu; Site and Apps start from the Base image of the same release.
+# starts from bare Ubuntu and builds the bench, Site starts from Base and adds a bare site,
+# and Apps starts from Site and installs one signup app on the site.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -10,7 +11,6 @@ export DEBIAN_FRONTEND=noninteractive
 : "${FRAPPE_COMMIT:?FRAPPE_COMMIT is required}"
 : "${PROXY_SUBNET:?PROXY_SUBNET is required}"
 : "${DOMAIN_PROVIDER:?DOMAIN_PROVIDER is required}"
-# Base is a bench with no site. Site and Apps add a bare site and fetch REQUIRED_APPS onto its bench.
 : "${IMAGE_TYPE:?IMAGE_TYPE is required}"
 
 # Every image carries the same bench and site. Both are reached through a hostname alias,
@@ -32,13 +32,12 @@ PROBE_DELAY="${PROBE_DELAY:-5}"
 # Node sizes its heap from its own guess of host memory, about 2GB on an 8GB machine,
 # which a frontend such as CRM's outgrows. Keep it under Pilot's build memory cap.
 NODE_HEAP_MB="${NODE_HEAP_MB:-4096}"
-# One `repo commit` pair a line, fetched onto the bench in this order. Each snapshot
-# installs its own apps on the site, so none is installed here.
+# One `app repo commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
 case "$IMAGE_TYPE" in
-Base) [ -z "$REQUIRED_APPS" ] || { echo "A Base image fetches no apps" >&2; exit 1; } ;;
-Site | Apps) [ -n "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image needs REQUIRED_APPS" >&2; exit 1; } ;;
+Base | Site) [ -z "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image installs no apps" >&2; exit 1; } ;;
+Apps) [ -n "$REQUIRED_APPS" ] || { echo "An Apps image needs REQUIRED_APPS" >&2; exit 1; } ;;
 *) echo "Unknown IMAGE_TYPE: $IMAGE_TYPE" >&2; exit 1 ;;
 esac
 
@@ -107,15 +106,18 @@ if [ "$IMAGE_TYPE" = Base ]; then
 	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
 fi
 
-if [ "$IMAGE_TYPE" != Base ]; then
+if [ "$IMAGE_TYPE" = Site ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 fi
 
-# A commit as the branch clones exactly the release Cargo recorded.
-if [ "$IMAGE_TYPE" != Base ]; then
-	while read -r repo commit; do
+if [ "$IMAGE_TYPE" = Apps ]; then
+	apps=()
+	# A commit as the branch clones exactly the release Cargo recorded.
+	while read -r app repo commit; do
 		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+		apps+=("$app")
 	done <<< "$REQUIRED_APPS"
+	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
 fi
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
@@ -125,11 +127,12 @@ as_bench_user "pilot --yes -b '$BENCH' setup production"
 # A snapshot of a host whose nginx does not come back at boot serves nothing.
 systemctl is-enabled nginx > /dev/null
 
-# `ping` proves nginx, the workers and the database without reading a built asset.
-# `--resolve` keeps it on this machine, and the wait absorbs the worker cold start.
+# `ping` proves the workers and the database without reading a built asset. It goes to the
+# loopback upstream, because nginx serves the Central pending screen once a Base image has
+# run `setup central`, and the wait absorbs the worker cold start.
 probe_site() {
 	for _ in $(seq 1 "$PROBE_ATTEMPTS"); do
-		if curl -fsS -m 20 --resolve "$SITE:80:127.0.0.1" "http://$SITE/api/method/ping" | grep -q pong; then
+		if curl -fsS -m 20 -H "Host: $SITE" "http://127.0.0.1:8000/api/method/ping" | grep -q pong; then
 			return 0
 		fi
 		sleep "$PROBE_DELAY"
@@ -144,8 +147,8 @@ if [ "$IMAGE_TYPE" != Base ]; then
 	probe_site
 fi
 
-# Last: this hands the host to Central, and the pending screen then replaces the site
-# probed above. It rewrites nginx itself now that production is up.
+# This hands the host to Central and writes the hostname aliases. Site runs it again for
+# the site alias, which Base had no site to write. It rewrites nginx itself.
 as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern 'site-*.$WILDCARD_DOMAIN'"
 
 # The admin API answers on its own Gunicorn bind. The prewarm reaches it there, past nginx,

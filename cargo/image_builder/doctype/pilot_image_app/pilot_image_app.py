@@ -4,7 +4,9 @@
 from frappe.model.document import Document
 
 
-class PilotImageSnapshotApp(Document):
+class PilotImageApp(Document):
+	"""One app release a Pilot Image installs, pinned to its commit."""
+
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 

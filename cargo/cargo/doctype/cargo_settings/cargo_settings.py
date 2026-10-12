@@ -38,7 +38,6 @@ class CargoSettings(Document):
 		region_id: DF.Int
 		signup_apps: DF.Table[SignupApp]
 		track_pilot_releases: DF.Check
-		version_supporting_app_toggle: DF.Data | None
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 
