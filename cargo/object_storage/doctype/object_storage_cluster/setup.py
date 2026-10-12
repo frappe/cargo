@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TypedDict
+from urllib.parse import urlsplit
 
 import frappe
 from frappe import _
@@ -219,7 +220,17 @@ class Setup(Client):
 			"S3_PORT": self.cluster.s3_port,
 			"ADMIN_PORT": self.cluster.admin_port,
 			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
+			"CORS_ORIGIN": self.central_origin,
 		}
+
+	@property
+	def central_origin(self) -> str:
+		"""The origin the Central dashboard runs on, the one origin S3 accepts browser calls from."""
+		url = urlsplit(frappe.db.get_single_value("Cargo Settings", "central_url") or "")
+		if not (url.scheme and url.netloc):
+			frappe.throw(_("Central URL must be set in Cargo Settings."))
+
+		return f"{url.scheme}://{url.netloc}"
 
 	def apply_staged_layout(self) -> dict:
 		"""One version for everything staged. Garage refuses a layout that cannot hold a full
