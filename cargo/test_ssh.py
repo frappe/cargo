@@ -5,10 +5,14 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
 from cargo.ssh import OutputLog, live_output
+from cargo.testing import set_frappe_branches
 
 
 class TestOutputLog(IntegrationTestCase):
 	"""How a command's output reaches its document, while it runs and once it ends."""
+
+	def setUp(self):
+		set_frappe_branches(("version-16",))
 
 	def image(self) -> PilotImage:
 		with patch.object(PilotImage, "after_insert"):
@@ -17,6 +21,7 @@ class TestOutputLog(IntegrationTestCase):
 					"doctype": "Pilot Image",
 					"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
 					"frappe_branch": "version-16",
+					"frappe_commit": "a" * 40,
 					"image_type": "Base",
 				}
 			).insert()
