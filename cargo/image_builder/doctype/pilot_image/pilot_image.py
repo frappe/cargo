@@ -50,7 +50,7 @@ class PilotImage(WorkflowBuilder):
 		auto_retry_count: DF.Int
 		build_log: DF.Code | None
 		error: DF.LongText | None
-		frappe_branch: DF.Literal["version-16", "develop"]
+		frappe_branch: DF.Data
 		frappe_version: DF.Data | None
 		image_type: DF.Literal["Base", "Site", "Apps"]
 		machine: DF.Link | None
@@ -61,6 +61,10 @@ class PilotImage(WorkflowBuilder):
 
 	"""This doctype is only responsible to run the provisioning script based on the
 	supplied environment and plan and trigger snapshot creations."""
+
+	def before_insert(self) -> None:
+		if self.frappe_branch not in get_frappe_branches():
+			frappe.throw(_("Frappe branch {0} is not listed in Cargo Settings.").format(self.frappe_branch))
 
 	def after_insert(self) -> None:
 		"""Request a build machine from atlas."""
@@ -481,13 +485,24 @@ def get_newest_pilot_version() -> str | None:
 	return versions[0] if versions else None
 
 
+def get_frappe_branches() -> list[str]:
+	"""The Frappe branches listed in Cargo Settings."""
+	return frappe.get_all(
+		"Frappe Branch",
+		filters={"parenttype": "Cargo Settings", "parentfield": "frappe_branches"},
+		pluck="branch",
+		order_by="idx asc",
+	)
+
+
 def get_image_variants(pilot_version: str) -> list[dict[str, str]]:
 	"""Every image a Pilot version is built as: each image type on each Frappe branch."""
-	meta = frappe.get_meta("Pilot Image")
+	image_types = frappe.get_meta("Pilot Image").get_field("image_type").options.split("\n")
+	frappe_branches = get_frappe_branches()
 	return [
 		{"pilot_version": pilot_version, "image_type": image_type, "frappe_branch": frappe_branch}
-		for image_type in meta.get_field("image_type").options.split("\n")
-		for frappe_branch in meta.get_field("frappe_branch").options.split("\n")
+		for image_type in image_types
+		for frappe_branch in frappe_branches
 	]
 
 
@@ -581,9 +596,7 @@ def retire_older_images() -> list[str]:
 
 
 def start_image_build_with_latest_pilot_release() -> list[str]:
-	"""Start every image variant of the newest Pilot release that has no image yet. Site and
-	Apps variants start once the Base variant of their branch has completed. Returns the images
-	started."""
+	"""This only builds pilot base images and nothing more. — Keeps latest 3 releases."""
 	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
 
 	if not pilot_release_tracking_enabled:
@@ -616,6 +629,17 @@ def start_image_build_with_latest_pilot_release() -> list[str]:
 		started.append(name)
 
 	return started
+
+
+def start_image_build_with_latest_framework_release() -> list[str]:
+	"""Check the updates in frappe/frappe [develop, version-16] and build site images from this.
+	This is run periodically every 2 hours Keeps latest 3 releases of each branch."""
+
+
+def start_image_build_with_latest_app_release() -> list[str]:
+	"""Fetch individual signup app releases and build individual image with compatible framework [version-16, develop]
+	branches, this keeps latest 3 releases of each app as well.
+	"""
 
 
 def on_doctype_update():

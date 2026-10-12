@@ -6,7 +6,7 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`. `has_site` says whether a site is baked in.
+A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_branch` is one of the branches listed in **Frappe Branches** in Cargo Settings, such as `version-16` or `develop`. An image cannot be created for a branch that is not listed. `has_site` says whether a site is baked in.
 
 Every image carries the same bench `default-bench`, and one with `has_site` carries the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
 
@@ -86,7 +86,7 @@ Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Setting
 An hourly job then:
 
 1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
-2. Creates the images a release needs if they are absent, one of each type for `version-16` and `develop`, and builds each one. A Site or Apps image is created only after the Base image of its branch completes, because it boots on that image.
+2. Creates the images a release needs if they are absent, one of each type for each branch in **Frappe Branches**, and builds each one. A Site or Apps image is created only after the Base image of its branch completes, because it boots on that image.
 3. Retires everything outside the newest 3 Pilot versions, which keeps 12 images.
 
 A version is newest by the time Cargo first created an image for it.

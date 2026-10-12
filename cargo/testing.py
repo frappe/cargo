@@ -22,6 +22,7 @@ SECRETS = {
 	"central_webhook_secret": "test-webhook-secret",
 	"proxy_token": "test-proxy-token",
 }
+FRAPPE_BRANCHES = ("version-16", "develop")
 DATUM_SECRETS = ("datum_user_password", "insights_user_password", "default_user_password")
 
 
@@ -36,7 +37,24 @@ def use_test_settings() -> None:
 	for field, secret in SECRETS.items():
 		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, field)
 
+	set_frappe_branches(FRAPPE_BRANCHES)
 	frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+
+def set_frappe_branches(branches: tuple[str, ...]) -> None:
+	"""Replace the Frappe branches in Cargo Settings, without saving the whole Single."""
+	frappe.db.delete("Frappe Branch", {"parenttype": "Cargo Settings"})
+	for index, branch in enumerate(branches, start=1):
+		frappe.get_doc(
+			{
+				"doctype": "Frappe Branch",
+				"parent": "Cargo Settings",
+				"parenttype": "Cargo Settings",
+				"parentfield": "frappe_branches",
+				"idx": index,
+				"branch": branch,
+			}
+		).db_insert()
 
 
 def reset_datum_server() -> None:

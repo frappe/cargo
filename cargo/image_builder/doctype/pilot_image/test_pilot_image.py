@@ -14,7 +14,7 @@ from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	retry_failed_image_types_with_latest_version,
 	start_image_build_with_latest_pilot_release,
 )
-from cargo.testing import SETTINGS, use_test_settings
+from cargo.testing import SETTINGS, set_frappe_branches, use_test_settings
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
 SNAPSHOT_CONTROLLER = "cargo.image_builder.doctype.pilot_image_snapshot.pilot_image_snapshot"
@@ -514,6 +514,20 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			patch.object(frappe.db, "rollback"),
 		):
 			return start_image_build_with_latest_pilot_release()
+
+	def test_an_image_cannot_use_a_branch_settings_do_not_list(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.image("Base", frappe_branch="version-15")
+
+	def test_a_new_release_starts_base_images_for_the_listed_branches_only(self):
+		set_frappe_branches(("develop",))
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		self.start_latest_release(version)
+
+		self.assertEqual(
+			frappe.get_all("Pilot Image", {"pilot_version": version}, pluck="frappe_branch"), ["develop"]
+		)
 
 	def test_a_new_release_starts_with_its_base_images(self):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
