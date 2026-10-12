@@ -104,10 +104,17 @@ class PilotImage(WorkflowBuilder):
 			return base_image_id()
 
 		boot_image_type = "Base" if self.image_type == "Site" else "Site"
-		boot_image = get_completed_image(
-			self.pilot_version, self.frappe_branch, self.frappe_commit, boot_image_type
+		snapshot_id = frappe.db.get_value(
+			"Pilot Image",
+			{
+				"pilot_version": self.pilot_version,
+				"frappe_branch": self.frappe_branch,
+				"frappe_commit": self.frappe_commit,
+				"image_type": boot_image_type,
+				"status": "Completed",
+			},
+			"snapshot_id",
 		)
-		snapshot_id = boot_image and frappe.db.get_value("Pilot Image", boot_image, "snapshot_id")
 
 		if not snapshot_id:
 			frappe.throw(
@@ -393,22 +400,6 @@ class PilotImage(WorkflowBuilder):
 		self.delete_atlas_image()
 		self.status = "Retired"
 		self.save()
-
-
-def get_completed_image(
-	pilot_version: str, frappe_branch: str, frappe_commit: str, image_type: str
-) -> str | None:
-	"""The Completed image of `image_type` in a build, which the next image type boots on."""
-	return frappe.db.get_value(
-		"Pilot Image",
-		{
-			"pilot_version": pilot_version,
-			"frappe_branch": frappe_branch,
-			"frappe_commit": frappe_commit,
-			"image_type": image_type,
-			"status": "Completed",
-		},
-	)
 
 
 def get_frappe_branches() -> list[str]:
