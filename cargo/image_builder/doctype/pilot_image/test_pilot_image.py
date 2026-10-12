@@ -136,7 +136,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		return workflow.name
 
 	def test_a_new_image_rents_a_builder_and_waits_for_it(self):
-		image = self.image()
+		image = self.image("Base")
 		machine = frappe.get_doc("Machine", image.machine)
 
 		with (
@@ -148,6 +148,30 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(request.call_args.kwargs["spec"].role, "builder")
 		self.assertEqual(request.call_args.kwargs["base_image"], "img-1")
 		self.assertEqual(image.status, "Provisioning")
+
+	def test_site_and_apps_images_boot_on_their_releases_base_image(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		base = self.image("Base", "Completed", version)
+		self.snapshot(base, "Available", "img-base")
+		# Another branch's Base image must not be picked.
+		self.snapshot(
+			self.image("Base", "Completed", version, frappe_branch="develop"), "Available", "img-develop"
+		)
+
+		for image_type in ("Site", "Apps"):
+			with self.subTest(image_type):
+				self.assertEqual(self.image(image_type, pilot_version=version).get_boot_image(), "img-base")
+
+	def test_site_and_apps_images_cannot_boot_before_their_base_image_completes(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		image = self.image("Site", pilot_version=version)
+
+		with self.assertRaisesRegex(frappe.ValidationError, "has not built yet"):
+			image.get_boot_image()
+
+		self.snapshot(self.image("Base", "Building", version), "Pending")
+		with self.assertRaisesRegex(frappe.ValidationError, "has not built yet"):
+			image.get_boot_image()
 
 	def test_a_base_image_takes_one_snapshot_with_no_apps(self):
 		snapshots = self.create_snapshots(self.image("Base"))
@@ -491,7 +515,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		):
 			return start_image_build_with_latest_pilot_release()
 
-	def test_a_new_release_is_built_as_every_variant(self):
+	def test_a_new_release_starts_with_its_base_images(self):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
 
 		started = self.start_latest_release(version)
@@ -502,11 +526,21 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(sorted(started), sorted(variant.name for variant in variants))
 		self.assertEqual(
 			sorted((variant.image_type, variant.frappe_branch) for variant in variants),
+			[("Base", "develop"), ("Base", "version-16")],
+		)
+
+	def test_site_and_apps_images_start_once_their_branchs_base_image_completes(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		self.image("Base", "Building", version, frappe_branch="develop")
+
+		started = self.start_latest_release(version)
+
+		self.assertEqual(
 			sorted(
-				(image_type, frappe_branch)
-				for image_type in ("Base", "Site", "Apps")
-				for frappe_branch in ("version-16", "develop")
+				frappe.db.get_value("Pilot Image", name, ["image_type", "frappe_branch"]) for name in started
 			),
+			[("Apps", "version-16"), ("Site", "version-16")],
 		)
 
 	def test_a_variant_missing_after_another_completed_is_still_started(self):
@@ -530,9 +564,12 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
 		failed = self.image("Site", "Failed", version)
 
+		self.image("Base", "Completed", version)
+
 		started = self.start_latest_release(version)
 
-		self.assertEqual(len(started), 5)
+		# Apps on this branch, and Base on develop, whose Site and Apps wait for it.
+		self.assertEqual(len(started), 2)
 		self.assertNotIn(failed.name, started)
 		self.assertEqual(
 			frappe.db.count(
@@ -551,6 +588,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def test_a_variant_another_run_started_first_is_skipped(self):
 		"""Both runs saw no image. The index refuses the second before it rents a machine."""
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		self.image("Base", "Completed", version)
+		self.image("Base", "Completed", version, frappe_branch="develop")
 		first = self.image("Site", "Provisioning", version)
 		checked = frappe.db.exists
 
@@ -562,7 +601,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with patch.object(frappe.db, "exists", side_effect=exists_before_the_other_run):
 			started = self.start_latest_release(version)
 
-		self.assertEqual(len(started), 5)
+		# The index refuses both Base images and the first Site image.
+		self.assertEqual(len(started), 3)
 		self.assertNotIn(first.name, started)
 
 	def test_no_release_is_built_while_tracking_is_off(self):

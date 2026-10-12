@@ -44,7 +44,7 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 ## What the provision script installs
 
-`cargo/image_builder/conf/pilot/provision.sh` runs as root on a bare Ubuntu 24.04 machine.
+`cargo/image_builder/conf/pilot/provision.sh` runs as root. A Base image builds on bare Ubuntu 24.04. A Site or Apps image builds on the Base image of the same Pilot release and Frappe branch, which already holds the bench user, Pilot and the initialised bench, so steps 2 and 3 and the bench part of step 4 run for Base only.
 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
@@ -86,7 +86,7 @@ Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Setting
 An hourly job then:
 
 1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
-2. Creates the four images a release needs if they are absent -- `version-16` and `develop`, each with a site and without one -- and builds each one.
+2. Creates the images a release needs if they are absent, one of each type for `version-16` and `develop`, and builds each one. A Site or Apps image is created only after the Base image of its branch completes, because it boots on that image.
 3. Retires everything outside the newest 3 Pilot versions, which keeps 12 images.
 
 A version is newest by the time Cargo first created an image for it.

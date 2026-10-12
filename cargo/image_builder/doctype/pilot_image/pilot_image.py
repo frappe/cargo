@@ -68,8 +68,30 @@ class PilotImage(WorkflowBuilder):
 
 	def request_build_machine(self) -> None:
 		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
-		machine = MachineDoc.request(owner=self, spec=get_build_spec(), base_image=base_image_id()).name
+		machine = MachineDoc.request(owner=self, spec=get_build_spec(), base_image=self.get_boot_image()).name
 		self.db_set({"machine": machine, "status": "Provisioning"})
+
+	def get_boot_image(self) -> str:
+		"""Base boots on Ubuntu. Site and Apps boot on the Base image of the same release, which
+		already holds Pilot and the bench."""
+		if self.image_type == "Base":
+			return base_image_id()
+
+		base_image = get_base_image(self.pilot_version, self.frappe_branch)
+		snapshot_id = None
+		if base_image:
+			snapshot_id = frappe.db.get_value(
+				"Pilot Image Snapshot", {"pilot_image": base_image, "status": "Available"}, "snapshot_id"
+			)
+
+		if not snapshot_id:
+			frappe.throw(
+				_("The Base image of Pilot {0} on {1} has not built yet.").format(
+					self.pilot_version, self.frappe_branch
+				)
+			)
+
+		return snapshot_id
 
 	@property
 	def build_machine(self) -> MachineDoc | None:
@@ -429,6 +451,19 @@ class PilotImage(WorkflowBuilder):
 		self.save()
 
 
+def get_base_image(pilot_version: str, frappe_branch: str) -> str | None:
+	"""The Completed Base image that Site and Apps images of this release build on."""
+	return frappe.db.get_value(
+		"Pilot Image",
+		{
+			"pilot_version": pilot_version,
+			"frappe_branch": frappe_branch,
+			"image_type": "Base",
+			"status": "Completed",
+		},
+	)
+
+
 def get_newest_pilot_version() -> str | None:
 	"""The Pilot version Cargo first saw most recently, whether or not any of its builds
 	finished. A version is placed by its first image, so building an older release again
@@ -546,8 +581,9 @@ def retire_older_images() -> list[str]:
 
 
 def start_image_build_with_latest_pilot_release() -> list[str]:
-	"""Start every image variant of the newest Pilot release that has no image yet. Returns the
-	images started."""
+	"""Start every image variant of the newest Pilot release that has no image yet. Site and
+	Apps variants start once the Base variant of their branch has completed. Returns the images
+	started."""
 	pilot_release_tracking_enabled = frappe.db.get_single_value("Cargo Settings", "track_pilot_releases")
 
 	if not pilot_release_tracking_enabled:
@@ -556,6 +592,10 @@ def start_image_build_with_latest_pilot_release() -> list[str]:
 	pilot_version = get_latest_pilot_release()
 	started = []
 	for image in get_image_variants(pilot_version):
+		# Site and Apps boot on the Base image, so they wait for it to complete.
+		if image["image_type"] != "Base" and not get_base_image(pilot_version, image["frappe_branch"]):
+			continue
+
 		# A variant that already has a build is retried by `retry_failed_image_types_with_latest_version`.
 		if frappe.db.exists("Pilot Image", image):
 			continue
