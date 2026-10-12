@@ -7,6 +7,7 @@ set -euo pipefail
 : "${S3_PORT:?S3_PORT is required}"
 : "${ADMIN_PORT:?ADMIN_PORT is required}"
 : "${TRUSTED_PROXIES:?TRUSTED_PROXIES is required}"
+: "${CORS_ORIGIN:?CORS_ORIGIN is required}"
 NGINX_SITE="${NGINX_SITE:-/etc/nginx/sites-available/garage}"
 
 if ! command -v nginx > /dev/null 2>&1; then
@@ -55,7 +56,21 @@ server {
 	proxy_request_buffering off;
 	proxy_buffering         off;
 
+	# The Central dashboard uploads and downloads with presigned URLs, from its own origin.
+	# Garage sets CORS only per bucket, with an owner key, so nginx answers for every bucket.
+	# The signature still authorises each request; CORS only lets the browser send it.
 	location / {
+		if (\$request_method = OPTIONS) {
+			add_header Access-Control-Allow-Origin  "${CORS_ORIGIN}" always;
+			add_header Access-Control-Allow-Methods "GET, HEAD, PUT" always;
+			add_header Access-Control-Allow-Headers "Content-Type" always;
+			add_header Access-Control-Max-Age       3600 always;
+			return 204;
+		}
+
+		proxy_hide_header Access-Control-Allow-Origin;
+		add_header Access-Control-Allow-Origin   "${CORS_ORIGIN}" always;
+		add_header Access-Control-Expose-Headers "ETag" always;
 		proxy_pass http://127.0.0.1:${S3_PORT};
 	}
 }

@@ -47,6 +47,17 @@ class IntegrationTestGatewayNginx(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
 			Setup(self.setup.cluster).nginx_environment()
 
+	def test_s3_accepts_browser_calls_from_the_central_origin_only(self):
+		frappe.db.set_single_value("Cargo Settings", "central_url", "https://central.test/dashboard")
+
+		self.assertEqual(self.setup.nginx_environment()["CORS_ORIGIN"], "https://central.test")
+
+	def test_a_gateway_cannot_be_routed_without_a_central_url(self):
+		frappe.db.set_single_value("Cargo Settings", "central_url", "")
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Central URL"):
+			self.setup.nginx_environment()
+
 	def test_garage_is_not_told_any_domain(self):
 		"""Buckets are addressed by path, so Garage has no hostname to strip one from."""
 		environment = self.setup.install_environment(machine(STORAGE))
@@ -62,6 +73,9 @@ class IntegrationTestGatewayNginx(IntegrationTestCase):
 		self.assertNotIn("*.s3-svc", run.call_args.args[1])
 		self.assertIn("server_name s3-admin-svc.${WILDCARD_DOMAIN}", run.call_args.args[1])
 		self.assertIn(f"export WILDCARD_DOMAIN={SETTINGS['wildcard_domain']}", run.call_args.args[1])
+		self.assertIn(
+			'add_header Access-Control-Allow-Origin   "${CORS_ORIGIN}" always;', run.call_args.args[1]
+		)
 
 	def test_nginx_is_refused_on_a_storage_node(self):
 		with (

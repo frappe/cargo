@@ -31,7 +31,7 @@ Cargo Settings must carry `region`, `wildcard_domain`, `atlas_url`, `atlas_token
 4. Wait. `sync_pending_machines` moves each machine to Running when Atlas reports it up with a mesh address.
 5. Select **Set Up Cluster**.
 
-Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx in front of the gateway, and publishes the `s3-svc` and `s3-admin-svc` routes to the Proxy. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
+Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx in front of the gateway, and publishes the `s3-svc` and `s3-admin-svc` routes to the Proxy. The gateway nginx sends CORS headers on `s3-svc` for the origin of `central_url` only, so the Central dashboard can upload and download with presigned URLs. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
 
 ## Auto spawn
 

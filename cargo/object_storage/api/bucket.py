@@ -45,6 +45,10 @@ def bucket_for(name: str, region: str) -> Bucket:
 	"""The record for a bucket this Cargo keeps, or a not-found for one it does not."""
 	check_region(region)
 
+	# These routes run as Guest, and Frappe answers a Guest's missing document with a 403.
+	if not frappe.db.exists("Bucket", name):
+		frappe.throw(_("Bucket {0} not found.").format(name), frappe.DoesNotExistError)
+
 	# Row locked until commit, so an overlapping call loads this one's saved keys.
 	return frappe.get_doc("Bucket", name, for_update=True)
 
