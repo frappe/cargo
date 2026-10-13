@@ -10,16 +10,23 @@ app_license = "mit"
 
 # required_apps = []
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "cargo",
-# 		"logo": "/assets/cargo/logo.png",
-# 		"title": "Cargo",
-# 		"route": "/cargo",
-# 		"has_permission": "cargo.api.permission.has_app_permission"
-# 	}
-# ]
+add_to_apps_screen = [
+	{
+		"name": "cargo",
+		"logo": "/assets/cargo/logo.svg",
+		"title": "Cargo",
+		"route": "/desk/cargo",
+	}
+]
+
+# Navigation lives in the Cargo sidebar. These modules keep their doctypes and stay
+# reachable, but they no longer get a dock entry of their own.
+code_only_modules = {
+	"Image Builder": ["Cargo"],
+	"Object Storage": ["Cargo"],
+	"Telemetry": ["Cargo"],
+	"Workflow Engine": ["Cargo"],
+}
 
 # Includes in <head>
 # ------------------

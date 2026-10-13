@@ -1,0 +1,64 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"card0\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Pilot Images Building\", \"col\": 3}}, {\"id\": \"card1\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Pilot Images Completed\", \"col\": 3}}, {\"id\": \"card2\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Pilot Images Failed\", \"col\": 3}}, {\"id\": \"card3\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Machines Running\", \"col\": 3}}, {\"id\": \"card4\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Active Storage Clusters\", \"col\": 3}}, {\"id\": \"card5\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Unhealthy Storage Clusters\", \"col\": 3}}, {\"id\": \"card6\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Buckets\", \"col\": 3}}, {\"id\": \"card7\", \"type\": \"number_card\", \"data\": {\"number_card_name\": \"Failed Workflows\", \"col\": 3}}]",
+ "creation": "2026-10-13 19:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "container",
+ "idx": 0,
+ "is_hidden": 0,
+ "label": "Cargo",
+ "links": [],
+ "modified": "2026-10-13 19:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cargo",
+ "name": "Cargo",
+ "number_cards": [
+  {
+   "label": "Pilot Images Building",
+   "number_card_name": "Pilot Images Building"
+  },
+  {
+   "label": "Pilot Images Completed",
+   "number_card_name": "Pilot Images Completed"
+  },
+  {
+   "label": "Pilot Images Failed",
+   "number_card_name": "Pilot Images Failed"
+  },
+  {
+   "label": "Machines Running",
+   "number_card_name": "Machines Running"
+  },
+  {
+   "label": "Active Storage Clusters",
+   "number_card_name": "Active Storage Clusters"
+  },
+  {
+   "label": "Unhealthy Storage Clusters",
+   "number_card_name": "Unhealthy Storage Clusters"
+  },
+  {
+   "label": "Buckets",
+   "number_card_name": "Buckets"
+  },
+  {
+   "label": "Failed Workflows",
+   "number_card_name": "Failed Workflows"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [],
+ "sequence_id": 1.0,
+ "shortcuts": [],
+ "standard": 1,
+ "title": "Cargo",
+ "type": "Workspace"
+}
