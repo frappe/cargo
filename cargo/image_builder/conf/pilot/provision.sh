@@ -54,6 +54,10 @@ as_bench_user() {
 	su - "$BENCH_USER" -c "$1"
 }
 
+# Pilot checks site and admin domains against the provider's wildcard domains, which the .local
+# names reached through an alias never match. The parent image carries it, so remove it until the end.
+rm -f "$PROVIDER_SCRIPT"
+
 # The Base image already holds the user, Pilot and the bench, so only Base builds them.
 if [ "$IMAGE_TYPE" = Base ]; then
 	# Cloud images ship their own first user. Clear every regular user out so the bench user
