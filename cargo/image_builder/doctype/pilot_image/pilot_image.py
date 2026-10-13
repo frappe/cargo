@@ -361,7 +361,7 @@ class PilotImage(WorkflowBuilder):
 		self.error = f"{stage}\n{traceback}"
 		self.save()
 
-		self.release_build_machine()
+		# self.release_build_machine() testing why snapshotting isnt' working
 		self.delete_atlas_image()
 
 	def on_workflow_success(self, workflow) -> None:
