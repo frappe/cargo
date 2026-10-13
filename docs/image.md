@@ -108,7 +108,7 @@ A build is one Pilot version on one Frappe commit of one branch. These jobs then
 | `retry_failed_images` | Every minute | Restarts the failed Base and Site images of the newest build on each branch, and the newest Apps image of each signup app, up to **Max Automatic Retries** times each. |
 | `retire_older_images` | Every minute | Keeps the Base and Site images of the 3 newest completed builds on each branch, and the 3 newest completed Apps images of each signup app. It retires the older ones. An older Site image stays until every Apps image that boots on it has built, so a failed Apps image can still be retried. |
 
-Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads releases from the local registry. It asks GitHub only for the asset checksum file of each app that a release with no Apps image installs, which is a release download and not an API call.
+Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads releases from the local registry. It asks GitHub only for the asset checksum file of each app that a release with no Apps image installs. This is a release download and not an API call, and Cargo keeps each answer for 10 minutes.
 
 A build is newest by the time Cargo first created an image for it. Each snapshot is a full disk, so an Apps image keeps working after the Site image it booted on is retired.
 

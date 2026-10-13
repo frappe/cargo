@@ -30,7 +30,16 @@ def do_assets_exist(release: AppRelease) -> bool:
 	"""Whether the app's CI published prebuilt assets for the release, where Pilot downloads them."""
 	tag = f"assets-{release.branch.replace('/', '-')}"
 	url = f"{release.repo.removesuffix('.git')}/releases/download/{tag}/{release.name}-{release.commit}.tar.gz.sha256"
-	return requests.head(url, allow_redirects=True, timeout=10).ok
+
+	# start_apps_images asks every minute until the assets are published, so keep each answer a while.
+	cache_key = f"cargo:prebuilt-assets:{url}"
+	exists = frappe.cache.get_value(cache_key)
+	if exists is None:
+		# GitHub redirects a published file to its storage and answers 404 for a missing one.
+		exists = requests.head(url, timeout=10).is_redirect
+		frappe.cache.set_value(cache_key, exists, expires_in_sec=600)
+
+	return exists
 
 
 def get_registry_releases(app: str) -> list[dict]:

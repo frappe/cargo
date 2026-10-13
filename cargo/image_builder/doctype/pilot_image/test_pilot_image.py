@@ -752,17 +752,29 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		)
 
 	def test_assets_are_looked_up_on_the_release_of_their_branch(self):
+		commit = frappe.generate_hash(length=40)
 		hotfix = AppRelease(
-			"crm", "1.0.0", "https://github.com/frappe/crm.git", COMMIT, "version-16/hotfix", ()
+			"crm", "1.0.0", "https://github.com/frappe/crm.git", commit, "version-16/hotfix", ()
 		)
 
-		with patch(f"{APPS}.requests.head", return_value=MagicMock(ok=False)) as head:
+		with patch(f"{APPS}.requests.head", return_value=MagicMock(is_redirect=False)) as head:
 			self.assertFalse(do_assets_exist(hotfix))
 
 		self.assertEqual(
 			head.call_args.args[0],
-			f"https://github.com/frappe/crm/releases/download/assets-version-16-hotfix/crm-{COMMIT}.tar.gz.sha256",
+			f"https://github.com/frappe/crm/releases/download/assets-version-16-hotfix/crm-{commit}.tar.gz.sha256",
 		)
+
+	def test_github_is_asked_once_about_the_assets_of_a_release(self):
+		release = AppRelease(
+			"crm", "1.0.0", "https://github.com/frappe/crm.git", frappe.generate_hash(length=40), "main", ()
+		)
+
+		with patch(f"{APPS}.requests.head", return_value=MagicMock(is_redirect=True)) as head:
+			self.assertTrue(do_assets_exist(release))
+			self.assertTrue(do_assets_exist(release))
+
+		head.assert_called_once()
 
 	def test_a_newer_site_image_alone_does_not_rebuild_an_app(self):
 		set_signup_apps(("erpnext",))
