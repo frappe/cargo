@@ -37,6 +37,7 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.image_builder.doctype.pilot_image.apps import AppRelease
 
 # The task holds the wait for the machine as well as the script it then runs, so a slow
 # boot cannot eat into the time the script is allowed.
@@ -525,6 +526,21 @@ def start_site_images() -> list[str]:
 	return started
 
 
+def skip_app_release(release: AppRelease, frappe_version: str) -> bool:
+	"""Whether the release gets no Apps image: a requirement has no stable release, or Cargo
+	Settings require prebuilt assets and an app it installs has none."""
+	if not frappe.db.get_single_value("Cargo Settings", "require_prebuilt_assets"):
+		return False
+
+	try:
+		install_order = get_install_order(release, frappe_version)
+	except frappe.ValidationError:
+		# A requirement has no stable release yet, so the app cannot be installed.
+		return True
+
+	return not all(do_assets_exist(app) for app in install_order)
+
+
 def start_apps_images() -> list[str]:
 	"""Start an Apps image for each signup app whose newest stable release has none, on the
 	newest Completed Site image of each Frappe branch. A newer Site image alone starts nothing:
@@ -555,13 +571,7 @@ def start_apps_images() -> list[str]:
 			):
 				continue
 
-			try:
-				install_order = get_install_order(release, site_image.frappe_version)
-			except frappe.ValidationError:
-				# A requirement has no stable release yet, so the app cannot be installed.
-				continue
-
-			if not all(do_assets_exist(app) for app in install_order):
+			if skip_app_release(release, site_image.frappe_version):
 				continue
 
 			image = {

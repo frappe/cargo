@@ -28,6 +28,7 @@
   "max_auto_retry_count",
   "signup_apps_section",
   "signup_apps",
+  "require_prebuilt_assets",
   "build_machine_spec_section",
   "build_machine_disk_gb",
   "build_machine_cpu",
@@ -224,13 +225,20 @@
    "fieldtype": "Table",
    "label": "Signup Apps",
    "options": "Signup App"
+  },
+  {
+   "default": "1",
+   "description": "Start an Apps image only when every app it installs has prebuilt assets for its release commit. Off lets the build machine build the missing assets.",
+   "fieldname": "require_prebuilt_assets",
+   "fieldtype": "Check",
+   "label": "Require Prebuilt Assets"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-12 22:00:00.000000",
+ "modified": "2026-10-13 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

@@ -36,6 +36,7 @@ class CargoSettings(Document):
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
+		require_prebuilt_assets: DF.Check
 		signup_apps: DF.Table[SignupApp]
 		track_pilot_releases: DF.Check
 		wildcard_domain: DF.Data

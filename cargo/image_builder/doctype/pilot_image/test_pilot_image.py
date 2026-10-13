@@ -669,7 +669,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(self.start_sites(), [])
 
 	def start_apps(
-		self, releases: dict[str, str | None] | None = None, without_assets: tuple[str, ...] = ()
+		self,
+		releases: dict[str, str | None] | None = None,
+		without_assets: tuple[str, ...] = (),
+		require_prebuilt_assets: bool = True,
 	) -> list[str]:
 		"""Start Apps images, where `releases` maps an app to its newest stable commit, or to None
 		when it has no stable release, and the apps in `without_assets` published no assets."""
@@ -682,6 +685,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			)
 
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
+		frappe.db.set_single_value("Cargo Settings", "require_prebuilt_assets", require_prebuilt_assets)
 		with (
 			patch(f"{CONTROLLER}.get_latest_stable_release", side_effect=newest_stable),
 			patch(f"{APPS}.get_latest_stable_release", side_effect=newest_stable),
@@ -739,6 +743,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_an_app_without_prebuilt_assets_gets_an_image_when_they_are_not_required(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		self.completed_site()
+
+		started = self.start_apps(without_assets=("helpdesk",), require_prebuilt_assets=False)
+
+		self.assertEqual(
+			sorted(frappe.db.get_value("Pilot Image", name, "signup_app") for name in started),
+			["erpnext", "helpdesk"],
 		)
 
 	def test_an_app_whose_requirement_has_no_stable_release_gets_no_image(self):
