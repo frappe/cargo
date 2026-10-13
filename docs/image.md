@@ -6,33 +6,48 @@ Cargo bakes the golden images that Atlas boots for tenants. The app ships no ima
 
 ## Records
 
-A **Pilot Image** is one Pilot release baked against one Frappe version, and the snapshot it produced. `pilot_version` is the release tag the build installs. `frappe_version` is `version-16` or `develop`. `has_site` says whether a site is baked in.
+A **Pilot Image** is one build machine and the one Atlas image it was snapshotted into. Each image type boots on the one before it:
 
-Every image carries the same bench `default-bench`, and one with `has_site` carries the same site `site.local`. Both are reached through a hostname alias, so neither has to be unique. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password.
+| Type | Boots on | Adds |
+|---|---|---|
+| Base | Ubuntu 24.04 | The bench user, Pilot, and the bench `default-bench` initialised at `frappe_commit`. No site. |
+| Site | The Base image of its build | A bare site `site.local` with no apps. |
+| Apps | The newest Site image of its branch when it was created | One signup app and the apps it requires, installed on the site. |
 
-Turn `has_site` off to bake an initialised bench with no site on it. The image is then verified by nginx coming back at boot alone, and its prewarm warms only the admin API, so it boots warm but colder than a site image.
+| Field | Meaning |
+|---|---|
+| `pilot_version` | The Pilot release tag the build installs. |
+| `frappe_branch` | One of the branches in **Frappe Branches** in Cargo Settings, such as `version-16`. |
+| `frappe_commit` | The frappe/frappe commit the bench is at. A Base image created without one takes the head commit of its branch. Site and Apps images must name one. |
+| `signup_app`, `app_commit` | Apps images only: the signup app and the commit of the stable release it installs. |
+| `apps` | Apps images only: the app releases installed, in install order, with what the signup app requires first. |
+| `snapshot_id` | The Atlas image. Empty once Atlas has deleted it. |
 
-The three together are the identity, in `validate` and in a unique database constraint, so the same release and Frappe version can exist once with a site and once without.
+These six fields together are the identity, in a unique database constraint. The site Administrator password is made inside the machine and is never sent back, so Cargo stores no password. Hostname aliases reach the bench and the site, so neither name has to be unique.
 
 ## Requirements
 
 Set `wildcard_domain` in Cargo Settings before you build. The hostname aliases are built from it, and a build stops with an error when it is empty.
 
+List the apps in **Signup Apps** in Cargo Settings, such as `erpnext` or `helpdesk`. Each gets its own Apps image. Cargo reads the apps each one requires from the marketplace registry and installs them first, so `hrms` brings `erpnext`. Pilot keeps that registry in `system/registry-cache` and refreshes it on its own.
+
 Use Pilot `v0.0.32-pre-alpha` or later. Earlier releases have no Central bootstrap state, and their production setup does not enable nginx at boot.
 
 ## Build sequence
 
-Select **Build** on a Pilot Image.
+Insert a Pilot Image, or let release tracking insert one.
 
 ```text
-build            -> keypair, Atlas VM (Provisioning)
-sync_build_vm    -> VM is running and has a mesh address (Building)
-run_build flow
-  run_provision_script -> conf/pilot/provision.sh over SSH (Snapshotting)
-  take_snapshot        -> Atlas snapshot, destroy the build machine (Available)
+insert               -> Atlas VM on the boot image (Provisioning)
+sync_machines        -> VM is running and has a mesh address (Building)
+_create_image flow
+  pin_releases         -> record the Frappe version and the app releases
+  run_provision_script -> conf/pilot/provision.sh over SSH
+  take_snapshot        -> Atlas snapshot (Snapshotting)
+  wait_for_snapshot    -> Atlas image available, destroy the build machine (Completed)
 ```
 
-`sync_build_machines` runs every minute and moves an image on when Atlas reports its machine running.
+`sync_pending_machines` runs every minute and moves an image on when Atlas reports its machine running.
 
 Running is not the same as booted. Before it sends the script, the build waits up to 60 seconds for the machine to answer a ping, then up to 180 seconds for sshd to answer a trivial command. A machine that does neither fails the build with which step it failed at, instead of a connection timeout.
 
@@ -44,16 +59,16 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 ## What the provision script installs
 
-`cargo/image_builder/conf/pilot/provision.sh` runs as root on a bare Ubuntu 24.04 machine.
+`cargo/image_builder/conf/pilot/provision.sh` runs as root. Steps 2 to 4 run for one image type only.
 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
-2. Removes every regular user the base image shipped and creates the bench user `frappe` at uid and gid 1000.
-3. Runs the Pilot installer as root, installs `tzdata-legacy` for the deprecated zone aliases such as `Asia/Calcutta`, then runs the installer as the bench user.
-4. Makes the site Administrator password, creates the bench with the admin domain, pins the Frappe branch in `bench.toml`, initialises the bench, and creates the site. `HAS_SITE=0` stops after the bench is initialised.
+2. Base: removes every regular user the Ubuntu image shipped, creates the bench user `frappe` at uid and gid 1000, and installs Pilot. It creates the bench with the admin domain and initialises it at `FRAPPE_COMMIT`: the commit is set as the branch in `bench.toml` so `init` fetches exactly that commit, then the branch name goes back so the bench follows the branch on update. The build stops if Frappe is at another commit.
+3. Site: creates the site.
+4. Apps: fetches each app in `REQUIRED_APPS` on its release branch at its release commit, with the prebuilt assets of that commit, then installs them on the site in that order.
 5. Runs `pilot setup production`.
-6. Verifies the image: nginx is enabled at boot, and `site.local` answers `/api/method/ping`. The probe uses `curl --resolve` against `127.0.0.1`, so it tests the machine it runs on and reaches no network, and it waits for the workers rather than reading one cold start as a broken image. Without a site there is nothing to answer it, so only the nginx check runs.
-7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. It comes last because it puts the host in the awaiting-bootstrap state, where the pending screen replaces the site the step above probes.
-8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. Without a site it makes no password and warms the admin API only. A failed prewarm is logged and never prevents a normal boot.
+6. Verifies the image: nginx is enabled at boot, and on Site and Apps images `site.local` answers `/api/method/ping`. The probe calls the loopback worker, because nginx serves the Central pending screen once the Base image has run `setup central`. It waits for the workers rather than reading one cold start as a broken image.
+7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. Site runs it again to write the site alias, which Base had no site for.
+8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. A Base image has no site, so it makes no password and warms the admin API only. A failed prewarm is logged and never prevents a normal boot.
 9. Removes the swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
@@ -83,17 +98,23 @@ The aliases are written after `pilot setup production`, so `pilot setup central`
 
 Cargo can follow Pilot itself. Turn on **Track Pilot Releases** in Cargo Settings. It is off by default, and a person or another system can turn it on.
 
-An hourly job then:
+A build is one Pilot version on one Frappe commit of one branch. These jobs then run:
 
-1. Reads the newest published Pilot release. Every Pilot release is a prerelease today, so the job reads the release list and not `releases/latest`.
-2. Creates the four images a release needs if they are absent -- `version-16` and `develop`, each with a site and without one -- and builds each one.
-3. Retires everything outside the newest 3 Pilot versions, which keeps 12 images.
+| Job | Runs | Does |
+|---|---|---|
+| `start_base_images` | Every 2 hours | Reads the newest published Pilot release and the head commit of each branch, and starts a Base image for that pair if it has none. A new Pilot release and a new Frappe commit both lead to the same check, so each build starts once. |
+| `start_site_images` | Every minute | Starts a Site image on the newest Completed Base image of each branch, if it has none. |
+| `start_apps_images` | Every minute | For each signup app, reads its newest stable release that runs on the newest Completed Site image of each branch. If no Apps image has that release and every app it installs, with what it requires, has [prebuilt assets](https://github.com/frappe/pilot/blob/develop/docs/prebuilt-assets.md) for its commit, it starts one on that Site image. A release starts no image until all of these assets are published, or while a requirement has no stable release. A new Site image alone rebuilds no app: the app's next release builds on it. |
+| `retry_failed_images` | Every minute | Restarts the failed Base and Site images of the newest build on each branch, and the newest Apps image of each signup app, up to **Max Automatic Retries** times each. |
+| `retire_older_images` | Every minute | Keeps the Base and Site images of the 3 newest completed builds on each branch, and the 3 newest completed Apps images of each signup app. It retires the older ones. An older Site image stays until every Apps image that boots on it has built, so a failed Apps image can still be retried. |
 
-A version is newest by the time Cargo first created an image for it.
+Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads releases from the local registry. It asks GitHub only for the asset checksum file of each app that a release with no Apps image installs. This is a release download and not an API call, and Cargo keeps each answer for 10 minutes.
 
-Retiring deletes the Atlas snapshot and then the Cargo record. The record goes last, so a failed Atlas call cannot leave a snapshot behind. An image that is building is never retired. Atlas does not refuse an image that a machine still uses: it archives the image and reclaims it when the last machine goes.
+A build is newest by the time Cargo first created an image for it. Each snapshot is a full disk, so an Apps image keeps working after the Site image it booted on is retired.
 
-While tracking is off, nothing is created and nothing is retired.
+Retiring deletes the Atlas image and then marks the record Retired. The record changes last, so a failed Atlas call cannot leave an image behind. An image that is building is never retired. Atlas does not refuse an image that a machine still uses: it archives the image and reclaims it when the last machine goes.
+
+While tracking is off, no image is started.
 
 ## Snapshot flags
 

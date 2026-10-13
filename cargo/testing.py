@@ -22,6 +22,8 @@ SECRETS = {
 	"central_webhook_secret": "test-webhook-secret",
 	"proxy_token": "test-proxy-token",
 }
+FRAPPE_BRANCHES = ("version-16", "develop")
+SIGNUP_APPS = ("erpnext", "hrms", "helpdesk", "gameplan", "raven", "builder")
 DATUM_SECRETS = ("datum_user_password", "insights_user_password", "default_user_password")
 
 
@@ -36,7 +38,33 @@ def use_test_settings() -> None:
 	for field, secret in SECRETS.items():
 		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, field)
 
+	set_frappe_branches(FRAPPE_BRANCHES)
+	set_signup_apps(SIGNUP_APPS)
 	frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
+
+
+def set_frappe_branches(branches: tuple[str, ...]) -> None:
+	set_settings_rows("frappe_branches", "Frappe Branch", "branch", branches)
+
+
+def set_signup_apps(apps: tuple[str, ...]) -> None:
+	set_settings_rows("signup_apps", "Signup App", "app", apps)
+
+
+def set_settings_rows(parentfield: str, doctype: str, column: str, values: tuple[str, ...]) -> None:
+	"""Replace the rows of a Cargo Settings table, without saving the whole Single."""
+	frappe.db.delete(doctype, {"parenttype": "Cargo Settings", "parentfield": parentfield})
+	for index, value in enumerate(values, start=1):
+		frappe.get_doc(
+			{
+				"doctype": doctype,
+				"parent": "Cargo Settings",
+				"parenttype": "Cargo Settings",
+				"parentfield": parentfield,
+				"idx": index,
+				column: value,
+			}
+		).db_insert()
 
 
 def reset_datum_server() -> None:

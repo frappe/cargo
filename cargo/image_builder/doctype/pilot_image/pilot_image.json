@@ -8,13 +8,21 @@
   "section_break_identity",
   "pilot_version",
   "frappe_branch",
+  "frappe_commit",
   "frappe_version",
   "image_type",
+  "signup_app",
+  "app_commit",
   "column_break_identity",
   "status",
   "error",
   "manually_failed",
   "auto_retry_count",
+  "section_break_snapshot",
+  "snapshot_id",
+  "built_at",
+  "section_break_apps",
+  "apps",
   "section_break_log",
   "build_log",
   "section_break_build",
@@ -39,11 +47,10 @@
   {
    "description": "The Frappe branch the bench is built against.",
    "fieldname": "frappe_branch",
-   "fieldtype": "Select",
+   "fieldtype": "Data",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Frappe Branch",
-   "options": "version-16\ndevelop",
    "reqd": 1,
    "set_only_once": 1
   },
@@ -129,6 +136,68 @@
    "fieldtype": "Int",
    "label": "Automatic Retries",
    "read_only": 1
+  },
+  {
+   "description": "The frappe/frappe commit the image installs. A Base image created without one takes the branch's head commit.",
+   "fieldname": "frappe_commit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Frappe Commit",
+   "length": 40,
+   "not_nullable": 1,
+   "set_only_once": 1
+  },
+  {
+   "depends_on": "eval:doc.image_type=='Apps'",
+   "description": "The signup app an Apps image installs on its site.",
+   "fieldname": "signup_app",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Signup App",
+   "not_nullable": 1,
+   "set_only_once": 1
+  },
+  {
+   "depends_on": "eval:doc.image_type=='Apps'",
+   "description": "The commit of the signup app's stable release the image installs.",
+   "fieldname": "app_commit",
+   "fieldtype": "Data",
+   "label": "App Commit",
+   "length": 40,
+   "not_nullable": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "section_break_snapshot",
+   "fieldtype": "Section Break",
+   "label": "Snapshot"
+  },
+  {
+   "description": "The Atlas image this build took. Empty once Atlas has deleted it.",
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "built_at",
+   "fieldtype": "Datetime",
+   "label": "Built At",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.image_type=='Apps'",
+   "fieldname": "section_break_apps",
+   "fieldtype": "Section Break",
+   "label": "Apps"
+  },
+  {
+   "description": "The app releases the image installs, in install order.",
+   "fieldname": "apps",
+   "fieldtype": "Table",
+   "label": "Apps",
+   "options": "Pilot Image App",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -137,14 +206,9 @@
    "group": "Build Machine",
    "link_doctype": "Machine",
    "link_fieldname": "reference_name"
-  },
-  {
-   "group": "Snapshots",
-   "link_doctype": "Pilot Image Snapshot",
-   "link_fieldname": "pilot_image"
   }
  ],
- "modified": "2026-09-24 23:27:15.776705",
+ "modified": "2026-10-12 23:30:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
@@ -166,7 +230,7 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
- "search_fields": "pilot_version,frappe_branch,image_type,status",
+ "search_fields": "pilot_version,frappe_branch,frappe_commit,image_type,signup_app,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": []

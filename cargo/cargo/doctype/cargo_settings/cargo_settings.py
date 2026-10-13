@@ -15,6 +15,9 @@ class CargoSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from cargo.cargo.doctype.frappe_branch.frappe_branch import FrappeBranch
+		from cargo.cargo.doctype.signup_app.signup_app import SignupApp
+
 		atlas_tenant_id: DF.Int
 		atlas_token: DF.Password
 		atlas_url: DF.Data
@@ -26,14 +29,15 @@ class CargoSettings(Document):
 		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
 		central_webhook_url: DF.Data | None
+		frappe_branches: DF.Table[FrappeBranch]
 		jwks_url: DF.Data
 		max_auto_retry_count: DF.Int
 		proxy_token: DF.Password
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
+		signup_apps: DF.Table[SignupApp]
 		track_pilot_releases: DF.Check
-		version_supporting_app_toggle: DF.Data | None
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 

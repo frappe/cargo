@@ -11,8 +11,8 @@ frappe.ui.form.on("Pilot Image", {
 
 		const image_types = {
 			Base: __("Bench only, no site"),
-			Site: __("Bare site, every signup app fetched"),
-			Apps: __("Site with one snapshot per signup app"),
+			Site: __("Bare site, no apps"),
+			Apps: __("Site with one signup app installed"),
 		};
 		frm.dashboard.add_indicator(image_types[frm.doc.image_type], "blue");
 		if (frm.doc.frappe_version) {
@@ -26,7 +26,7 @@ function add_actions(frm) {
 		frm.add_custom_button(__("Stop Build"), () => {
 			frappe.confirm(
 				__(
-					"Stop this build? It fails at its next step: its snapshots fail, their Atlas images are deleted and the build machine is released."
+					"Stop this build? It fails at its next step: its Atlas image is deleted and the build machine is released."
 				),
 				() =>
 					frm
@@ -40,7 +40,7 @@ function add_actions(frm) {
 		frm.add_custom_button(__("Restart Build"), () => {
 			frappe.confirm(
 				__(
-					"Delete this build's snapshots and their Atlas images, then build again from the start on a new machine?"
+					"Delete this build's Atlas image, then build again from the start on a new machine?"
 				),
 				() =>
 					frm
@@ -116,27 +116,12 @@ function set_headline(frm) {
 	const headlines = {
 		Provisioning: __("Waiting for build machine {0} to boot.", [frm.doc.machine]),
 		Building: __("Provisioning the build machine. The log below follows it."),
-		Completed: __("Every snapshot is available at Atlas. The build machine is released."),
-		Retired: __("A newer Pilot release replaced this one. Its Atlas images are deleted."),
+		Snapshotting: __("Atlas is making image {0}.", [frm.doc.snapshot_id]),
+		Completed: __("The image is available at Atlas. The build machine is released."),
+		Retired: __("A newer build replaced this one. Its Atlas image is deleted."),
 		Failed: __("The build failed and its machine is released. See Error below."),
 	};
-	if (frm.doc.status !== "Snapshotting") {
-		frm.dashboard.set_headline(headlines[frm.doc.status]);
-		return;
-	}
-
-	frappe.db
-		.get_list("Pilot Image Snapshot", {
-			filters: { pilot_image: frm.doc.name },
-			fields: ["status"],
-			limit: 0,
-		})
-		.then((snapshots) => {
-			const taken = snapshots.filter((snapshot) => snapshot.status === "Available").length;
-			frm.dashboard.set_headline(
-				__("Taking snapshots: {0} of {1} available at Atlas.", [taken, snapshots.length])
-			);
-		});
+	frm.dashboard.set_headline(headlines[frm.doc.status]);
 }
 
 // A capped log box is only useful if it shows the end of the log. The Code control loads

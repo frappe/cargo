@@ -1,14 +1,16 @@
 #!/bin/bash
-# Runs over SSH on a bare Atlas VM. Its exit status is the build's, so no status file.
+# Runs over SSH on an Atlas VM. Its exit status is the build's, so no status file. Base
+# starts from bare Ubuntu and builds the bench, Site starts from Base and adds a bare site,
+# and Apps starts from Site and installs one signup app on the site.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 : "${VERSION:?VERSION is required}"
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
 : "${FRAPPE_BRANCH:?FRAPPE_BRANCH is required}"
+: "${FRAPPE_COMMIT:?FRAPPE_COMMIT is required}"
 : "${PROXY_SUBNET:?PROXY_SUBNET is required}"
 : "${DOMAIN_PROVIDER:?DOMAIN_PROVIDER is required}"
-# Base is a bench with no site. Site adds a bare site and fetches REQUIRED_APPS onto the bench.
 : "${IMAGE_TYPE:?IMAGE_TYPE is required}"
 
 # Every image carries the same bench and site. Both are reached through a hostname alias,
@@ -27,16 +29,12 @@ BENCH_GID="${BENCH_GID:-1000}"
 SWAP_SIZE="${SWAP_SIZE:-1536M}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
-# Node sizes its heap from its own guess of host memory, about 2GB on an 8GB machine,
-# which a frontend such as CRM's outgrows. Keep it under Pilot's build memory cap.
-NODE_HEAP_MB="${NODE_HEAP_MB:-4096}"
-# One `repo commit` pair a line, fetched onto the bench in this order. Each snapshot
-# installs its own apps on the site, so none is installed here.
+# One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
 case "$IMAGE_TYPE" in
-Base) [ -z "$REQUIRED_APPS" ] || { echo "A Base image fetches no apps" >&2; exit 1; } ;;
-Site | Apps) [ -n "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image needs REQUIRED_APPS" >&2; exit 1; } ;;
+Base | Site) [ -z "$REQUIRED_APPS" ] || { echo "A $IMAGE_TYPE image installs no apps" >&2; exit 1; } ;;
+Apps) [ -n "$REQUIRED_APPS" ] || { echo "An Apps image needs REQUIRED_APPS" >&2; exit 1; } ;;
 *) echo "Unknown IMAGE_TYPE: $IMAGE_TYPE" >&2; exit 1 ;;
 esac
 
@@ -52,59 +50,71 @@ chmod 600 /swapfile
 mkswap -q /swapfile
 swapon /swapfile
 
-# Cloud images ship their own first user. Clear every regular user out so the bench user
-# owns the baked files at ids the image can rely on.
-for existing in $(awk -F: -v me="$BENCH_USER" '$3 >= 1000 && $3 < 60000 && $1 != me {print $1}' /etc/passwd); do
-	pkill -KILL -u "$existing" 2> /dev/null || true
-	userdel -r "$existing" 2> /dev/null || userdel "$existing" || true
-done
-
-# Free the ids in case a group outlived its user.
-stale_group="$(awk -F: -v gid="$BENCH_GID" -v me="$BENCH_USER" '$3 == gid && $1 != me {print $1}' /etc/group)"
-[ -n "$stale_group" ] && groupdel "$stale_group" 2> /dev/null || true
-
-if ! id -u "$BENCH_USER" > /dev/null 2>&1; then
-	groupadd -g "$BENCH_GID" "$BENCH_USER"
-	useradd -m -s /bin/bash -u "$BENCH_UID" -g "$BENCH_GID" "$BENCH_USER"
-fi
-
-# Pilot refuses to install as root: the first pass lays down the system stack, the second
-# runs as the bench user it created.
 as_bench_user() {
 	su - "$BENCH_USER" -c "$1"
 }
 
-curl -fsSL "$INSTALLER" | bash
-# Pilot asks for the deprecated zone aliases as the bench user, which cannot sudo apt.
-apt-get install -y tzdata-legacy
-# Get app also requires this to be installed.
-apt-get install -y cron
-# Pilot releases before fix-build-memory-stdlib import psutil on the host's python3 to cap asset builds.
-# Remove once those releases are retired.
-apt-get install -y python3-psutil
-as_bench_user "curl -fsSL '$INSTALLER' | bash"
+# The Base image already holds the user, Pilot and the bench, so only Base builds them.
+if [ "$IMAGE_TYPE" = Base ]; then
+	# Cloud images ship their own first user. Clear every regular user out so the bench user
+	# owns the baked files at ids the image can rely on.
+	for existing in $(awk -F: -v me="$BENCH_USER" '$3 >= 1000 && $3 < 60000 && $1 != me {print $1}' /etc/passwd); do
+		pkill -KILL -u "$existing" 2> /dev/null || true
+		userdel -r "$existing" 2> /dev/null || userdel "$existing" || true
+	done
 
-# Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
-as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
+	# Free the ids in case a group outlived its user.
+	stale_group="$(awk -F: -v gid="$BENCH_GID" -v me="$BENCH_USER" '$3 == gid && $1 != me {print $1}' /etc/group)"
+	[ -n "$stale_group" ] && groupdel "$stale_group" 2> /dev/null || true
 
-# `new` writes bench.toml; `init` clones the framework app it names. The branch is config,
-# not a flag, so it is set in between.
-bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
-as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_BRANCH\"|' '$bench_toml'"
-# A silent miss would build the default branch, so check the edit took.
-as_bench_user "grep -q '^branch = \"$FRAPPE_BRANCH\"' '$bench_toml'"
+	if ! id -u "$BENCH_USER" > /dev/null 2>&1; then
+		groupadd -g "$BENCH_GID" "$BENCH_USER"
+		useradd -m -s /bin/bash -u "$BENCH_UID" -g "$BENCH_GID" "$BENCH_USER"
+	fi
 
-as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
+	curl -fsSL "$INSTALLER" | bash
+	# Pilot asks for the deprecated zone aliases as the bench user, which cannot sudo apt.
+	apt-get install -y tzdata-legacy
+	# Get app also requires this to be installed.
+	apt-get install -y cron
+	# Pilot releases before fix-build-memory-stdlib import psutil on the host's python3 to cap asset builds.
+	# Remove once those releases are retired.
+	apt-get install -y python3-psutil
+	as_bench_user "curl -fsSL '$INSTALLER' | bash"
 
-if [ "$IMAGE_TYPE" != Base ]; then
+	# Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
+	as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
+
+	# `new` writes bench.toml; `init` clones the framework app it names. A commit as the
+	# branch makes `init` fetch exactly that commit. The branch goes back afterwards, so the
+	# bench still follows it on update.
+	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
+	set_frappe_branch() {
+		as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$1\"|' '$bench_toml'"
+		# A silent miss would build the default branch, so check the edit took.
+		as_bench_user "grep -q '^branch = \"$1\"' '$bench_toml'"
+	}
+
+	set_frappe_branch "$FRAPPE_COMMIT"
+	as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
+	set_frappe_branch "$FRAPPE_BRANCH"
+
+	checked_out=$(as_bench_user "git -C /home/$BENCH_USER/pilot/benches/$BENCH/apps/frappe rev-parse HEAD")
+	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
+fi
+
+if [ "$IMAGE_TYPE" = Site ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 fi
 
-# A commit as the branch clones exactly the release Cargo recorded.
-if [ "$IMAGE_TYPE" != Base ]; then
-	while read -r repo commit; do
-		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+if [ "$IMAGE_TYPE" = Apps ]; then
+	apps=()
+	# The branch lets Pilot download the assets the app's CI built for the commit.
+	while read -r app repo branch commit; do
+		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$branch' --commit '$commit'"
+		apps+=("$app")
 	done <<< "$REQUIRED_APPS"
+	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
 fi
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
@@ -114,11 +124,12 @@ as_bench_user "pilot --yes -b '$BENCH' setup production"
 # A snapshot of a host whose nginx does not come back at boot serves nothing.
 systemctl is-enabled nginx > /dev/null
 
-# `ping` proves nginx, the workers and the database without reading a built asset.
-# `--resolve` keeps it on this machine, and the wait absorbs the worker cold start.
+# `ping` proves the workers and the database without reading a built asset. It goes to the
+# loopback upstream, because nginx serves the Central pending screen once a Base image has
+# run `setup central`, and the wait absorbs the worker cold start.
 probe_site() {
 	for _ in $(seq 1 "$PROBE_ATTEMPTS"); do
-		if curl -fsS -m 20 --resolve "$SITE:80:127.0.0.1" "http://$SITE/api/method/ping" | grep -q pong; then
+		if curl -fsS -m 20 -H "Host: $SITE" "http://127.0.0.1:8000/api/method/ping" | grep -q pong; then
 			return 0
 		fi
 		sleep "$PROBE_DELAY"
@@ -133,8 +144,8 @@ if [ "$IMAGE_TYPE" != Base ]; then
 	probe_site
 fi
 
-# Last: this hands the host to Central, and the pending screen then replaces the site
-# probed above. It rewrites nginx itself now that production is up.
+# This hands the host to Central and writes the hostname aliases. Site runs it again for
+# the site alias, which Base had no site to write. It rewrites nginx itself.
 as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern 'site-*.$WILDCARD_DOMAIN'"
 
 # The admin API answers on its own Gunicorn bind. The prewarm reaches it there, past nginx,

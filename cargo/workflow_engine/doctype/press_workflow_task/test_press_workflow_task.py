@@ -7,6 +7,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
+from cargo.testing import set_frappe_branches
 from cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task import retry_tasks
 
 ENQUEUE = "cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task.enqueue_task"
@@ -17,6 +18,7 @@ class IntegrationTestPressWorkflowTask(IntegrationTestCase):
 
 	def setUp(self):
 		frappe.set_user("Administrator")
+		set_frappe_branches(("version-16",))
 
 	def workflow(self) -> str:
 		"""A workflow waiting on a task. `linked_docname` is a real row, as the engine
@@ -28,6 +30,7 @@ class IntegrationTestPressWorkflowTask(IntegrationTestCase):
 					"doctype": "Pilot Image",
 					"pilot_version": f"v0.0.1-{frappe.generate_hash(length=6)}",
 					"frappe_branch": "version-16",
+					"frappe_commit": "a" * 40,
 					"image_type": "Site",
 				}
 			).insert(ignore_permissions=True)
