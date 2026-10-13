@@ -555,8 +555,13 @@ def start_apps_images() -> list[str]:
 			):
 				continue
 
-			# Build machines download the assets the app's CI built and never build them.
-			if not do_assets_exist(release):
+			try:
+				install_order = get_install_order(release, site_image.frappe_version)
+			except frappe.ValidationError:
+				# A requirement has no stable release yet, so the app cannot be installed.
+				continue
+
+			if not all(do_assets_exist(app) for app in install_order):
 				continue
 
 			image = {

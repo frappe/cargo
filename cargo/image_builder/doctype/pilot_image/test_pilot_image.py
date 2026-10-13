@@ -678,12 +678,13 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		def newest_stable(app: str, frappe_version: str) -> AppRelease | None:
 			commit = releases.get(app, f"{app}-commit")
 			return commit and AppRelease(
-				app, "1.0.0", f"https://github.com/frappe/{app}", commit, "version-16", ()
+				app, "1.0.0", f"https://github.com/frappe/{app}", commit, "version-16", REQUIRES.get(app, ())
 			)
 
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
 		with (
 			patch(f"{CONTROLLER}.get_latest_stable_release", side_effect=newest_stable),
+			patch(f"{APPS}.get_latest_stable_release", side_effect=newest_stable),
 			patch(f"{CONTROLLER}.do_assets_exist", side_effect=lambda app: app.name not in without_assets),
 			patch.object(PilotImage, "after_insert"),
 			patch.object(frappe.db, "commit"),
@@ -725,6 +726,26 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.completed_site()
 
 		started = self.start_apps(without_assets=("helpdesk",))
+
+		self.assertEqual(
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_an_app_whose_requirement_has_no_prebuilt_assets_gets_no_image(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		self.completed_site()
+
+		started = self.start_apps(without_assets=("telephony",))
+
+		self.assertEqual(
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_an_app_whose_requirement_has_no_stable_release_gets_no_image(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		self.completed_site()
+
+		started = self.start_apps({"telephony": None})
 
 		self.assertEqual(
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
