@@ -64,7 +64,7 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
 2. Base: removes every regular user the Ubuntu image shipped, creates the bench user `frappe` at uid and gid 1000, and installs Pilot. It creates the bench with the admin domain and initialises it at `FRAPPE_COMMIT`: the commit is set as the branch in `bench.toml` so `init` fetches exactly that commit, then the branch name goes back so the bench follows the branch on update. The build stops if Frappe is at another commit.
 3. Site: creates the site.
-4. Apps: fetches each app in `REQUIRED_APPS` at its release commit, then installs them on the site in that order.
+4. Apps: fetches each app in `REQUIRED_APPS` on its release branch at its release commit, with the prebuilt assets of that commit, then installs them on the site in that order.
 5. Runs `pilot setup production`.
 6. Verifies the image: nginx is enabled at boot, and on Site and Apps images `site.local` answers `/api/method/ping`. The probe calls the loopback worker, because nginx serves the Central pending screen once the Base image has run `setup central`. It waits for the workers rather than reading one cold start as a broken image.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. Site runs it again to write the site alias, which Base had no site for.
@@ -104,11 +104,11 @@ A build is one Pilot version on one Frappe commit of one branch. These jobs then
 |---|---|---|
 | `start_base_images` | Every 2 hours | Reads the newest published Pilot release and the head commit of each branch, and starts a Base image for that pair if it has none. A new Pilot release and a new Frappe commit both lead to the same check, so each build starts once. |
 | `start_site_images` | Every minute | Starts a Site image on the newest Completed Base image of each branch, if it has none. |
-| `start_apps_images` | Every minute | For each signup app, reads its newest stable release that runs on the newest Completed Site image of each branch. If no Apps image has that release, it starts one on that Site image. A new Site image alone rebuilds no app: the app's next release builds on it. |
+| `start_apps_images` | Every minute | For each signup app, reads its newest stable release that runs on the newest Completed Site image of each branch. If no Apps image has that release and the app's CI published [prebuilt assets](https://github.com/frappe/pilot/blob/develop/docs/prebuilt-assets.md) for its commit, it starts one on that Site image. A release without assets starts no image until its assets are published. A new Site image alone rebuilds no app: the app's next release builds on it. |
 | `retry_failed_images` | Every minute | Restarts the failed Base and Site images of the newest build on each branch, and the newest Apps image of each signup app, up to **Max Automatic Retries** times each. |
 | `retire_older_images` | Every minute | Keeps the Base and Site images of the 3 newest completed builds on each branch, and the 3 newest completed Apps images of each signup app. It retires the older ones. An older Site image stays until every Apps image that boots on it has built, so a failed Apps image can still be retried. |
 
-Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads only the local registry, so it asks GitHub nothing.
+Every Pilot release is a prerelease today, so `start_base_images` reads the release list and not `releases/latest`. It asks GitHub without a token, which permits 60 calls an hour. `start_apps_images` reads releases from the local registry. It asks GitHub only for the asset checksum file of a release that has no Apps image, which is a release download and not an API call.
 
 A build is newest by the time Cargo first created an image for it. Each snapshot is a full disk, so an Apps image keeps working after the Site image it booted on is retired.
 

@@ -32,7 +32,7 @@ PROBE_DELAY="${PROBE_DELAY:-5}"
 # Node sizes its heap from its own guess of host memory, about 2GB on an 8GB machine,
 # which a frontend such as CRM's outgrows. Keep it under Pilot's build memory cap.
 NODE_HEAP_MB="${NODE_HEAP_MB:-4096}"
-# One `app repo commit` line per app, in install order: what an app requires comes first.
+# One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
 case "$IMAGE_TYPE" in
@@ -112,9 +112,9 @@ fi
 
 if [ "$IMAGE_TYPE" = Apps ]; then
 	apps=()
-	# A commit as the branch clones exactly the release Cargo recorded.
-	while read -r app repo commit; do
-		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$commit'"
+	# The branch lets Pilot download the assets the app's CI built for the commit.
+	while read -r app repo branch commit; do
+		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$branch' --commit '$commit'"
 		apps+=("$app")
 	done <<< "$REQUIRED_APPS"
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"

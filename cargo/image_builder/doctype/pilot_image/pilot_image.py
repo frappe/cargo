@@ -13,6 +13,7 @@ from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
+	do_assets_exist,
 	get_install_order,
 	get_latest_stable_release,
 	get_release_at,
@@ -241,7 +242,14 @@ class PilotImage(WorkflowBuilder):
 			release = get_release_at(self.signup_app, self.app_commit)
 			for app in get_install_order(release, self.frappe_version):
 				self.append(
-					"apps", {"app": app.name, "version": app.version, "commit": app.commit, "repo": app.repo}
+					"apps",
+					{
+						"app": app.name,
+						"version": app.version,
+						"branch": app.branch,
+						"commit": app.commit,
+						"repo": app.repo,
+					},
 				)
 
 		self.save()
@@ -328,7 +336,9 @@ class PilotImage(WorkflowBuilder):
 			"PROXY_SUBNET": proxy_subnet,
 			"DOMAIN_PROVIDER": domain_provider,
 			"IMAGE_TYPE": self.image_type,
-			"REQUIRED_APPS": "\n".join(f"{app.app} {app.repo} {app.commit}" for app in self.apps),
+			"REQUIRED_APPS": "\n".join(
+				f"{app.app} {app.repo} {app.branch} {app.commit}" for app in self.apps
+			),
 		}
 
 	def on_workflow_failure(self, workflow) -> None:
@@ -543,6 +553,10 @@ def start_apps_images() -> list[str]:
 					"app_commit": release.commit,
 				},
 			):
+				continue
+
+			# Build machines download the assets the app's CI built and never build them.
+			if not do_assets_exist(release):
 				continue
 
 			image = {

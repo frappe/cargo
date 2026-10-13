@@ -16,6 +16,7 @@ class PilotImageApp(Document):
 		from frappe.types import DF
 
 		app: DF.Data
+		branch: DF.Data | None
 		commit: DF.Data
 		parent: DF.Data
 		parentfield: DF.Data

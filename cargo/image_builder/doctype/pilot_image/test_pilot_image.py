@@ -8,7 +8,7 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.atlas_client import AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.image_builder.doctype.pilot_image.apps import AppRelease
+from cargo.image_builder.doctype.pilot_image.apps import AppRelease, do_assets_exist
 from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	PilotImage,
 	retire_older_images,
@@ -34,6 +34,7 @@ def release(app: str, *_) -> AppRelease:
 		version="1.0.0",
 		repo=f"https://github.com/frappe/{app}",
 		commit=f"{app}-commit",
+		branch="version-16",
 		requires=REQUIRES.get(app, ()),
 	)
 
@@ -190,8 +191,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(
 			image.get_provision_environment()["REQUIRED_APPS"].splitlines(),
 			[
-				"telephony https://github.com/frappe/telephony telephony-commit",
-				"helpdesk https://github.com/frappe/helpdesk helpdesk-commit",
+				"telephony https://github.com/frappe/telephony version-16 telephony-commit",
+				"helpdesk https://github.com/frappe/helpdesk version-16 helpdesk-commit",
 			],
 		)
 
@@ -667,18 +668,23 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(self.start_sites(), [])
 
-	def start_apps(self, releases: dict[str, str | None] | None = None) -> list[str]:
+	def start_apps(
+		self, releases: dict[str, str | None] | None = None, without_assets: tuple[str, ...] = ()
+	) -> list[str]:
 		"""Start Apps images, where `releases` maps an app to its newest stable commit, or to None
-		when it has no stable release."""
+		when it has no stable release, and the apps in `without_assets` published no assets."""
 		releases = releases or {}
 
 		def newest_stable(app: str, frappe_version: str) -> AppRelease | None:
 			commit = releases.get(app, f"{app}-commit")
-			return commit and AppRelease(app, "1.0.0", f"https://github.com/frappe/{app}", commit, ())
+			return commit and AppRelease(
+				app, "1.0.0", f"https://github.com/frappe/{app}", commit, "version-16", ()
+			)
 
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
 		with (
 			patch(f"{CONTROLLER}.get_latest_stable_release", side_effect=newest_stable),
+			patch(f"{CONTROLLER}.do_assets_exist", side_effect=lambda app: app.name not in without_assets),
 			patch.object(PilotImage, "after_insert"),
 			patch.object(frappe.db, "commit"),
 			patch.object(frappe.db, "rollback"),
@@ -712,6 +718,29 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_an_app_without_prebuilt_assets_gets_no_image(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		self.completed_site()
+
+		started = self.start_apps(without_assets=("helpdesk",))
+
+		self.assertEqual(
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_assets_are_looked_up_on_the_release_of_their_branch(self):
+		hotfix = AppRelease(
+			"crm", "1.0.0", "https://github.com/frappe/crm.git", COMMIT, "version-16/hotfix", ()
+		)
+
+		with patch(f"{APPS}.requests.head", return_value=MagicMock(ok=False)) as head:
+			self.assertFalse(do_assets_exist(hotfix))
+
+		self.assertEqual(
+			head.call_args.args[0],
+			f"https://github.com/frappe/crm/releases/download/assets-version-16-hotfix/crm-{COMMIT}.tar.gz.sha256",
 		)
 
 	def test_a_newer_site_image_alone_does_not_rebuild_an_app(self):

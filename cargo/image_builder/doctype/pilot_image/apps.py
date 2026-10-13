@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import frappe
+import requests
 from frappe import _
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import Version
@@ -16,12 +17,20 @@ class AppRelease:
 	version: str
 	repo: str
 	commit: str
+	branch: str
 	requires: tuple[str, ...]
 
 
 def get_registry_path() -> Path:
 	"""Pilot keeps the marketplace registry here and refreshes it on its own."""
 	return Path(frappe.utils.get_bench_path()).parent.parent / "system" / "registry-cache"
+
+
+def do_assets_exist(release: AppRelease) -> bool:
+	"""Whether the app's CI published prebuilt assets for the release, where Pilot downloads them."""
+	tag = f"assets-{release.branch.replace('/', '-')}"
+	url = f"{release.repo.removesuffix('.git')}/releases/download/{tag}/{release.name}-{release.commit}.tar.gz.sha256"
+	return requests.head(url, allow_redirects=True, timeout=10).ok
 
 
 def get_registry_releases(app: str) -> list[dict]:
@@ -39,6 +48,7 @@ def to_app_release(app: str, release: dict) -> AppRelease:
 		# Every signup app lives under frappe on GitHub.
 		repo=f"https://github.com/frappe/{app}.git",
 		commit=release["commit"],
+		branch=release["branch"],
 		requires=tuple(release.get("dependencies") or {}),
 	)
 
