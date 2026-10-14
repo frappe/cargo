@@ -280,6 +280,29 @@ class Setup(Client):
 
 		return stale_nodes
 
+	def remove_machines_from_layout(self, machines: list[MachineName]) -> list[str]:
+		"""Remove the machines' nodes from the layout and apply it. Returns the node ids removed."""
+		removed_nodes = []
+		for node_id, machine in self.get_layout_nodes():
+			if machine in machines:
+				removed_nodes.append(node_id)
+
+		if removed_nodes:
+			removals = [{"id": node_id, "remove": True} for node_id in removed_nodes]
+			self.assign_roles(removals)
+			self.apply_staged_layout()
+
+		return removed_nodes
+
+	def is_draining(self) -> bool:
+		"""Whether Garage is still moving data for an older layout version."""
+		versions = self.layout_history().get("versions") or []
+		for version in versions:
+			if version.get("status") == "Draining":
+				return True
+
+		return False
+
 	def get_layout_nodes(self) -> list[tuple[str, MachineName]]:
 		"""Each node in the layout, applied or staged, with the machine name setup tagged it with."""
 		layout = self.layout()

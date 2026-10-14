@@ -71,6 +71,10 @@ class Client:
 	def layout(self) -> dict[str, Any]:
 		return self.call("GetClusterLayout")
 
+	def layout_history(self) -> dict[str, Any]:
+		"""Each layout version and whether it is Current, Draining or Historical."""
+		return self.call("GetClusterLayoutHistory")
+
 	def assign_roles(self, roles: list[dict[str, Any]]) -> dict[str, Any]:
 		"""Stage one role per node. Nothing takes effect until `apply_layout`."""
 		return self.call("UpdateClusterLayout", "POST", json={"roles": roles})
