@@ -22,24 +22,15 @@ if typing.TYPE_CHECKING:
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
-CONF = ("telemetry", "conf", "datum", "install.sh")
-NGINX_CONF = ("telemetry", "conf", "nginx", "install.sh")
 DATUM_PORT = 8000
-TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
-TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
-TELEMETRY_SITE_NAMES = (TELEMETRY_WRITE_SITE_NAME, TELEMETRY_READ_SITE_NAME)
 SETUP_TIMEOUT = 30 * 60
-# Fixed by datum's own ACL migration, which creates exactly these two.
-DATUM_USER = "datum"
 MAX_PORT = 65535
-SECRET_LENGTH = 32
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
 SOURCE_HEADER = "X-FC-Source"
 REGION_HEADER = "X-FC-Region"
 SOURCE = "cargo"
-REPORTED_STATUSES = ("Active", "Failed")
 
 
 class DatumServer(WorkflowBuilder):
@@ -106,7 +97,7 @@ class DatumServer(WorkflowBuilder):
 		datum-migrate refuses. Here and not in `before_insert`, which a Single never runs."""
 		for field in USER_PASSWORDS:
 			if not self.get(field):
-				self.set(field, frappe.generate_hash(length=SECRET_LENGTH))
+				self.set(field, frappe.generate_hash(length=32))
 
 	def on_update(self) -> None:
 		"""Tell Central when the host settles. Install writes this Single blank, and an empty
@@ -147,6 +138,17 @@ class DatumServer(WorkflowBuilder):
 		self.db_set("auto_setup_attempts", 0)
 
 	@frappe.whitelist()
+	def reveal_password(self, fieldname: str) -> str:
+		"""One of the ClickHouse user passwords the install wrote."""
+		frappe.only_for("System Manager")
+		if fieldname not in USER_PASSWORDS:
+			frappe.throw(
+				_("{0} is not a ClickHouse user password.").format(fieldname), frappe.ValidationError
+			)
+
+		return self.get_password(fieldname)
+
+	@frappe.whitelist()
 	def setup(self) -> None:
 		"""Install datum on this host's machine, and route to it once it answers."""
 		machine_status = frappe.db.get_value("Machine", self.machine, "status")
@@ -166,7 +168,9 @@ class DatumServer(WorkflowBuilder):
 			try:
 				run_over_ssh(
 					machine.address,
-					script(*CONF, environment=self.install_environment()),
+					script(
+						"telemetry", "conf", "datum", "install.sh", environment=self.install_environment()
+					),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,
 					on_output=log.write,
@@ -191,7 +195,7 @@ class DatumServer(WorkflowBuilder):
 			try:
 				run_over_ssh(
 					machine.address,
-					script(*NGINX_CONF, environment=self.nginx_environment()),
+					script("telemetry", "conf", "nginx", "install.sh", environment=self.nginx_environment()),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,
 					on_output=log.write,
@@ -212,7 +216,7 @@ class DatumServer(WorkflowBuilder):
 			"WILDCARD_DOMAIN": self.wildcard_domain,
 			"DATUM_PORT": DATUM_PORT,
 			"CLICKHOUSE_PORT": self.clickhouse_port,
-			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
+			"TRUSTED_PROXIES": "127.0.0.1 ::1 fd00::/8",
 		}
 
 	@property
@@ -225,7 +229,10 @@ class DatumServer(WorkflowBuilder):
 
 	@property
 	def proxy_domains(self) -> tuple[str, ...]:
-		return tuple(f"{site_name}.{self.wildcard_domain}" for site_name in TELEMETRY_SITE_NAMES)
+		return tuple(
+			f"{site_name}.{self.wildcard_domain}"
+			for site_name in (TELEMETRY_WRITE_SITE_NAME, "telemetry-read-svc")
+		)
 
 	@property
 	def service_endpoint(self) -> str:
@@ -278,7 +285,8 @@ class DatumServer(WorkflowBuilder):
 		variables = {
 			"DATUM_CLICKHOUSE_HOST": self.clickhouse_host,
 			"DATUM_CLICKHOUSE_PORT": str(self.clickhouse_port),
-			"DATUM_CLICKHOUSE_USER": DATUM_USER,
+			# Created by datum's own ACL migration.
+			"DATUM_CLICKHOUSE_USER": "datum",
 			"DATUM_USER_PASSWORD": self.get_password("datum_user_password", raise_exception=False),
 			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
 			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
@@ -320,7 +328,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			"request_url": settings.central_webhook_url,
 			"request_method": "POST",
 			"request_structure": "JSON",
-			"condition": f"doc.status in {REPORTED_STATUSES}",
+			"condition": "doc.status in ('Active', 'Failed')",
 			"webhook_json": frappe.as_json(
 				{
 					"region": settings.region,

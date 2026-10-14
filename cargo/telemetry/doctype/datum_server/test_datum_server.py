@@ -185,6 +185,33 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		"""Only datum-migrate uses it, to create the other two users."""
 		self.assertTrue(self.environment()["DEFAULT_USER_PASSWORD"])
 
+	def test_a_system_manager_can_see_each_user_password(self):
+		doc = self.server()
+		doc.insert()
+		self.addCleanup(frappe.db.rollback)
+
+		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+			with self.subTest(field=field):
+				self.assertEqual(doc.reveal_password(field), doc.get_password(field))
+
+	def test_only_user_passwords_can_be_revealed(self):
+		doc = self.server()
+		doc.insert()
+		self.addCleanup(frappe.db.rollback)
+
+		with self.assertRaises(frappe.ValidationError):
+			doc.reveal_password("clickhouse_host")
+
+	def test_nobody_else_can_see_a_user_password(self):
+		doc = self.server()
+		doc.insert()
+		self.addCleanup(frappe.db.rollback)
+		frappe.set_user("Guest")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		with self.assertRaises(frappe.PermissionError):
+			doc.reveal_password("datum_user_password")
+
 
 class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 	"""Central hands pilots this host's URL, so it has to hear when the host settles."""

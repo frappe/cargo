@@ -1,19 +1,6 @@
 // Copyright (c) 2026, Aradhya-Tripathi and contributors
 // For license information, please see license.txt
 
-const HEADLINES = {
-	Draft: __("Add the telemetry node. Atlas builds it, and setting up starts once it boots."),
-	"Setting Up": __(
-		"Cloning datum, migrating ClickHouse and starting the service. Follow the Setup Log below."
-	),
-	Active: __(
-		"Datum is running. Pilots ship metrics and logs to it once Central hands out its URL."
-	),
-	Failed: __(
-		"The last run failed. See the Setup Log below, then set up again — the machine is kept, so this retries on it."
-	),
-};
-
 frappe.ui.form.on("Datum Server", {
 	refresh(frm) {
 		if (frm.is_new()) return;
@@ -22,12 +9,26 @@ frappe.ui.form.on("Datum Server", {
 		add_machine_button(frm);
 		add_setup_button(frm);
 		add_reset_attempts_button(frm);
+		add_password_buttons(frm);
 		set_headline(frm);
 	},
 });
 
 function set_headline(frm) {
-	const guidance = HEADLINES[frm.doc.status];
+	const headlines = {
+		Draft: __("Add the telemetry node. Atlas builds it, and setting up starts once it boots."),
+		"Setting Up": __(
+			"Cloning datum, migrating ClickHouse and starting the service. Follow the Setup Log below."
+		),
+		Active: __(
+			"Datum is running. Pilots ship metrics and logs to it once Central hands out its URL."
+		),
+		Failed: __(
+			"The last run failed. See the Setup Log below, then set up again — the machine is kept, so this retries on it."
+		),
+	};
+
+	const guidance = headlines[frm.doc.status];
 	if (guidance) frm.dashboard.set_headline(guidance);
 }
 
@@ -112,6 +113,63 @@ function add_reset_attempts_button(frm) {
 			frm.call("reset_auto_setup_attempts").then(() => frm.reload_doc())
 		);
 	});
+}
+
+// Fetched only when asked for, never with the form.
+function add_password_buttons(frm) {
+	const users = [
+		{
+			fieldname: "default_user_password",
+			label: __("Default User"),
+			warning: __("ClickHouse superuser: every table, every user and every grant."),
+		},
+		{
+			fieldname: "datum_user_password",
+			label: __("Datum User"),
+			warning: __(
+				"Reads and inserts rows in the datum database. Datum's API connects as this user."
+			),
+		},
+		{
+			fieldname: "insights_user_password",
+			label: __("Insights User"),
+			warning: __("Reads the datum database, and can create and drop views in it."),
+		},
+	];
+
+	for (const { fieldname, label, warning } of users) {
+		frm.add_custom_button(
+			label,
+			() =>
+				frm.call("reveal_password", { fieldname }).then(({ message: password }) => {
+					const dialog = new frappe.ui.Dialog({
+						title: __("{0} Password", [label]),
+						fields: [
+							{
+								fieldtype: "HTML",
+								options: `<p class="text-muted">${warning} ${__(
+									"Do not paste it anywhere it will be kept."
+								)}</p>`,
+							},
+							{
+								fieldname: "password",
+								fieldtype: "Code",
+								read_only: 1,
+								default: password,
+							},
+						],
+						primary_action_label: __("Copy"),
+						primary_action: () => {
+							frappe.utils.copy_to_clipboard(password);
+							dialog.hide();
+						},
+					});
+
+					dialog.show();
+				}),
+			__("Show Password")
+		);
+	}
 }
 
 // Setup writes its log as it runs, so follow it rather than making the operator reload.
