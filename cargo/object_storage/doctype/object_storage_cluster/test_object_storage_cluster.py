@@ -299,9 +299,20 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		skip.assert_called_once()
 		defer.assert_called_once()
 
+	def test_the_drain_waits_while_garage_moves_blocks(self):
+		with (
+			patch.object(Setup, "is_draining", return_value=False),
+			patch.object(Setup, "get_nodes_moving_blocks", return_value=["one"]),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			self.cluster.wait_for_drain()
+
+		defer.assert_called_once()
+
 	def test_the_drain_ends_once_garage_has_moved_the_data(self):
 		with (
 			patch.object(Setup, "is_draining", return_value=False),
+			patch.object(Setup, "get_nodes_moving_blocks", return_value=[]),
 			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
 		):
 			self.cluster.wait_for_drain()

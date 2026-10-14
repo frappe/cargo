@@ -41,7 +41,8 @@ Select **Release Machines** to give machines back to Atlas. A machine that is no
 
 1. Cargo removes its node from the Garage layout and applies the layout. Garage starts to move its data to the other nodes.
 2. Cargo waits until no layout version is Draining. It checks about once a minute. If the node is already dead, Cargo tells Garage to stop waiting for it.
-3. Cargo terminates the machine and removes its row.
+3. Cargo waits until no running node has blocks in its resync queue or blocks it failed to fetch. Garage does not include blocks in the Draining status. A node that does not answer counts as not done.
+4. Cargo terminates the machine and removes its row.
 
 Cargo refuses the release when the joined storage nodes that stay are fewer than `replication_factor`, and it never releases the gateway of a cluster that joined. To replace a storage node, add the new node, run setup, then release the old one. Setup and release cannot run at the same time.
 

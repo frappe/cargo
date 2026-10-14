@@ -82,6 +82,11 @@ class Client:
 	def apply_layout(self, version: int) -> dict[str, Any]:
 		return self.call("ApplyClusterLayout", "POST", json={"version": version})
 
+	def list_workers(self) -> dict[str, Any]:
+		"""Every node's background workers under `success`, keyed by node id. A node that did
+		not answer is under `error`."""
+		return self.call("ListWorkers", "POST", params={"node": "*"}, json={})
+
 	def skip_dead_nodes(self, version: int) -> dict[str, Any]:
 		"""Mark the layout synced on nodes that are down. Refused when no quorum of the
 		remaining nodes holds the data."""
