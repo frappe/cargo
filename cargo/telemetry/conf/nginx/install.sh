@@ -32,6 +32,14 @@ proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;
 proxy_http_version 1.1;
 
+# A browser opening ClickHouse's root gets its landing page. A query always carries SQL,
+# in ?query= or in a POST body, so a bare GET or HEAD of / is never one.
+map "\$request_method:\$arg_query" \$is_clickhouse_landing_page {
+	"GET:"  1;
+	"HEAD:" 1;
+	default 0;
+}
+
 # A name routed nowhere is dropped. Without this nginx hands it to the first server below,
 # so any Host at all would reach datum.
 server {
@@ -64,8 +72,21 @@ server {
 	proxy_buffering off;
 	proxy_read_timeout 300s;
 
-	location / {
+	# Only queries and the health check. ClickHouse also serves its own UIs
+	# (/play, /dashboard, /binary, /merges) on this port, and those stay internal.
+	location = / {
+		if (\$is_clickhouse_landing_page) {
+			return 404;
+		}
 		proxy_pass http://127.0.0.1:${CLICKHOUSE_PORT};
+	}
+
+	location = /ping {
+		proxy_pass http://127.0.0.1:${CLICKHOUSE_PORT};
+	}
+
+	location / {
+		return 404;
 	}
 }
 NGINX_CONF
