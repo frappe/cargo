@@ -16,6 +16,8 @@ SETTINGS = {
 	# Release tracking is off unless a test turns it on, whatever ran before it.
 	"track_pilot_releases": 0,
 	"max_auto_retry_count": 3,
+	"storage_node_spread": "Separate hosts",
+	"storage_node_spread_within": "",
 }
 SECRETS = {
 	"atlas_token": "test-atlas-token",

@@ -38,6 +38,8 @@ class CargoSettings(Document):
 		region_id: DF.Int
 		require_prebuilt_assets: DF.Check
 		signup_apps: DF.Table[SignupApp]
+		storage_node_spread: DF.Literal["Separate hosts", "Off"]
+		storage_node_spread_within: DF.Data | None
 		track_pilot_releases: DF.Check
 		wildcard_domain: DF.Data
 	# end: auto-generated types

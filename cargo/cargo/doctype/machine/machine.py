@@ -11,7 +11,7 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime
 
 from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
-from cargo.client_models import NodeSpec
+from cargo.client_models import NodeSpec, PlacementRule
 from cargo.ssh import create_keypair
 
 if TYPE_CHECKING:
@@ -63,6 +63,8 @@ class Machine(Document):
 		base_image: str,
 		zone: str = "",
 		ssh_keypair: tuple[str, str] | None = None,
+		tags: dict[str, str] | None = None,
+		placement_rules: list[PlacementRule] | None = None,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
 		row rolled back, so nothing is left claiming a VM that was never made."""
@@ -83,11 +85,17 @@ class Machine(Document):
 			}
 		).insert(ignore_permissions=True)
 
-		machine.vm_id = machine.build(spec, base_image)
+		machine.vm_id = machine.build(spec, base_image, tags=tags, placement_rules=placement_rules)
 		machine.record("Pending")
 		return machine
 
-	def build(self, spec: NodeSpec, base_image: str) -> str:
+	def build(
+		self,
+		spec: NodeSpec,
+		base_image: str,
+		tags: dict[str, str] | None = None,
+		placement_rules: list[PlacementRule] | None = None,
+	) -> str:
 		"""Ask Atlas to build this machine, and return the id it goes by."""
 		from cargo.atlas_client import AtlasClient
 
@@ -101,6 +109,8 @@ class Machine(Document):
 				public_key=self.ssh_public_key,
 				hostname=self.name,
 				metadata={"role": self.role},
+				tags=tags,
+				placement_rules=placement_rules,
 			)
 		except Exception:
 			frappe.log_error(

@@ -13,6 +13,7 @@ from cargo.atlas_client import (
 	error_message,
 	host_port,
 )
+from cargo.client_models import PlacementRule
 
 TENANT_ID = 7
 
@@ -58,10 +59,45 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(body["cpu_millicores"], 2000)
 		self.assertEqual(body["ssh_keys"], ["ssh-ed25519 AAAA"])
 		self.assertEqual(body["metadata"], {"role": "storage"})
+		# An Atlas without affinity rules rejects the fields, so they are sent only when set.
+		self.assertNotIn("tags", body)
+		self.assertNotIn("placement_rules", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
 		self.assertTrue(body["ipv4_internet_access"])
 		self.assertNotIn("egress", body)
+
+	def test_create_sends_tags_and_placement_rules(self):
+		rules = [
+			PlacementRule(
+				resource="virtual_machine", operator="has_not", tags={"role": "storage"}, within="rack"
+			)
+		]
+		with self.call(response(201, {"id": "vm-9"})) as request:
+			self.client.create_vm(
+				image_id="ubuntu-24.04",
+				cpu_millicores=1000,
+				memory_mib=1024,
+				disk_mib=1024,
+				public_key="key",
+				hostname="host",
+				tags={"role": "storage"},
+				placement_rules=rules,
+			)
+
+		body = request.call_args.kwargs["json"]
+		self.assertEqual(body["tags"], {"role": "storage"})
+		self.assertEqual(
+			body["placement_rules"],
+			[
+				{
+					"resource": "virtual_machine",
+					"operator": "has_not",
+					"tags": {"role": "storage"},
+					"within": "rack",
+				}
+			],
+		)
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):

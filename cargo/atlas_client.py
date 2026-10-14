@@ -6,6 +6,8 @@ from typing import Any, Literal, Self
 import frappe
 import requests
 
+from cargo.client_models import PlacementRule
+
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
@@ -95,22 +97,27 @@ class AtlasClient:
 		public_key: str,
 		hostname: str,
 		metadata: dict[str, str] | None = None,
+		tags: dict[str, str] | None = None,
+		placement_rules: list[PlacementRule] | None = None,
 	) -> dict[str, Any]:
 		"""Ask Atlas for one machine and return the record it made."""
-		created = self.call(
-			"POST",
-			"/virtual-machines",
-			{
-				"image_id": image_id,
-				"cpu_millicores": cpu_millicores,
-				"memory_mib": memory_mib,
-				"disk_mib": disk_mib,
-				"ssh_keys": [public_key],
-				"hostname": hostname,
-				"metadata": metadata or {},
-				"ipv4_internet_access": True,
-			},
-		)
+		payload = {
+			"image_id": image_id,
+			"cpu_millicores": cpu_millicores,
+			"memory_mib": memory_mib,
+			"disk_mib": disk_mib,
+			"ssh_keys": [public_key],
+			"hostname": hostname,
+			"metadata": metadata or {},
+			"ipv4_internet_access": True,
+		}
+		# Sent only when set: an Atlas without affinity rules rejects unknown fields.
+		if tags:
+			payload["tags"] = tags
+		if placement_rules:
+			payload["placement_rules"] = [rule.asdict() for rule in placement_rules]
+
+		created = self.call("POST", "/virtual-machines", payload)
 		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_virtual_machine returned no id: {created!r}")
 

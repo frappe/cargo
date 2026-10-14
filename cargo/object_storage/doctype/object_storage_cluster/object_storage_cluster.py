@@ -13,7 +13,7 @@ from frappe.utils import now_datetime
 from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.client_models import GATEWAY, STORAGE, NodeSpec, Role
+from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT, OutputLog
@@ -162,17 +162,43 @@ class ObjectStorageCluster(WorkflowBuilder):
 			self.base_image = base_image_id()
 
 		spec = NodeSpec(role=role, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
+		tags, placement_rules = None, None
+		if role == STORAGE:
+			tags, placement_rules = self.storage_node_tags, self.get_storage_node_placement_rules()
+
 		machine: Machine = MachineDoc.request(
 			self,
 			spec,
 			base_image=self.base_image,
 			zone=self.region,
+			tags=tags,
+			placement_rules=placement_rules,
 		)
 
 		self.append("machines", {"machine": machine.name, "role": role})
 		self.save()
 
 		return machine
+
+	@property
+	def storage_node_tags(self) -> dict[str, str]:
+		"""The Atlas tags on each storage node of this cluster."""
+		return {"cargo-storage-cluster": self.name, "role": STORAGE}
+
+	def get_storage_node_placement_rules(self) -> list[PlacementRule]:
+		"""Keep a new storage node away from the others of this cluster, as Cargo Settings asks."""
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+		if settings.storage_node_spread == "Off":
+			return []
+
+		return [
+			PlacementRule(
+				resource="virtual_machine",
+				operator="has_not",
+				tags=self.storage_node_tags,
+				within=(settings.storage_node_spread_within or "").strip(),
+			)
+		]
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
