@@ -15,10 +15,6 @@
   "error",
   "section_break_topology",
   "replication_factor",
-  "column_break_placement",
-  "strategy",
-  "topology_key",
-  "partition_count",
   "machine_info_section",
   "machines",
   "section_break_garage",
@@ -123,32 +119,6 @@
    "fieldtype": "Int",
    "label": "Replication Factor",
    "reqd": 1
-  },
-  {
-   "fieldname": "column_break_placement",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "partition",
-   "description": "Not enforced by Atlas yet.",
-   "fieldname": "strategy",
-   "fieldtype": "Select",
-   "label": "Placement Strategy",
-   "options": "partition\nspread\npack"
-  },
-  {
-   "default": "rack",
-   "description": "Failure domain to spread across, e.g. rack or host.",
-   "fieldname": "topology_key",
-   "fieldtype": "Data",
-   "label": "Topology Key"
-  },
-  {
-   "default": "2",
-   "description": "How many domains to use.",
-   "fieldname": "partition_count",
-   "fieldtype": "Int",
-   "label": "Partition Count"
   },
   {
    "collapsible": 1,
@@ -303,7 +273,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-14 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
