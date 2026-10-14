@@ -7,7 +7,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
 
-from cargo.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, STORAGE, PlacementRule
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 	ObjectStorageCluster,
 )
@@ -189,6 +189,44 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 
 		for machine_call in client.create_vm.call_args_list:
 			self.assertEqual(machine_call.kwargs["image_id"], "img-42")
+
+	def placement_by_role(self, client) -> dict[str, list[tuple]]:
+		placement = {}
+		for call in client.create_vm.call_args_list:
+			role = call.kwargs["metadata"]["role"]
+			placement.setdefault(role, []).append((call.kwargs["tags"], call.kwargs["placement_rules"]))
+
+		return placement
+
+	def test_storage_nodes_are_kept_on_separate_hosts(self):
+		client = self.atlas()
+		with self.configured():
+			ensure_cluster()
+
+		tags = {"cargo-storage-cluster": self.auto_cluster().name, "role": STORAGE}
+		rule = PlacementRule(resource="virtual_machine", operator="has_not", tags=tags)
+		placement = self.placement_by_role(client)
+		self.assertEqual(placement[STORAGE], [(tags, [rule])] * CONFIG["storage_node_count"])
+		self.assertEqual(placement[GATEWAY], [(None, None)])
+
+	def test_storage_nodes_spread_within_a_host_tag_key(self):
+		frappe.db.set_single_value("Cargo Settings", "storage_node_spread_within", "rack")
+		client = self.atlas()
+		with self.configured():
+			ensure_cluster()
+
+		for _tags, rules in self.placement_by_role(client)[STORAGE]:
+			self.assertEqual(rules[0].within, "rack")
+
+	def test_spread_off_sends_no_rules(self):
+		frappe.db.set_single_value("Cargo Settings", "storage_node_spread", "Off")
+		client = self.atlas()
+		with self.configured():
+			ensure_cluster()
+
+		for tags, rules in self.placement_by_role(client)[STORAGE]:
+			self.assertEqual(tags["role"], STORAGE)
+			self.assertEqual(rules, [])
 
 	def test_a_region_with_no_system_image_rents_nothing(self):
 		client = self.atlas(image_id=None)

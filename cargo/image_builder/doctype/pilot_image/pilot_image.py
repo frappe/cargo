@@ -103,7 +103,7 @@ class PilotImage(WorkflowBuilder):
 		"""Base boots on Ubuntu, Site on the Base image of its build, and Apps on the Site image
 		of its build."""
 		if self.image_type == "Base":
-			return base_image_id()
+			return base_image_id(minimal=True)
 
 		boot_image_type = "Base" if self.image_type == "Site" else "Site"
 		snapshot_id = frappe.db.get_value(

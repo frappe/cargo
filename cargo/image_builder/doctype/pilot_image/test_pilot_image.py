@@ -134,11 +134,12 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		machine = frappe.get_doc("Machine", image.machine)
 
 		with (
-			patch(f"{CONTROLLER}.base_image_id", return_value="img-1"),
+			patch(f"{CONTROLLER}.base_image_id", return_value="img-1") as base_image,
 			patch.object(MachineDoc, "request", return_value=machine) as request,
 		):
 			image.request_build_machine()
 
+		base_image.assert_called_once_with(minimal=True)
 		self.assertEqual(request.call_args.kwargs["spec"].role, "builder")
 		self.assertEqual(request.call_args.kwargs["base_image"], "img-1")
 		self.assertEqual(image.status, "Provisioning")
