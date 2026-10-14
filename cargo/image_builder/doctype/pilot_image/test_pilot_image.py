@@ -204,6 +204,34 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
 
+	def test_a_deadlocked_pin_is_pinned_again(self):
+		image = self.image("Apps", signup_app="hrms")
+		save = PilotImage.save
+		attempts = []
+
+		def deadlock_once(doc, *args, **kwargs):
+			attempts.append(doc.name)
+			if len(attempts) == 1:
+				raise frappe.QueryDeadlockError
+			return save(doc, *args, **kwargs)
+
+		with (
+			patch.object(PilotImage, "save", deadlock_once),
+			patch.object(frappe.db, "rollback"),
+			patch("cargo.workflow_engine.utils.time.sleep"),
+		):
+			self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
+
+	def test_a_pin_that_keeps_deadlocking_fails(self):
+		image = self.image("Apps", signup_app="hrms")
+		with (
+			patch.object(PilotImage, "save", side_effect=frappe.QueryDeadlockError),
+			patch.object(frappe.db, "rollback"),
+			patch("cargo.workflow_engine.utils.time.sleep"),
+			self.assertRaises(frappe.QueryDeadlockError),
+		):
+			self.pin_releases(image)
+
 	def test_an_apps_image_needs_its_signup_app_and_release(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "need a signup app"):
 			frappe.get_doc(
