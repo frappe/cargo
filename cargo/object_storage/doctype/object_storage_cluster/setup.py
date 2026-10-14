@@ -233,10 +233,87 @@ class Setup(Client):
 		return f"{url.scheme}://{url.netloc}"
 
 	def apply_staged_layout(self) -> dict:
-		"""One version for everything staged. Garage refuses a layout that cannot hold a full
-		copy, so a gateway and its storage nodes have to land together."""
+		"""One version for everything staged, stale roles dropped with it. Garage refuses a
+		layout that cannot hold a full copy, so a gateway and its storage nodes have to land
+		together."""
+		removed_nodes = self.stage_stale_role_removals()
 		layout = self.layout()
 		if not layout.get("stagedRoleChanges"):
 			return layout
 
-		return self.apply_layout(layout.get("version", 0) + 1)
+		version = layout.get("version", 0) + 1
+		applied = self.apply_layout(version)
+		if removed_nodes:
+			self.skip_removed_nodes(removed_nodes, version)
+
+		return applied
+
+	def stage_stale_role_removals(self) -> list[str]:
+		"""Stage the removal of a released machine's node,
+		or the old node of a machine that came back with a new node id.
+		Returns the node ids staged for removal."""
+		# All my machines
+		cluster_machines = [row.machine for row in self.cluster.machines]
+		# All nodes in the layout.
+		layout_nodes = self.get_layout_nodes()
+		# All running nodes in the cluster according to garage status
+		running_nodes = self.get_running_node_ids()
+
+		machines_with_a_running_node = []
+		for node_id, machine in layout_nodes:
+			if node_id in running_nodes:
+				machines_with_a_running_node.append(machine)
+
+		stale_nodes = []
+		for node_id, machine in layout_nodes:
+			if machine not in cluster_machines:
+				# The machine was released.
+				stale_nodes.append(node_id)
+			elif node_id not in running_nodes and machine in machines_with_a_running_node:
+				# This node id is not running however, machine does have another running node id.
+				# Which means machine came back with a new node id. So we can remove this old node id.
+				stale_nodes.append(node_id)
+
+		if stale_nodes:
+			removals = [{"id": node_id, "remove": True} for node_id in stale_nodes]
+			self.assign_roles(removals)
+
+		return stale_nodes
+
+	def get_layout_nodes(self) -> list[tuple[str, MachineName]]:
+		"""Each node in the layout, applied or staged, with the machine name setup tagged it with."""
+		layout = self.layout()
+		roles = (layout.get("roles") or []) + (layout.get("stagedRoleChanges") or [])
+
+		nodes = []
+		for role in roles:
+			# A staged removal carries no tags.
+			if not role.get("tags"):
+				continue
+
+			node = (role["id"], role["tags"][0])
+			if node not in nodes:
+				nodes.append(node)
+
+		return nodes
+
+	def get_running_node_ids(self) -> list[str]:
+		nodes = self.status().get("nodes") or []
+		return [node["id"] for node in nodes if node.get("isUp")]
+
+	def get_down_node_ids(self) -> list[str]:
+		nodes = self.status().get("nodes") or []
+		return [node["id"] for node in nodes if not node.get("isUp")]
+
+	def skip_removed_nodes(self, removed_nodes: list[str], version: int) -> None:
+		"""Stop older layout versions waiting for removed nodes to hand over their data. Only
+		when every node that is down was removed: a node that is restarting must still sync."""
+		down_nodes = self.get_down_node_ids()
+		if not down_nodes:
+			return
+
+		for node_id in down_nodes:
+			if node_id not in removed_nodes:
+				return
+
+		self.skip_dead_nodes(version)

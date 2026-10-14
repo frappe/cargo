@@ -33,6 +33,8 @@ Each new machine boots from the Ubuntu system image that Atlas serves when the m
 
 Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx in front of the gateway, and publishes the `s3-svc` and `s3-admin-svc` routes to the Proxy. The gateway nginx sends CORS headers on `s3-svc` for the origin of `central_url` only, so the Central dashboard can upload and download with presigned URLs. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
 
+When setup applies the layout, it also removes each Garage node that no machine of the cluster holds: the node of a released machine, and the old node of a machine that came back with a new node id after it lost its metadata. The old node is removed only once the new one is up, so a machine that is down keeps its role. If every node that is down was removed, setup tells Garage to stop waiting for them (`ClusterLayoutSkipDeadNodes`). Garage refuses this when the remaining nodes do not hold a full copy. Run setup after you release a machine or replace a node.
+
 ## Auto spawn
 
 Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` in the site config:
