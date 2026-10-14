@@ -8,10 +8,13 @@ import inspect
 import json
 import math
 import textwrap
+import time
 from collections.abc import Callable
 from datetime import datetime
+from functools import wraps
 from typing import Any, Literal
 
+import frappe
 from frappe.model.document import Document
 from frappe.utils import get_datetime
 
@@ -46,6 +49,31 @@ def called_methods_in_order(cls: type, func_or_name: str | Callable[..., Any]) -
 	visitor = SelfCallVisitor(cls)
 	visitor.visit(ast.parse(source))
 	return visitor.calls
+
+
+def deadlock_retry(times: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+	"""Run a document method again, up to `times` more, when MariaDB picks it as a deadlock
+	victim. Only for work that is safe to repeat. Put it under `@task`, so it wraps the work
+	and not the enqueue."""
+
+	def decorator(method: Callable[..., Any]) -> Callable[..., Any]:
+		@wraps(method)
+		def wrapper(document: Document, *args: Any, **kwargs: Any) -> Any:
+			for retry in range(times + 1):
+				try:
+					return method(document, *args, **kwargs)
+				except frappe.QueryDeadlockError:
+					if retry == times:
+						raise
+
+					# MariaDB already rolled the transaction back; this resets Frappe to match.
+					frappe.db.rollback()
+					time.sleep(retry + 1)
+					document.reload()
+
+		return wrapper
+
+	return decorator
 
 
 def calculate_duration(start: str | datetime, end: str | datetime) -> int:

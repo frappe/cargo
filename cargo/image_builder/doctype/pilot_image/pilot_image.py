@@ -34,6 +34,7 @@ from cargo.image_builder.doctype.pilot_image.releases import (
 from cargo.ssh import OutputLog, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
+from cargo.workflow_engine.utils import deadlock_retry
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -234,6 +235,7 @@ class PilotImage(WorkflowBuilder):
 		self.wait_for_snapshot()
 
 	@task(queue="short")
+	@deadlock_retry(times=3)
 	def pin_releases(self) -> None:
 		"""Record the Frappe version, and the app releases an Apps image installs."""
 		self.frappe_version = get_frappe_release(self.frappe_commit)
