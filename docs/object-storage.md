@@ -21,7 +21,7 @@ Each machine of a cluster is a **Machine**, named after the cluster and its role
 
 Cargo Settings must carry `region`, `wildcard_domain`, `atlas_url`, `atlas_token`, `central_url`, `central_webhook_secret`, `proxy_url`, and `proxy_token`. A cluster cannot be inserted without the Central values, because it wires its own webhook when it is created.
 
-`base_image` is empty by default, which means Cargo asks Atlas for the Ubuntu system image. Atlas names an image by a generated id, so a name typed into this field will not be found. Leave it empty unless you have an id.
+Each new machine boots from the Ubuntu system image that Atlas serves when the machine is requested, so a retired image does not block new nodes.
 
 ## Setting a cluster up by hand
 
