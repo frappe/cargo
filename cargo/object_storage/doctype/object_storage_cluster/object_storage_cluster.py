@@ -366,23 +366,60 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def release_machines(self, machines: list[str]) -> None:
-		"""Hand the named machines back to Atlas and drop them from this cluster."""
-		can_release_machines(self, machines)
+		"""Hand the named machines back to Atlas and drop them from this cluster. A machine that
+		joined Garage is drained first, so its data reaches the other nodes before it goes."""
+		joined_machines = can_release_machines(self, machines)
 
-		named = set(machines)
+		unjoined_machines = []
+		for name in machines:
+			if name not in joined_machines:
+				unjoined_machines.append(name)
+
+		if unjoined_machines:
+			self.terminate_machines(unjoined_machines)
+
+		if joined_machines:
+			self._drain_and_release.run_as_workflow(joined_machines)
+
+	@flow
+	def _drain_and_release(self, machines: list[str]) -> None:
+		removed_nodes = self.remove_from_layout(machines)
+		self.wait_for_drain(removed_nodes)
+		self.terminate_machines(machines)
+
+	@task(queue="short")
+	def remove_from_layout(self, machines: list[str]) -> list[str]:
+		return self.garage_setup.remove_machines_from_layout(machines)
+
+	@task(queue="short")
+	def wait_for_drain(self, removed_nodes: list[str]) -> None:
+		"""Wait for Garage to move the data off the removed nodes. A deferred task is run again
+		about once a minute."""
+		garage = self.garage_setup
+		if not garage.is_draining():
+			return
+
+		# A removed node that is already dead cannot hand anything over.
+		garage.skip_removed_nodes(removed_nodes, garage.layout_version())
+		self.defer_current_task(_("Garage is still moving data off the removed nodes."))
+
+	@task(queue="short")
+	def terminate_machines(self, machines: list[str]) -> None:
+		"""Terminate the machines at Atlas and drop their rows. A machine Atlas refuses to
+		terminate keeps its row."""
 		failed_terminations = []
-		for name in named:
+		for name in machines:
 			machine_doc: Machine = frappe.get_doc("Machine", name)
 			terminated = machine_doc.terminate()
 			if not terminated:
 				failed_terminations.append(name)
 
-		self.machines = [
-			machine
-			for machine in self.machines
-			if machine.machine not in named or machine.machine in failed_terminations
-		]
+		kept_rows = []
+		for row in self.machines:
+			if row.machine not in machines or row.machine in failed_terminations:
+				kept_rows.append(row)
 
+		self.machines = kept_rows
 		self.save()
 
 	def sync_machines(self) -> None:
@@ -444,6 +481,7 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""If less than required amount of machines are ready to setup, throw."""
 	ensure_no_other_active_cluster(cluster)
+	ensure_no_running_workflow(cluster)
 
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
@@ -467,43 +505,93 @@ def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:
 		frappe.throw(_("Object Storage Cluster {0} is already Active.").format(active_cluster))
 
 
-def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> None:
-	"""Whether the named machines can be released from this cluster."""
+def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> list[str]:
+	"""Throws if the machines cannot be released. Returns the ones that joined Garage, which
+	are drained before they go."""
 	cluster.check_permission("write")
 
 	if cluster.status == "Setting Up":
 		frappe.throw(_("Cannot release machines from a cluster that is setting up."))
 
-	named = set(machines or [])
-	if not named:
+	ensure_no_running_workflow(cluster)
+	ensure_machines_belong(cluster, machines)
+
+	joined = get_joined_machines(cluster)
+	joined_machines = [name for name in machines if name in joined]
+	ensure_gateway_stays(cluster, machines, joined)
+	ensure_enough_storage_nodes_stay(cluster, joined_machines, joined)
+
+	return joined_machines
+
+
+def ensure_machines_belong(cluster: ObjectStorageCluster, machines: list[str]) -> None:
+	if not machines:
 		frappe.throw(_("Name the machines to release."))
 
-	unknown = named - {row.machine for row in cluster.machines}
+	cluster_machines = [row.machine for row in cluster.machines]
+	unknown = [name for name in machines if name not in cluster_machines]
 	if unknown:
-		frappe.throw(_("{0} is not a machine of this cluster.").format(", ".join(sorted(unknown))))
+		frappe.throw(_("{0} is not a machine of this cluster.").format(", ".join(unknown)))
 
+
+def get_joined_machines(cluster: ObjectStorageCluster) -> set[str]:
+	"""The machines Garage reports as up. On a live cluster a silent Garage is refused, so it
+	cannot read as "nothing joined"."""
 	# Nothing can have joined yet: no gateway to join through, or no secrets to join with.
 	if not cluster.gateway_node or not all(
 		cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS
 	):
-		return
+		return set()
 
 	joined = cluster.garage_setup.healthy_nodes()
-	if cluster.is_live:
-		roles = {row.machine: row.role for row in cluster.machines}
-		if any(roles[name] == GATEWAY for name in named):
-			frappe.throw(_("Cannot release the gateway machine from a live cluster."))
+	if cluster.is_live and not joined:
+		frappe.throw(_("Unable to release nodes currently garage is blocked."))
 
-		if not joined:
-			frappe.throw(_("Unable to release nodes currently garage is blocked."))
+	return joined
 
-	serving = sorted(named & joined)
-	if serving:
+
+def ensure_gateway_stays(cluster: ObjectStorageCluster, machines: list[str], joined: set[str]) -> None:
+	"""Every request goes through the gateway once the cluster is live or the gateway joined."""
+	for row in cluster.machines:
+		if row.role != GATEWAY or row.machine not in machines:
+			continue
+
+		if cluster.is_live or row.machine in joined:
+			frappe.throw(_("Cannot release the gateway machine of this cluster."))
+
+
+def ensure_enough_storage_nodes_stay(
+	cluster: ObjectStorageCluster, joined_machines: list[str], joined: set[str]
+) -> None:
+	"""The joined storage nodes that stay must still hold a full copy each."""
+	if not joined_machines:
+		return
+
+	remaining_storage_nodes = []
+	for row in cluster.machines:
+		if row.role == STORAGE and row.machine in joined and row.machine not in joined_machines:
+			remaining_storage_nodes.append(row.machine)
+
+	if len(remaining_storage_nodes) < cluster.replication_factor:
 		frappe.throw(
-			_("{0} joined this cluster. Releasing is for machines that failed to set up.").format(
-				", ".join(serving)
-			)
+			_(
+				"Releasing would leave {0} storage nodes in the cluster, and the replication factor needs {1}."
+			).format(len(remaining_storage_nodes), cluster.replication_factor)
 		)
+
+
+def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
+	"""A setup run or a drain owns the cluster's layout until it ends."""
+	running_workflow = frappe.db.exists(
+		"Press Workflow",
+		{
+			"linked_doctype": cluster.doctype,
+			"linked_docname": cluster.name,
+			"status": ("in", ["Queued", "Running"]),
+		},
+	)
+	if running_workflow:
+		frappe.throw(_("Workflow {0} is still running on this cluster.").format(running_workflow))
 
 
 def webhook_name_for(cluster: str) -> str:

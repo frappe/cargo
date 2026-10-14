@@ -171,3 +171,21 @@ class IntegrationTestStaleRoles(IntegrationTestCase):
 			setup.skip_removed_nodes(["old"], 5)
 
 		skip.assert_not_called()
+
+	def test_a_released_machine_is_taken_out_of_the_layout(self):
+		setup = self.setup_with([("one", "storage-1"), ("two", "storage-2")], {"one", "two"})
+		with patch.object(Setup, "apply_staged_layout") as apply:
+			self.assertEqual(setup.remove_machines_from_layout(["storage-2"]), ["two"])
+
+		self.assertEqual(self.removed(), ["two"])
+		apply.assert_called_once()
+
+	def test_garage_drains_while_an_older_version_is_draining(self):
+		setup = self.setup_with([("one", "storage-1")], {"one"})
+		versions = [{"version": 4, "status": "Current"}, {"version": 3, "status": "Draining"}]
+		with patch.object(Setup, "layout_history", return_value={"versions": versions}):
+			self.assertTrue(setup.is_draining())
+
+		versions[1]["status"] = "Historical"
+		with patch.object(Setup, "layout_history", return_value={"versions": versions}):
+			self.assertFalse(setup.is_draining())

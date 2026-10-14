@@ -35,6 +35,16 @@ Setup installs Garage on each machine that has not joined, gateway first, record
 
 When setup applies the layout, it also removes each Garage node that no machine of the cluster holds: the node of a released machine, and the old node of a machine that came back with a new node id after it lost its metadata. The old node is removed only once the new one is up, so a machine that is down keeps its role. If every node that is down was removed, setup tells Garage to stop waiting for them (`ClusterLayoutSkipDeadNodes`). Garage refuses this when the remaining nodes do not hold a full copy. Run setup after you release a machine or replace a node.
 
+## Releasing a machine
+
+Select **Release Machines** to give machines back to Atlas. A machine that never joined Garage is terminated at once. A storage node that joined is drained first:
+
+1. Cargo removes its node from the Garage layout and applies the layout. Garage starts to move its data to the other nodes.
+2. Cargo waits until no layout version is Draining. It checks about once a minute. If the node is already dead, Cargo tells Garage to stop waiting for it.
+3. Cargo terminates the machine and removes its row.
+
+Cargo refuses the release when the joined storage nodes that stay are fewer than `replication_factor`, and it never releases the gateway of a cluster that joined. To replace a storage node, add the new node, run setup, then release the old one. Setup and release cannot run at the same time.
+
 ## Auto spawn
 
 Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` in the site config:

@@ -244,12 +244,67 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		with self._joined(self.storage), self.assertRaises(frappe.ValidationError):
 			self.cluster.release_machines([self.gateway])
 
-	def test_a_serving_node_cannot_be_released(self):
-		"""Releasing aids setup. A node that joined is working, not broken."""
-		with self._joined(self.storage), self.assertRaises(frappe.ValidationError):
+	def test_a_serving_node_is_drained_before_it_is_released(self):
+		with (
+			self._joined(self.storage),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			patch("cargo.atlas_client.AtlasClient") as atlas,
+		):
 			self.cluster.release_machines([self.storage[0]])
 
+		drain.run_as_workflow.assert_called_once_with([self.storage[0]])
+		atlas.from_settings.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
+
+	def test_serving_nodes_stay_when_too_few_copies_would_remain(self):
+		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "replication"):
+			self.cluster.release_machines([self.storage[0], self.storage[1]])
+
+		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
+
+	def test_a_running_workflow_blocks_a_release(self):
+		workflow = frappe.get_doc(
+			{
+				"doctype": "Press Workflow",
+				"linked_doctype": self.cluster.doctype,
+				"linked_docname": self.cluster.name,
+				"main_method_name": "_drain_and_release",
+				"main_method_title": "Drain and release",
+				"status": "Running",
+			}
+		)
+		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
+			workflow.insert(ignore_permissions=True)
+
+		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
+			self.cluster.release_machines([self.storage[2]])
+
+	def test_removing_from_the_layout_returns_the_garage_nodes(self):
+		with patch.object(Setup, "remove_machines_from_layout", return_value=["node0"]) as remove:
+			self.assertEqual(self.cluster.remove_from_layout([self.storage[0]]), ["node0"])
+
+		remove.assert_called_once_with([self.storage[0]])
+
+	def test_the_drain_waits_while_garage_moves_data(self):
+		with (
+			patch.object(Setup, "is_draining", return_value=True),
+			patch.object(Setup, "layout_version", return_value=7),
+			patch.object(Setup, "skip_removed_nodes") as skip,
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			self.cluster.wait_for_drain(["node0"])
+
+		skip.assert_called_once_with(["node0"], 7)
+		defer.assert_called_once()
+
+	def test_the_drain_ends_once_garage_has_moved_the_data(self):
+		with (
+			patch.object(Setup, "is_draining", return_value=False),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			self.cluster.wait_for_drain(["node0"])
+
+		defer.assert_not_called()
 
 	def test_one_serving_node_refuses_the_whole_request(self):
 		with self._joined(self.storage[:1]), self.assertRaises(frappe.ValidationError):
