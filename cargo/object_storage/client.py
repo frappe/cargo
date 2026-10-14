@@ -71,12 +71,23 @@ class Client:
 	def layout(self) -> dict[str, Any]:
 		return self.call("GetClusterLayout")
 
+	def layout_history(self) -> dict[str, Any]:
+		"""Each layout version and whether it is Current, Draining or Historical."""
+		return self.call("GetClusterLayoutHistory")
+
 	def assign_roles(self, roles: list[dict[str, Any]]) -> dict[str, Any]:
 		"""Stage one role per node. Nothing takes effect until `apply_layout`."""
 		return self.call("UpdateClusterLayout", "POST", json={"roles": roles})
 
 	def apply_layout(self, version: int) -> dict[str, Any]:
 		return self.call("ApplyClusterLayout", "POST", json={"version": version})
+
+	def skip_dead_nodes(self, version: int) -> dict[str, Any]:
+		"""Mark the layout synced on nodes that are down. Refused when no quorum of the
+		remaining nodes holds the data."""
+		return self.call(
+			"ClusterLayoutSkipDeadNodes", "POST", json={"version": version, "allowMissingData": False}
+		)
 
 	def connect_nodes(self, identifiers: list[str]) -> list[dict[str, Any]]:
 		"""Peer the nodes now, without restarting them. Gossip spreads from whoever answers."""

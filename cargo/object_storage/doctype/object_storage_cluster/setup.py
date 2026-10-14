@@ -232,11 +232,113 @@ class Setup(Client):
 
 		return f"{url.scheme}://{url.netloc}"
 
-	def apply_staged_layout(self) -> dict:
-		"""One version for everything staged. Garage refuses a layout that cannot hold a full
-		copy, so a gateway and its storage nodes have to land together."""
+	def apply_staged_layout(self) -> None:
+		"""One version for everything staged, stale roles dropped with it. Garage refuses a
+		layout that cannot hold a full copy, so a gateway and its storage nodes have to land
+		together."""
+		self.stage_stale_role_removals()
 		layout = self.layout()
-		if not layout.get("stagedRoleChanges"):
-			return layout
+		if layout.get("stagedRoleChanges"):
+			self.apply_layout(layout.get("version", 0) + 1)
 
-		return self.apply_layout(layout.get("version", 0) + 1)
+		# On every run, not only the one that removed a node: a skip that failed or had to
+		# wait for another node is tried again.
+		self.skip_dead_nodes_left_out_of_layout()
+
+	def stage_stale_role_removals(self) -> list[str]:
+		"""Stage the removal of a released machine's node,
+		or the old node of a machine that came back with a new node id.
+		Returns the node ids staged for removal."""
+		# All my machines
+		cluster_machines = [row.machine for row in self.cluster.machines]
+		# All nodes in the layout.
+		layout_nodes = self.get_layout_nodes()
+		# All running nodes in the cluster according to garage status
+		running_nodes = self.get_running_node_ids()
+
+		machines_with_a_running_node = []
+		for node_id, machine in layout_nodes:
+			if node_id in running_nodes:
+				machines_with_a_running_node.append(machine)
+
+		stale_nodes = []
+		for node_id, machine in layout_nodes:
+			if machine not in cluster_machines:
+				# The machine was released.
+				stale_nodes.append(node_id)
+			elif node_id not in running_nodes and machine in machines_with_a_running_node:
+				# This node id is not running however, machine does have another running node id.
+				# Which means machine came back with a new node id. So we can remove this old node id.
+				stale_nodes.append(node_id)
+
+		if stale_nodes:
+			removals = [{"id": node_id, "remove": True} for node_id in stale_nodes]
+			self.assign_roles(removals)
+
+		return stale_nodes
+
+	def remove_machines_from_layout(self, machines: list[MachineName]) -> list[str]:
+		"""Remove the machines' nodes from the layout and apply it. Returns the node ids removed."""
+		removed_nodes = []
+		for node_id, machine in self.get_layout_nodes():
+			if machine in machines:
+				removed_nodes.append(node_id)
+
+		if removed_nodes:
+			removals = [{"id": node_id, "remove": True} for node_id in removed_nodes]
+			self.assign_roles(removals)
+			self.apply_staged_layout()
+
+		return removed_nodes
+
+	def is_draining(self) -> bool:
+		"""Whether Garage is still moving data for an older layout version."""
+		versions = self.layout_history().get("versions") or []
+		for version in versions:
+			if version.get("status") == "Draining":
+				return True
+
+		return False
+
+	def get_layout_nodes(self) -> list[tuple[str, MachineName]]:
+		"""Each node in the layout, applied or staged, with the machine name setup tagged it with."""
+		layout = self.layout()
+		roles = (layout.get("roles") or []) + (layout.get("stagedRoleChanges") or [])
+
+		nodes = []
+		for role in roles:
+			# A staged removal carries no tags.
+			if not role.get("tags"):
+				continue
+
+			node = (role["id"], role["tags"][0])
+			if node not in nodes:
+				nodes.append(node)
+
+		return nodes
+
+	def get_running_node_ids(self) -> list[str]:
+		nodes = self.status().get("nodes") or []
+		return [node["id"] for node in nodes if node.get("isUp")]
+
+	def get_down_node_ids(self) -> list[str]:
+		nodes = self.status().get("nodes") or []
+		return [node["id"] for node in nodes if not node.get("isUp")]
+
+	def skip_dead_nodes_left_out_of_layout(self) -> None:
+		"""Stop older layout versions waiting for nodes that are down and no longer in the
+		layout: they will not come back to hand over their data. Not while a node that keeps
+		its role is down, since it may only be restarting and must still sync."""
+		if not self.is_draining():
+			return
+
+		down_nodes = self.get_down_node_ids()
+		if not down_nodes:
+			return
+
+		layout_nodes = [node_id for node_id, _ in self.get_layout_nodes()]
+		for node_id in down_nodes:
+			if node_id in layout_nodes:
+				return
+
+		self.skip_dead_nodes(self.layout_version())

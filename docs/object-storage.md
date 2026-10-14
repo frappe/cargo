@@ -33,6 +33,18 @@ Each new machine boots from the Ubuntu system image that Atlas serves when the m
 
 Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx in front of the gateway, and publishes the `s3-svc` and `s3-admin-svc` routes to the Proxy. The gateway nginx sends CORS headers on `s3-svc` for the origin of `central_url` only, so the Central dashboard can upload and download with presigned URLs. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
 
+When setup applies the layout, it also removes each Garage node that no machine of the cluster holds: the node of a released machine, and the old node of a machine that came back with a new node id after it lost its metadata. The old node is removed only once the new one is up, so a machine that is down keeps its role. On every run, if Garage still waits for nodes that are down and no longer in the layout, and no node in the layout is down, setup tells Garage to stop waiting for them (`ClusterLayoutSkipDeadNodes`). A skip that failed or had to wait is tried again on the next run. Garage refuses this when the remaining nodes do not hold a full copy. Run setup after you release a machine or replace a node.
+
+## Releasing a machine
+
+Select **Release Machines** to give machines back to Atlas. A machine that is not joined is terminated at once, unless Garage is still moving data for an older layout version. A storage node that joined, and every machine while Garage is moving data, is drained first:
+
+1. Cargo removes its node from the Garage layout and applies the layout. Garage starts to move its data to the other nodes.
+2. Cargo waits until no layout version is Draining. It checks about once a minute. If the node is already dead, Cargo tells Garage to stop waiting for it.
+3. Cargo terminates the machine and removes its row.
+
+Cargo refuses the release when the joined storage nodes that stay are fewer than `replication_factor`, and it never releases the gateway of a cluster that joined. To replace a storage node, add the new node, run setup, then release the old one. Setup and release cannot run at the same time.
+
 ## Auto spawn
 
 Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` in the site config:

@@ -236,26 +236,96 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
 	@contextmanager
-	def _joined(self, names: list[str]):
-		with patch.object(Setup, "healthy_nodes", return_value=set(names)):
+	def _joined(self, names: list[str], is_draining: bool = False):
+		with (
+			patch.object(Setup, "healthy_nodes", return_value=set(names)),
+			patch.object(Setup, "is_draining", return_value=is_draining),
+		):
 			yield
 
 	def test_the_gateway_cannot_be_released(self):
 		with self._joined(self.storage), self.assertRaises(frappe.ValidationError):
 			self.cluster.release_machines([self.gateway])
 
-	def test_a_serving_node_cannot_be_released(self):
-		"""Releasing aids setup. A node that joined is working, not broken."""
-		with self._joined(self.storage), self.assertRaises(frappe.ValidationError):
+	def test_a_serving_node_is_drained_before_it_is_released(self):
+		with (
+			self._joined(self.storage),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			patch("cargo.atlas_client.AtlasClient") as atlas,
+		):
 			self.cluster.release_machines([self.storage[0]])
 
+		drain.run_as_workflow.assert_called_once_with([self.storage[0]])
+		atlas.from_settings.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
+
+	def test_serving_nodes_stay_when_too_few_copies_would_remain(self):
+		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "replication"):
+			self.cluster.release_machines([self.storage[0], self.storage[1]])
+
+		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
+
+	def test_a_running_workflow_blocks_a_release(self):
+		workflow = frappe.get_doc(
+			{
+				"doctype": "Press Workflow",
+				"linked_doctype": self.cluster.doctype,
+				"linked_docname": self.cluster.name,
+				"main_method_name": "_drain_and_release",
+				"main_method_title": "Drain and release",
+				"status": "Running",
+			}
+		)
+		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
+			workflow.insert(ignore_permissions=True)
+
+		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
+			self.cluster.release_machines([self.storage[2]])
+
+	def test_removing_from_the_layout_names_the_machines(self):
+		with patch.object(Setup, "remove_machines_from_layout") as remove:
+			self.cluster.remove_from_layout([self.storage[0]])
+
+		remove.assert_called_once_with([self.storage[0]])
+
+	def test_the_drain_waits_while_garage_moves_data(self):
+		with (
+			patch.object(Setup, "is_draining", return_value=True),
+			patch.object(Setup, "skip_dead_nodes_left_out_of_layout") as skip,
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			self.cluster.wait_for_drain()
+
+		skip.assert_called_once()
+		defer.assert_called_once()
+
+	def test_the_drain_ends_once_garage_has_moved_the_data(self):
+		with (
+			patch.object(Setup, "is_draining", return_value=False),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			self.cluster.wait_for_drain()
+
+		defer.assert_not_called()
 
 	def test_one_serving_node_refuses_the_whole_request(self):
 		with self._joined(self.storage[:1]), self.assertRaises(frappe.ValidationError):
 			self.cluster.release_machines([self.storage[0], self.storage[1]])
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[1], "status"), "Running")
+
+	def test_a_node_out_of_the_layout_is_drained_while_garage_moves_data(self):
+		"""A drain that failed leaves its machine behind, and its node no longer reads as
+		joined. Releasing it again must still wait for Garage."""
+		with (
+			self._joined(self.storage[:2], is_draining=True),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			patch("cargo.atlas_client.AtlasClient") as atlas,
+		):
+			self.cluster.release_machines([self.storage[2]])
+
+		drain.run_as_workflow.assert_called_once_with([self.storage[2]])
+		atlas.from_settings.assert_not_called()
 
 	def test_a_node_that_never_joined_can_be_released(self):
 		with (

@@ -170,7 +170,7 @@ function show_release_dialog(frm, machines) {
 			{
 				fieldtype: "HTML",
 				options: `<p>${__(
-					"Releasing a machine asks Atlas to terminate it — the machine and its disk are gone for good. Setting up again reinstalls whatever is left, so release only what you do not want retried."
+					"Releasing a machine asks Atlas to terminate it — the machine and its disk are gone for good. A storage node that joined Garage is taken out of the layout first, and terminated once Garage has moved its data to the other nodes."
 				)}</p>`,
 			},
 			{
@@ -193,7 +193,7 @@ function show_release_dialog(frm, machines) {
 			dialog.hide();
 			frm.call("release_machines", { machines: selected }).then(() => {
 				frappe.show_alert({
-					message: __("Released {0} machine(s).", [selected.length]),
+					message: __("Releasing {0} machine(s).", [selected.length]),
 					indicator: "orange",
 				});
 				frm.reload_doc();
