@@ -204,3 +204,35 @@ class IntegrationTestStaleRoles(IntegrationTestCase):
 		versions[1]["status"] = "Historical"
 		with patch.object(Setup, "layout_history", return_value={"versions": versions}):
 			self.assertFalse(setup.is_draining())
+
+	def moving_blocks_with(self, setup: Setup, workers: dict[str, list[dict]]) -> list[str]:
+		"""The nodes still moving blocks, with Garage reporting `workers` per answering node."""
+		with patch.object(Setup, "list_workers", return_value={"success": workers, "error": {}}):
+			return setup.get_nodes_moving_blocks()
+
+	def test_nodes_with_blocks_queued_or_failed_are_still_moving_blocks(self):
+		setup = self.setup_with(
+			[("one", "storage-1"), ("two", "storage-2"), ("idle", "storage-2")], {"one", "two", "idle"}
+		)
+		workers = {
+			"one": [{"name": "Block resync worker #1", "queueLength": 12, "persistentErrors": 0}],
+			"two": [{"name": "Block resync worker #1", "queueLength": 0, "persistentErrors": 3}],
+			"idle": [
+				{"name": "Block resync worker #1", "queueLength": 0, "persistentErrors": 0},
+				{"name": "Block scrub worker", "queueLength": 40},
+			],
+		}
+
+		self.assertEqual(self.moving_blocks_with(setup, workers), ["one", "two"])
+
+	def test_a_running_node_that_does_not_answer_is_still_moving_blocks(self):
+		setup = self.setup_with([("one", "storage-1"), ("two", "storage-2")], {"one", "two"})
+		workers = {"one": [{"name": "Block resync worker #1", "queueLength": 0, "persistentErrors": 0}]}
+
+		self.assertEqual(self.moving_blocks_with(setup, workers), ["two"])
+
+	def test_a_down_node_is_not_waited_on(self):
+		setup = self.setup_with([("one", "storage-1"), ("dead", "storage-2")], {"one"})
+		workers = {"one": [{"name": "Block resync worker #1", "queueLength": 0, "persistentErrors": 0}]}
+
+		self.assertEqual(self.moving_blocks_with(setup, workers), [])

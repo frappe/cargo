@@ -300,6 +300,28 @@ class Setup(Client):
 
 		return False
 
+	def get_nodes_moving_blocks(self) -> list[str]:
+		"""Running nodes with blocks still queued to fetch or hand over, or blocks they failed
+		to fetch. Garage leaves blocks out of the drain it reports."""
+		answered = self.list_workers().get("success") or {}
+
+		nodes = []
+		for node_id in self.get_running_node_ids():
+			# A node that did not answer cannot show its blocks have moved.
+			if node_id not in answered:
+				nodes.append(node_id)
+				continue
+
+			for worker in answered[node_id]:
+				if not worker["name"].startswith("Block resync worker"):
+					continue
+
+				if worker.get("queueLength") or worker.get("persistentErrors"):
+					nodes.append(node_id)
+					break
+
+		return nodes
+
 	def get_layout_nodes(self) -> list[tuple[str, MachineName]]:
 		"""Each node in the layout, applied or staged, with the machine name setup tagged it with."""
 		layout = self.layout()
