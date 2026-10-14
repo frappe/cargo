@@ -6,8 +6,6 @@
  "engine": "InnoDB",
  "field_order": [
   "section_break_cluster",
-  "base_image",
-  "column_break_cluster",
   "status",
   "health",
   "health_reason",
@@ -48,16 +46,6 @@
    "fieldname": "section_break_cluster",
    "fieldtype": "Section Break",
    "label": "Cluster"
-  },
-  {
-   "description": "Image every machine boots from. Leave empty to use the system image Atlas serves.",
-   "fieldname": "base_image",
-   "fieldtype": "Data",
-   "label": "Base Image"
-  },
-  {
-   "fieldname": "column_break_cluster",
-   "fieldtype": "Column Break"
   },
   {
    "default": "Draft",
@@ -315,7 +303,7 @@
    "link_fieldname": "reference_name"
   }
  ],
- "modified": "2026-09-12 11:00:00.000000",
+ "modified": "2026-10-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

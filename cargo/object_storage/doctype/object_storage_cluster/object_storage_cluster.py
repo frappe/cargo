@@ -59,7 +59,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		admin_token: DF.Password | None
 		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
-		base_image: DF.Data | None
 		data_dir: DF.Data
 		error: DF.LongText | None
 		garage_arch: DF.Data
@@ -154,13 +153,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		configure_storage_cluster_webhook(self)
 
 	def add_node(self, role: Role, cpu_millicores: int, ram_gb: int, disk_gb: int) -> Machine:
-		"""Ask Atlas for one machine and put it in this cluster. Throws, rolling the row back.
-
-		Atlas names an image by a generated id, so an empty `base_image` is resolved rather
-		than sent as a name Atlas cannot know."""
-		if not self.base_image:
-			self.base_image = base_image_id()
-
+		"""Ask Atlas for one machine and put it in this cluster. Throws, rolling the row back."""
 		spec = NodeSpec(role=role, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 		tags, placement_rules = None, None
 		if role == STORAGE:
@@ -169,7 +162,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		machine: Machine = MachineDoc.request(
 			self,
 			spec,
-			base_image=self.base_image,
+			base_image=base_image_id(),
 			zone=self.region,
 			tags=tags,
 			placement_rules=placement_rules,

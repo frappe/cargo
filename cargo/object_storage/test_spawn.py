@@ -182,13 +182,16 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 		}
 		self.assertEqual(sizes, {(2000, 4 * 1024, 20 * 1024), (2000, 4 * 1024, 100 * 1024)})
 
-	def test_the_base_image_comes_from_atlas_and_not_a_name(self):
-		client = self.atlas(image_id="img-42")
+	def test_each_node_boots_from_the_image_atlas_serves_now(self):
+		client = self.atlas()
+		images = [f"img-{number}" for number in range(10)]
+		client.find_system_image.side_effect = images
 		with self.configured():
 			ensure_cluster()
 
-		for machine_call in client.create_vm.call_args_list:
-			self.assertEqual(machine_call.kwargs["image_id"], "img-42")
+		booted = [call.kwargs["image_id"] for call in client.create_vm.call_args_list]
+		self.assertEqual(booted, images[: len(booted)])
+		self.assertGreater(len(booted), 1)
 
 	def placement_by_role(self, client) -> dict[str, list[tuple]]:
 		placement = {}
