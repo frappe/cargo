@@ -10,6 +10,7 @@ from cargo.atlas_client import (
 	AtlasClient,
 	AtlasError,
 	AtlasNotFound,
+	base_image_id,
 	error_message,
 	host_port,
 )
@@ -179,6 +180,15 @@ class UnitTestAtlasClient(UnitTestCase):
 	def test_no_system_image_at_all_is_not_an_error(self):
 		with self.call(response(200, {"items": [], "has_more": False})):
 			self.assertIsNone(self.client.find_system_image(BASE_IMAGE_TAGS))
+
+	def test_the_base_image_is_minimal_or_full_by_its_tag(self):
+		with patch("cargo.atlas_client.AtlasClient.from_settings") as client:
+			client.return_value.find_system_image.return_value = "img-1"
+			base_image_id(minimal=True)
+			base_image_id()
+
+		asked = [call.args[0]["minimal"] for call in client.return_value.find_system_image.call_args_list]
+		self.assertEqual(asked, ["true", "false"])
 
 	def test_a_missing_machine_is_its_own_error(self):
 		with self.call(response(404, {"error": {"code": "not_found", "message": "gone"}})):

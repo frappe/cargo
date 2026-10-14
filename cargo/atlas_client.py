@@ -186,13 +186,15 @@ class AtlasClient:
 		return self.call("GET", f"/images/{image_id}")
 
 
-def base_image_id() -> str:
-	"""The system image every Cargo machine boots on. Throws when Atlas has none."""
-	image_id = AtlasClient.from_settings().find_system_image(BASE_IMAGE_TAGS)
+def base_image_id(minimal: bool = False) -> str:
+	"""The Ubuntu system image a Cargo machine boots on, minimal or full. Throws when Atlas
+	has none."""
+	tags = {**BASE_IMAGE_TAGS, "minimal": "true" if minimal else "false"}
+	image_id = AtlasClient.from_settings().find_system_image(tags)
 	if not image_id:
 		frappe.throw(
 			frappe._("Atlas has no available system image tagged {0}.").format(
-				", ".join(f"{key}:{value}" for key, value in BASE_IMAGE_TAGS.items())
+				", ".join(f"{key}:{value}" for key, value in tags.items())
 			)
 		)
 
