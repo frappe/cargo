@@ -506,8 +506,8 @@ def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:
 
 
 def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> list[str]:
-	"""Throws if the machines cannot be released. Returns the ones that joined Garage, which
-	are drained before they go."""
+	"""Throws if the machines cannot be released. Returns the ones Garage may still hold data
+	for, which are drained before they go."""
 	cluster.check_permission("write")
 
 	if cluster.status == "Setting Up":
@@ -520,6 +520,11 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 	joined_machines = [name for name in machines if name in joined]
 	ensure_gateway_stays(cluster, machines, joined)
 	ensure_enough_storage_nodes_stay(cluster, joined_machines, joined)
+
+	# A node already taken out of the layout no longer reads as joined, but Garage may still
+	# be moving its data. So while Garage is draining, every machine is drained first.
+	if joined and cluster.garage_setup.is_draining():
+		return list(machines)
 
 	return joined_machines
 

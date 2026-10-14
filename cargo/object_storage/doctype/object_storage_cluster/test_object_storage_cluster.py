@@ -236,8 +236,11 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
 	@contextmanager
-	def _joined(self, names: list[str]):
-		with patch.object(Setup, "healthy_nodes", return_value=set(names)):
+	def _joined(self, names: list[str], is_draining: bool = False):
+		with (
+			patch.object(Setup, "healthy_nodes", return_value=set(names)),
+			patch.object(Setup, "is_draining", return_value=is_draining),
+		):
 			yield
 
 	def test_the_gateway_cannot_be_released(self):
@@ -310,6 +313,19 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 			self.cluster.release_machines([self.storage[0], self.storage[1]])
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[1], "status"), "Running")
+
+	def test_a_node_out_of_the_layout_is_drained_while_garage_moves_data(self):
+		"""A drain that failed leaves its machine behind, and its node no longer reads as
+		joined. Releasing it again must still wait for Garage."""
+		with (
+			self._joined(self.storage[:2], is_draining=True),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			patch("cargo.atlas_client.AtlasClient") as atlas,
+		):
+			self.cluster.release_machines([self.storage[2]])
+
+		drain.run_as_workflow.assert_called_once_with([self.storage[2]])
+		atlas.from_settings.assert_not_called()
 
 	def test_a_node_that_never_joined_can_be_released(self):
 		with (

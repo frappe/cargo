@@ -37,7 +37,7 @@ When setup applies the layout, it also removes each Garage node that no machine 
 
 ## Releasing a machine
 
-Select **Release Machines** to give machines back to Atlas. A machine that never joined Garage is terminated at once. A storage node that joined is drained first:
+Select **Release Machines** to give machines back to Atlas. A machine that is not joined is terminated at once, unless Garage is still moving data for an older layout version. A storage node that joined, and every machine while Garage is moving data, is drained first:
 
 1. Cargo removes its node from the Garage layout and applies the layout. Garage starts to move its data to the other nodes.
 2. Cargo waits until no layout version is Draining. It checks about once a minute. If the node is already dead, Cargo tells Garage to stop waiting for it.
