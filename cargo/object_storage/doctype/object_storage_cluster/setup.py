@@ -232,21 +232,18 @@ class Setup(Client):
 
 		return f"{url.scheme}://{url.netloc}"
 
-	def apply_staged_layout(self) -> dict:
+	def apply_staged_layout(self) -> None:
 		"""One version for everything staged, stale roles dropped with it. Garage refuses a
 		layout that cannot hold a full copy, so a gateway and its storage nodes have to land
 		together."""
-		removed_nodes = self.stage_stale_role_removals()
+		self.stage_stale_role_removals()
 		layout = self.layout()
-		if not layout.get("stagedRoleChanges"):
-			return layout
+		if layout.get("stagedRoleChanges"):
+			self.apply_layout(layout.get("version", 0) + 1)
 
-		version = layout.get("version", 0) + 1
-		applied = self.apply_layout(version)
-		if removed_nodes:
-			self.skip_removed_nodes(removed_nodes, version)
-
-		return applied
+		# On every run, not only the one that removed a node: a skip that failed or had to
+		# wait for another node is tried again.
+		self.skip_dead_nodes_left_out_of_layout()
 
 	def stage_stale_role_removals(self) -> list[str]:
 		"""Stage the removal of a released machine's node,
@@ -328,15 +325,20 @@ class Setup(Client):
 		nodes = self.status().get("nodes") or []
 		return [node["id"] for node in nodes if not node.get("isUp")]
 
-	def skip_removed_nodes(self, removed_nodes: list[str], version: int) -> None:
-		"""Stop older layout versions waiting for removed nodes to hand over their data. Only
-		when every node that is down was removed: a node that is restarting must still sync."""
+	def skip_dead_nodes_left_out_of_layout(self) -> None:
+		"""Stop older layout versions waiting for nodes that are down and no longer in the
+		layout: they will not come back to hand over their data. Not while a node that keeps
+		its role is down, since it may only be restarting and must still sync."""
+		if not self.is_draining():
+			return
+
 		down_nodes = self.get_down_node_ids()
 		if not down_nodes:
 			return
 
+		layout_nodes = [node_id for node_id, _ in self.get_layout_nodes()]
 		for node_id in down_nodes:
-			if node_id not in removed_nodes:
+			if node_id in layout_nodes:
 				return
 
-		self.skip_dead_nodes(version)
+		self.skip_dead_nodes(self.layout_version())

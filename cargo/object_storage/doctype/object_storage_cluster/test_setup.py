@@ -156,21 +156,36 @@ class IntegrationTestStaleRoles(IntegrationTestCase):
 
 		self.assertEqual(setup.stage_stale_role_removals(), ["gone"])
 
-	def test_dead_nodes_are_skipped_when_every_one_was_removed(self):
-		setup = self.setup_with(
-			[("old", "storage-1"), ("new", "storage-1"), ("two", "storage-2")], {"new", "two"}
-		)
-		with patch.object(Setup, "skip_dead_nodes") as skip:
-			setup.skip_removed_nodes(["old"], 5)
+	def skip_with(self, setup: Setup, nodes: list[dict], is_draining: bool = True):
+		"""Run the skip with Garage reporting `nodes`, returning the mocked skip call."""
+		with (
+			patch.object(Setup, "status", return_value={"nodes": nodes}),
+			patch.object(Setup, "is_draining", return_value=is_draining),
+			patch.object(Setup, "layout_version", return_value=5),
+			patch.object(Setup, "skip_dead_nodes") as skip,
+		):
+			setup.skip_dead_nodes_left_out_of_layout()
 
-		skip.assert_called_once_with(5)
+		return skip
 
-	def test_dead_nodes_are_not_skipped_while_another_node_is_down(self):
-		setup = self.setup_with([("old", "storage-1"), ("new", "storage-1"), ("two", "storage-2")], {"new"})
-		with patch.object(Setup, "skip_dead_nodes") as skip:
-			setup.skip_removed_nodes(["old"], 5)
+	def test_a_dead_node_removed_by_an_earlier_run_is_still_skipped(self):
+		"""The run that removed it may have failed to skip, so every run checks again."""
+		setup = self.setup_with([("new", "storage-1"), ("two", "storage-2")], {"new", "two"})
+		nodes = [{"id": "new", "isUp": True}, {"id": "two", "isUp": True}, {"id": "old", "isUp": False}]
 
-		skip.assert_not_called()
+		self.skip_with(setup, nodes).assert_called_once_with(5)
+
+	def test_dead_nodes_are_not_skipped_while_a_node_in_the_layout_is_down(self):
+		setup = self.setup_with([("new", "storage-1"), ("two", "storage-2")], {"new"})
+		nodes = [{"id": "new", "isUp": True}, {"id": "two", "isUp": False}, {"id": "old", "isUp": False}]
+
+		self.skip_with(setup, nodes).assert_not_called()
+
+	def test_nothing_is_skipped_once_garage_has_moved_the_data(self):
+		setup = self.setup_with([("new", "storage-1")], {"new"})
+		nodes = [{"id": "new", "isUp": True}, {"id": "old", "isUp": False}]
+
+		self.skip_with(setup, nodes, is_draining=False).assert_not_called()
 
 	def test_a_released_machine_is_taken_out_of_the_layout(self):
 		setup = self.setup_with([("one", "storage-1"), ("two", "storage-2")], {"one", "two"})

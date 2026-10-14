@@ -383,24 +383,24 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@flow
 	def _drain_and_release(self, machines: list[str]) -> None:
-		removed_nodes = self.remove_from_layout(machines)
-		self.wait_for_drain(removed_nodes)
+		self.remove_from_layout(machines)
+		self.wait_for_drain()
 		self.terminate_machines(machines)
 
 	@task(queue="short")
-	def remove_from_layout(self, machines: list[str]) -> list[str]:
-		return self.garage_setup.remove_machines_from_layout(machines)
+	def remove_from_layout(self, machines: list[str]) -> None:
+		self.garage_setup.remove_machines_from_layout(machines)
 
 	@task(queue="short")
-	def wait_for_drain(self, removed_nodes: list[str]) -> None:
+	def wait_for_drain(self) -> None:
 		"""Wait for Garage to move the data off the removed nodes. A deferred task is run again
 		about once a minute."""
 		garage = self.garage_setup
 		if not garage.is_draining():
 			return
 
-		# A removed node that is already dead cannot hand anything over.
-		garage.skip_removed_nodes(removed_nodes, garage.layout_version())
+		# A removed node that died during the drain cannot hand anything over.
+		garage.skip_dead_nodes_left_out_of_layout()
 		self.defer_current_task(_("Garage is still moving data off the removed nodes."))
 
 	@task(queue="short")

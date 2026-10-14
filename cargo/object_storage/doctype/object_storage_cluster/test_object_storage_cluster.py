@@ -279,22 +279,21 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
 			self.cluster.release_machines([self.storage[2]])
 
-	def test_removing_from_the_layout_returns_the_garage_nodes(self):
-		with patch.object(Setup, "remove_machines_from_layout", return_value=["node0"]) as remove:
-			self.assertEqual(self.cluster.remove_from_layout([self.storage[0]]), ["node0"])
+	def test_removing_from_the_layout_names_the_machines(self):
+		with patch.object(Setup, "remove_machines_from_layout") as remove:
+			self.cluster.remove_from_layout([self.storage[0]])
 
 		remove.assert_called_once_with([self.storage[0]])
 
 	def test_the_drain_waits_while_garage_moves_data(self):
 		with (
 			patch.object(Setup, "is_draining", return_value=True),
-			patch.object(Setup, "layout_version", return_value=7),
-			patch.object(Setup, "skip_removed_nodes") as skip,
+			patch.object(Setup, "skip_dead_nodes_left_out_of_layout") as skip,
 			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
 		):
-			self.cluster.wait_for_drain(["node0"])
+			self.cluster.wait_for_drain()
 
-		skip.assert_called_once_with(["node0"], 7)
+		skip.assert_called_once()
 		defer.assert_called_once()
 
 	def test_the_drain_ends_once_garage_has_moved_the_data(self):
@@ -302,7 +301,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 			patch.object(Setup, "is_draining", return_value=False),
 			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
 		):
-			self.cluster.wait_for_drain(["node0"])
+			self.cluster.wait_for_drain()
 
 		defer.assert_not_called()
 
