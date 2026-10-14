@@ -69,15 +69,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 		machines: DF.Table[ObjectStorageNode]
 		metadata_dir: DF.Data
 		metrics_token: DF.Password | None
-		partition_count: DF.Int
 		replication_factor: DF.Int
 		rpc_port: DF.Int
 		rpc_secret: DF.Password | None
 		s3_port: DF.Int
 		setup_log: DF.Code | None
 		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
-		strategy: DF.Literal["partition", "spread", "pack"]
-		topology_key: DF.Data | None
 	# end: auto-generated types
 
 	@property
