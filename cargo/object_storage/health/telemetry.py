@@ -10,6 +10,7 @@ import requests
 
 from cargo.atlas_client import host_port
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.telemetry.credential import is_token_expiring, request_datum_token
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -37,16 +38,16 @@ def get_metrics_info() -> MetricsInfo:
 	bench_path = Path(frappe.utils.get_bench_path())
 	common_bench_config = bench_path.parent / "common_config.toml"
 
-	if not common_bench_config.exists():
-		raise RuntimeError(f"Cannot find {common_bench_config}")
-
-	parsed_common_bench_config = tomllib.loads(common_bench_config.read_text())
-	# Pilot writes the metrics destination as [datum]; [logs] is the same host, other path.
-	datum = parsed_common_bench_config.get("datum") or {}
-	metrics_endpoint, metrics_token = datum.get("endpoint"), datum.get("token")
+	parsed = tomllib.loads(common_bench_config.read_text()) if common_bench_config.exists() else {}
+	telemetry = parsed.get("telemetry") or {}
+	metrics_endpoint, metrics_token = telemetry.get("endpoint"), telemetry.get("token")
 
 	if not metrics_endpoint or not metrics_token:
+		request_datum_token()
 		raise RuntimeError(f"Cannot find metrics endpoint or token in {common_bench_config}")
+
+	if is_token_expiring(metrics_token):
+		request_datum_token()
 
 	return MetricsInfo(endpoint=metrics_endpoint, token=metrics_token)
 
