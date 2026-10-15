@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -203,6 +204,14 @@ class IntegrationTestTelemetry(IntegrationTestCase):
 		_, post = self.ship(get=get)
 
 		post.assert_not_called()
+
+	def test_samples_are_stamped_in_utc(self):
+		"""Datum reads a naive timestamp as UTC, so a site-local one lands hours off."""
+		_, post = self.ship()
+		stamp = datetime.fromisoformat(post.call_args.kwargs["json"]["samples"][0]["ts"])
+
+		self.assertEqual(stamp.utcoffset(), timedelta(0))
+		self.assertLess(abs(datetime.now(UTC) - stamp), timedelta(minutes=1))
 
 	def test_datum_refusing_the_write_is_not_retried(self):
 		"""Datum drops writes by design: a gap in a chart beats a stalled cron."""

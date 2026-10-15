@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tomllib
 import typing
+from datetime import UTC, datetime
 from functools import cached_property
 from pathlib import Path
 
@@ -135,7 +136,7 @@ class Telemetry:
 		"""Scrape every node and relay it. Each machine ships on its own: one unreachable
 		node must not cost the cluster its whole tick."""
 		info = get_metrics_info()
-		timestamp = frappe.utils.now_datetime().isoformat()
+		timestamp = datetime.now(UTC).isoformat()
 
 		for machine in self.garage.machines:
 			try:
