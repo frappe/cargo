@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import subprocess
 import time
+import typing
 from pathlib import Path
 
 import frappe
 import jwt
 from frappe import _
+
+if typing.TYPE_CHECKING:
+	from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 
 RENEW_BEFORE_SECONDS = 24 * 60 * 60
 RENEWAL_COOLDOWN_SECONDS = 10 * 60
@@ -27,6 +31,10 @@ def is_token_expiring(token: str) -> bool:
 def request_datum_token() -> None:
 	"""Report telemetry to Central again, which answers an Available report with a new token."""
 	from cargo.telemetry.doctype.datum_server.datum_server import WEBHOOK_NAME
+
+	server: DatumServer = frappe.get_single("Datum Server")
+	if server.status != "Active":
+		return
 
 	if frappe.cache.get_value(RENEWAL_REQUESTED_KEY):
 		return
