@@ -13,6 +13,8 @@ if typing.TYPE_CHECKING:
 
 API_PREFIX = "/api/atlas"
 RUNNING_STATE = "running"
+STOPPED_STATE = "stopped"
+PAUSED_STATE = "paused"
 DEAD_STATES = frozenset({"failed"})
 MIB_PER_GB = 1024
 # Atlas accepts this range; 1000 millicores is one core.
@@ -130,6 +132,14 @@ class AtlasClient:
 	def terminate_vm(self, vm_id: str) -> None:
 		"""Start termination. The VM route answers 404 once cleanup finishes."""
 		self.call("DELETE", f"/virtual-machines/{vm_id}")
+
+	def set_power_state(self, vm_id: str, action: str) -> None:
+		"""Ask Atlas to start, stop, pause, resume or restart the VM. It answers before the VM gets there."""
+		self.call("POST", f"/virtual-machines/{vm_id}/actions/{action}")
+
+	def grow_disk(self, vm_id: str, disk_mib: int) -> None:
+		"""Grow the VM's disk while it runs."""
+		self.call("PATCH", f"/virtual-machines/{vm_id}/disk", {"disk_mib": disk_mib})
 
 	def resize_vm(self, vm_id: str, *, cpu_millicores: int, memory_mib: int, disk_mib: int) -> None:
 		"""Change the VM's shape. Atlas only resizes a stopped VM and only grows the disk."""

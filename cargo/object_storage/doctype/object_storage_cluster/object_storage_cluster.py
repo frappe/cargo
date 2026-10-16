@@ -436,8 +436,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.save()
 
 	def sync_machines(self) -> None:
-		"""What this cluster's machines settling means for it. Their state is already
-		recorded; `sync_pending_machines` calls this once it changes."""
+		"""What this cluster's machines changing status means for it. `sync_all_machines`
+		calls this once one changes. A stopped node is not dead: the health refresh reports it."""
 		# A cluster being built has promised nothing yet!
 		if not self.is_live:
 			return

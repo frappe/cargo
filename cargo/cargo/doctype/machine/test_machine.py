@@ -5,10 +5,12 @@ from unittest.mock import Mock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import get_datetime
 
 from cargo.atlas_client import AtlasError, AtlasNotFound
-from cargo.cargo.doctype.machine.machine import Machine
+from cargo.cargo.doctype.machine.machine import Machine, sync_all_machines
 from cargo.client_models import NodeSpec
+from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
 from cargo.testing import use_test_settings
 
 MESH_ADDRESS = "fdaa:1:0:7::3"
@@ -115,6 +117,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 	def test_resizing_asks_atlas_then_records_the_new_shape(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "stopped"}
 			self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
 
 		atlas.from_settings.return_value.resize_vm.assert_called_once_with(
@@ -132,11 +135,91 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		atlas.from_settings.return_value.resize_vm.assert_not_called()
 
+	def test_a_machine_that_is_not_stopped_is_not_resized(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "running"}
+			with self.assertRaises(frappe.ValidationError):
+				self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
+
+		atlas.from_settings.return_value.resize_vm.assert_not_called()
+
 	def test_a_resize_atlas_refuses_leaves_the_shape_unchanged(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
-			atlas.from_settings.return_value.resize_vm.side_effect = AtlasError("Stop the Virtual Machine")
+			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "stopped"}
+			atlas.from_settings.return_value.resize_vm.side_effect = AtlasError("out_of_capacity")
 			with self.assertRaises(frappe.ValidationError):
 				self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
 
 		self.machine.reload()
 		self.assertEqual(self.machine.disk_size_gb, 20)
+
+	def test_a_power_action_is_sent_to_atlas(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.change_power_state("stop")
+
+		atlas.from_settings.return_value.set_power_state.assert_called_once_with(self.machine.vm_id, "stop")
+
+	def test_an_unknown_power_action_is_refused(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			with self.assertRaises(frappe.ValidationError):
+				self.machine.change_power_state("delete")
+
+		atlas.from_settings.return_value.set_power_state.assert_not_called()
+
+	def test_growing_the_disk_asks_atlas_then_records_the_size(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.grow_disk(30)
+
+		atlas.from_settings.return_value.grow_disk.assert_called_once_with(self.machine.vm_id, 30720)
+		self.machine.reload()
+		self.assertEqual(self.machine.disk_size_gb, 30)
+
+	def test_a_disk_that_does_not_grow_is_refused(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			with self.assertRaises(frappe.ValidationError):
+				self.machine.grow_disk(20)
+
+		atlas.from_settings.return_value.grow_disk.assert_not_called()
+
+	def test_a_stopped_machine_is_stopped_and_keeps_its_address(self):
+		self.machine.sync(self.client(running_vm()))
+		self.machine.sync(self.client({"current_state": "stopped"}))
+
+		self.assertEqual(self.machine.status, "Stopped")
+		self.assertEqual(self.machine.address, MESH_ADDRESS)
+
+	def test_a_paused_machine_is_paused(self):
+		self.machine.sync(self.client({"current_state": "paused"}))
+
+		self.assertEqual(self.machine.status, "Paused")
+
+	def test_an_unchanged_machine_is_not_saved_again(self):
+		self.machine.sync(self.client(running_vm()))
+		modified = self.machine.modified
+
+		self.machine.sync(self.client(running_vm()))
+
+		self.assertEqual(
+			get_datetime(frappe.db.get_value("Machine", self.machine.name, "modified")),
+			get_datetime(modified),
+		)
+
+	def test_every_machine_but_terminated_is_synced_and_changed_owners_told(self):
+		self.machine.db_set("status", "Running")
+		terminated = frappe.copy_doc(self.machine)
+		terminated.status = "Terminated"
+		terminated.vm_id = f"vm-{frappe.generate_hash(length=8)}"
+		terminated.insert()
+
+		with (
+			patch("cargo.atlas_client.AtlasClient") as atlas,
+			patch(f"{ObjectStorageCluster.__module__}.ObjectStorageCluster.sync_machines") as sync_machines,
+		):
+			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "stopped"}
+			sync_all_machines()
+
+		synced = [call.args[0] for call in atlas.from_settings.return_value.get_vm.call_args_list]
+		self.assertIn(self.machine.vm_id, synced)
+		self.assertNotIn(terminated.vm_id, synced)
+		self.assertEqual(frappe.db.get_value("Machine", self.machine.name, "status"), "Stopped")
+		sync_machines.assert_called()
