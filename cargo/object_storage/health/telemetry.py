@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-import tomllib
 import typing
 from datetime import UTC, datetime
 from functools import cached_property
-from pathlib import Path
 
 import frappe
 import requests
 
 from cargo.atlas_client import host_port
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
-from cargo.telemetry.credential import is_token_expiring, request_datum_token
+from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
 	from cargo.object_storage.doctype.object_storage_cluster.setup import MachineRow
+	from cargo.telemetry.credential import MetricsInfo
 
 INGEST_PATH = "/v1/ingest"
 SCRAPE_TIMEOUT = 15
@@ -25,32 +24,6 @@ SHIP_TIMEOUT = 30
 # Garage names some series `garage_*` and some not; `datum.samples` is shared with every
 # other Frappe service, where a bare `cluster_healthy` would collide with anyone's.
 PREFIX = "garage_"
-
-
-class MetricsInfo(typing.TypedDict):
-	"""The metrics endpoint and token for a cluster"""
-
-	endpoint: str
-	token: str
-
-
-def get_metrics_info() -> MetricsInfo:
-	"""Steal metrics endpoint and token from `common_config.toml`"""
-	bench_path = Path(frappe.utils.get_bench_path())
-	common_bench_config = bench_path.parent / "common_config.toml"
-
-	parsed = tomllib.loads(common_bench_config.read_text()) if common_bench_config.exists() else {}
-	telemetry = parsed.get("telemetry") or {}
-	metrics_endpoint, metrics_token = telemetry.get("endpoint"), telemetry.get("token")
-
-	if not metrics_endpoint or not metrics_token:
-		request_datum_token()
-		raise RuntimeError(f"Cannot find metrics endpoint or token in {common_bench_config}")
-
-	if is_token_expiring(metrics_token):
-		request_datum_token()
-
-	return MetricsInfo(endpoint=metrics_endpoint, token=metrics_token)
 
 
 def parse_metrics(text: str, labels: dict[str, str], timestamp: str) -> list[dict]:

@@ -9,6 +9,9 @@ import requests
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage.doctype.object_storage_cluster import setup as setup_module
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.health import install_cluster_metrics_exporters, install_metrics_exporters
 from cargo.object_storage.health import telemetry as telemetry_module
 from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
 from cargo.testing import use_test_settings
@@ -230,3 +233,54 @@ class IntegrationTestTelemetry(IntegrationTestCase):
 			Telemetry(self.cluster).ship()
 
 		get.assert_not_called()
+
+
+class IntegrationTestMetricsExporter(IntegrationTestCase):
+	"""Vector on every node, pushing host metrics to datum with the region's token."""
+
+	setUp = IntegrationTestTelemetry.setUp
+	add_machine = IntegrationTestTelemetry.add_machine
+
+	def install(self, run=None) -> MagicMock:
+		run = run or MagicMock()
+		with (
+			patch.object(setup_module, "get_metrics_info", return_value=INFO),
+			patch.object(Setup, "run", run),
+		):
+			install_cluster_metrics_exporters(self.cluster.name)
+
+		return run
+
+	def test_every_node_gets_the_exporter(self):
+		run = self.install()
+
+		self.assertEqual({call.args[0]["name"] for call in run.call_args_list}, {self.gateway, self.storage})
+
+	def test_the_node_is_handed_datums_endpoint_and_token(self):
+		sent = self.install().call_args_list[0].args[1]
+
+		self.assertIn("export DATUM_ENDPOINT=https://datum.test", sent)
+		self.assertIn("export DATUM_TOKEN=datum-jwt", sent)
+
+	def test_the_node_labels_its_metrics_with_where_it_runs(self):
+		with patch.object(setup_module, "get_metrics_info", return_value=INFO):
+			garage = Setup(self.cluster)
+			environment = garage.metrics_exporter_environment(garage.machine(self.storage))
+
+		self.assertEqual(environment["CLUSTER"], self.cluster.name)
+		self.assertEqual(environment["MACHINE"], self.storage)
+		self.assertEqual(environment["ROLE"], STORAGE)
+
+	def test_one_unreachable_node_does_not_keep_the_token_from_the_rest(self):
+		run = self.install(run=MagicMock(side_effect=[RuntimeError("ssh refused"), ""]))
+
+		self.assertEqual(run.call_count, 2)
+
+	def test_a_new_token_reaches_every_live_cluster_once(self):
+		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
+		with patch.object(frappe, "enqueue") as enqueue:
+			install_metrics_exporters()
+
+		enqueued = [call for call in enqueue.call_args_list if call.kwargs["cluster"] == self.cluster.name]
+		self.assertEqual(len(enqueued), 1)
+		self.assertTrue(enqueued[0].kwargs["deduplicate"])

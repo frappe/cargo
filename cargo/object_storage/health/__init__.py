@@ -5,14 +5,23 @@ import typing
 import frappe
 
 from cargo.object_storage.health.live import LiveHealth, prune_history
-from cargo.object_storage.health.telemetry import Telemetry, get_metrics_info
+from cargo.object_storage.health.telemetry import Telemetry
+from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
+	from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 
-__all__ = ["LiveHealth", "Telemetry", "prune_history", "refresh_health", "ship_metrics"]
+__all__ = [
+	"LiveHealth",
+	"Telemetry",
+	"install_metrics_exporters",
+	"prune_history",
+	"refresh_health",
+	"ship_metrics",
+]
 
 
 def live_clusters() -> list[str]:
@@ -45,3 +54,26 @@ def ship_metrics() -> None:
 			Telemetry(cluster).ship()
 		except Exception:
 			frappe.log_error(title=f"Could not ship {name} metrics")
+
+
+def install_metrics_exporters() -> None:
+	"""Hand every live cluster's nodes the current Datum token, one job per cluster."""
+	for name in live_clusters():
+		frappe.enqueue(
+			install_cluster_metrics_exporters,
+			cluster=name,
+			queue="long",
+			job_id=f"install-metrics-exporters:{name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+
+def install_cluster_metrics_exporters(cluster: str) -> None:
+	"""One node failing must not keep the token from the rest."""
+	garage: Setup = frappe.get_doc("Object Storage Cluster", cluster).garage_setup
+	for machine in garage.machines:
+		try:
+			garage.install_metrics_exporter(machine)
+		except Exception:
+			frappe.log_error(title=f"Could not install the metrics exporter on {machine['name']}")
