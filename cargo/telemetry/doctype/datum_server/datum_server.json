@@ -6,7 +6,6 @@
  "engine": "InnoDB",
  "field_order": [
   "host_section",
-  "base_image",
   "machine",
   "column_break_host",
   "status",
@@ -31,12 +30,6 @@
    "fieldname": "host_section",
    "fieldtype": "Section Break",
    "label": "Host"
-  },
-  {
-   "description": "The Atlas image id the machine boots from. Left empty, it is found by tag at Atlas. install.sh expects a Debian or Ubuntu image: it installs with apt.",
-   "fieldname": "base_image",
-   "fieldtype": "Data",
-   "label": "Base Image"
   },
   {
    "description": "The VM datum runs on, built by Atlas. Set when the node is requested.",
