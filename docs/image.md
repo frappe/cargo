@@ -69,7 +69,7 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 6. Verifies the image: nginx is enabled at boot, and on Site and Apps images `site.local` answers `/api/method/ping`. The probe calls the loopback worker, because nginx serves the Central pending screen once the Base image has run `setup central`. It waits for the workers rather than reading one cold start as a broken image.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. Site runs it again to write the site alias, which Base had no site for.
 8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. A Base image has no site, so it makes no password and warms the admin API only. A failed prewarm is logged and never prevents a normal boot.
-9. Removes the temporary swap file and the build caches.
+9. Removes the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 

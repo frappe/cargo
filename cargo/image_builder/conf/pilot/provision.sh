@@ -29,7 +29,6 @@ VM_SWAP_FILE="/var/lib/pilot/swap"
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1000}"
 BENCH_GID="${BENCH_GID:-1000}"
-SWAP_SIZE="${SWAP_SIZE:-1G}"
 VM_SWAP_SIZE="${VM_SWAP_SIZE:-1G}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
@@ -48,12 +47,6 @@ INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 # `head` reads the device directly: a producer piped into it dies of SIGPIPE under `pipefail`.
 ADMIN_PASSWORD="$(head -c 18 /dev/urandom | base64)aA1#"
 
-# Installs and migrations run next to MariaDB on a 1 GB machine. Cleanup removes the file before the snapshot.
-fallocate -l "$SWAP_SIZE" /swapfile
-chmod 600 /swapfile
-mkswap -q /swapfile
-swapon /swapfile
-
 as_bench_user() {
 	su - "$BENCH_USER" -c "$1"
 }
@@ -64,6 +57,54 @@ rm -f "$PROVIDER_SCRIPT"
 
 # The Base image already holds the user, Pilot and the bench, so only Base builds them.
 if [ "$IMAGE_TYPE" = Base ]; then
+	# Started now, so installs and migrations next to MariaDB swap to the file every VM uses.
+	install -d -m 755 "$(dirname "$MEMORY_SCRIPT")"
+	cat > "$MEMORY_SCRIPT" <<MEMORY_SCRIPT
+#!/bin/bash
+set -u
+
+swap="$VM_SWAP_FILE"
+
+# The kernel holds about 5% of memory free for huge pages, which nothing here uses.
+echo never > /sys/kernel/mm/transparent_hugepage/enabled
+
+# Swapped pages stay compressed in memory before they reach the disk. MariaDB's unit keeps it out of swap.
+modprobe zstd 2> /dev/null && echo zstd > /sys/module/zswap/parameters/compressor
+echo 20 > /sys/module/zswap/parameters/max_pool_percent
+echo Y > /sys/module/zswap/parameters/enabled
+
+# Every image carries the file its build machine made. This makes it if it is missing.
+if [ ! -e "\$swap" ]; then
+	install -d -m 755 "\$(dirname "\$swap")"
+	if ! { fallocate -l "$VM_SWAP_SIZE" "\$swap" && chmod 600 "\$swap" && mkswap -q "\$swap"; }; then
+		rm -f "\$swap"
+		logger -t pilot-vm-memory "Could not create the swap file"
+		exit 0
+	fi
+fi
+swapon --show=NAME --noheadings | grep -qx "\$swap" || swapon "\$swap"
+MEMORY_SCRIPT
+	chmod 755 "$MEMORY_SCRIPT"
+
+	cat > "$MEMORY_UNIT" <<MEMORY_UNIT
+[Unit]
+Description=Swap and memory settings for a small VM
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service
+Before=swap.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$MEMORY_SCRIPT
+
+[Install]
+WantedBy=swap.target
+MEMORY_UNIT
+
+	systemctl daemon-reload
+	systemctl enable --now --quiet "$(basename "$MEMORY_UNIT")"
+
 	# Cloud images ship their own first user. Clear every regular user out so the bench user
 	# owns the baked files at ids the image can rely on.
 	for existing in $(awk -F: -v me="$BENCH_USER" '$3 >= 1000 && $3 < 60000 && $1 != me {print $1}' /etc/passwd); do
@@ -109,54 +150,10 @@ if [ "$IMAGE_TYPE" = Base ]; then
 		systemctl disable --now "$unit" > /dev/null 2>&1 || true
 	done
 	systemctl mask --quiet fwupd.service fwupd-refresh.timer
-
-	install -d -m 755 "$(dirname "$MEMORY_SCRIPT")"
-	cat > "$MEMORY_SCRIPT" <<MEMORY_SCRIPT
-#!/bin/bash
-set -u
-
-swap="$VM_SWAP_FILE"
-
-# The kernel holds about 5% of memory free for huge pages, which nothing here uses.
-echo never > /sys/kernel/mm/transparent_hugepage/enabled
-
-# Swapped pages stay compressed in memory before they reach the disk. MariaDB's unit keeps it out of swap.
-modprobe zstd 2> /dev/null && echo zstd > /sys/module/zswap/parameters/compressor
-echo 20 > /sys/module/zswap/parameters/max_pool_percent
-echo Y > /sys/module/zswap/parameters/enabled
-
-# Made on first boot, so the image does not carry it.
-if [ ! -e "\$swap" ]; then
-	install -d -m 755 "\$(dirname "\$swap")"
-	if ! { fallocate -l "$VM_SWAP_SIZE" "\$swap" && chmod 600 "\$swap" && mkswap -q "\$swap"; }; then
-		rm -f "\$swap"
-		logger -t pilot-vm-memory "Could not create the swap file"
-		exit 0
-	fi
 fi
-swapon --show=NAME --noheadings | grep -qx "\$swap" || swapon "\$swap"
-MEMORY_SCRIPT
-	chmod 755 "$MEMORY_SCRIPT"
 
-	cat > "$MEMORY_UNIT" <<MEMORY_UNIT
-[Unit]
-Description=Swap and memory settings for a small VM
-DefaultDependencies=no
-After=local-fs.target systemd-modules-load.service
-Before=swap.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=$MEMORY_SCRIPT
-
-[Install]
-WantedBy=swap.target
-MEMORY_UNIT
-
-	systemctl daemon-reload
-	systemctl enable --quiet "$(basename "$MEMORY_UNIT")"
-fi
+# Base starts the VM swap above; Site and Apps start it at boot. Each build needs it on a 1 GB machine.
+swapon --show=NAME --noheadings | grep -qx "$VM_SWAP_FILE"
 
 if [ "$IMAGE_TYPE" = Site ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
@@ -361,8 +358,6 @@ chmod 755 "$PROVIDER_SCRIPT"
 "$PROVIDER_SCRIPT" proxy-servers | grep -q "$PROXY_SUBNET"
 
 # Build litter only.
-swapoff /swapfile
-rm -f /swapfile
 as_bench_user "yarn cache clean" > /dev/null 2>&1 || true
 rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
