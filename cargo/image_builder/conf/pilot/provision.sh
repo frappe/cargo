@@ -134,19 +134,13 @@ MEMORY_UNIT
 	# Set here, not at `setup production`: the alias below only renders for a domain the bench claims.
 	as_bench_user "pilot --yes new '$BENCH' --database mariadb --admin-domain '$ADMIN_DOMAIN' --admin-password '$ADMIN_PASSWORD'"
 
-	# `new` writes bench.toml; `init` clones the framework app it names. A commit as the
-	# branch makes `init` fetch exactly that commit. The branch goes back afterwards, so the
-	# bench still follows it on update.
+	# `new` writes bench.toml; `init` clones the framework app on the branch it names, then
+	# checks out the commit on that branch. Pilot finds the commit's prebuilt assets by branch.
 	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
-	set_frappe_branch() {
-		as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$1\"|' '$bench_toml'"
-		# A silent miss would build the default branch, so check the edit took.
-		as_bench_user "grep -q '^branch = \"$1\"' '$bench_toml'"
-	}
-
-	set_frappe_branch "$FRAPPE_COMMIT"
-	as_bench_user "pilot --yes -b '$BENCH' init --no-dev"
-	set_frappe_branch "$FRAPPE_BRANCH"
+	as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_BRANCH\"|' '$bench_toml'"
+	# A silent miss would build the default branch, so check the edit took.
+	as_bench_user "grep -q '^branch = \"$FRAPPE_BRANCH\"' '$bench_toml'"
+	as_bench_user "pilot --yes -b '$BENCH' init --no-dev --commit '$FRAPPE_COMMIT'"
 
 	checked_out=$(as_bench_user "git -C /home/$BENCH_USER/pilot/benches/$BENCH/apps/frappe rev-parse HEAD")
 	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
