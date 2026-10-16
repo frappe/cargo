@@ -7,6 +7,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import TELEMETRY
+from cargo.ssh import cache_key, live_output
 from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 from cargo.telemetry.spawn import (
 	CONFIG_KEY,
@@ -128,6 +129,7 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 		self.assertEqual(server.status, "Draft")
 		self.assertEqual(server.repository, CONFIG["repository"])
 		self.assertEqual(server.clickhouse_host, "127.0.0.1")
+		self.assertEqual(server.install_environment()["CLICKHOUSE_VERSION"], "26.3.52.9")
 		self.assertTrue(server.auto_spawn)
 
 	def test_a_host_already_filled_in_is_not_written_over(self):
@@ -220,6 +222,24 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 
 		setup.assert_not_called()
 		self.assertIn("did not come up", self.host().error)
+
+
+class IntegrationTestDatumServerSetupLog(SpawnTestCase):
+	"""What the Setup Log shows when a host is set up again."""
+
+	def test_setting_up_again_starts_from_an_empty_log(self):
+		with self.configured():
+			ensure_telemetry()
+		server = self.host()
+		self.machine_of(server)
+		server.db_set("setup_log", "the last run's output")
+		frappe.cache.set_value(cache_key(server.doctype, server.name, "setup_log"), "a stale run")
+
+		with patch("cargo.workflow_engine.doctype.press_workflow.decorators.BoundFlow.run_as_workflow"):
+			self.host().setup()
+
+		self.assertFalse(self.host().setup_log)
+		self.assertEqual(live_output(self.host(), "setup_log"), "")
 
 
 class IntegrationTestTelemetrySpawnSetup(SpawnTestCase):

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import typing
 
 import frappe
@@ -13,7 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
-from cargo.ssh import OutputLog, run_over_ssh, script
+from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -24,8 +25,10 @@ if typing.TYPE_CHECKING:
 
 DATUM_PORT = 8000
 TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
+TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 SETUP_TIMEOUT = 30 * 60
 MAX_PORT = 65535
+CLICKHOUSE_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\.\d+")
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
 SOURCE_HEADER = "X-FC-Source"
@@ -49,6 +52,7 @@ class DatumServer(WorkflowBuilder):
 		base_image: DF.Data | None
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
+		clickhouse_version: DF.Data
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
@@ -56,10 +60,17 @@ class DatumServer(WorkflowBuilder):
 		machine: DF.Link | None
 		repository: DF.Data
 		setup_log: DF.Code | None
-		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
+		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed"]
 		timeout_seconds: DF.Int
 		version: DF.Data
 	# end: auto-generated types
+
+	def before_validate(self) -> None:
+		"""A Single saved before the field existed has no value, and `mark` saves on every
+		status change, so the doctype default fills it rather than every save failing."""
+		self.clickhouse_version = (self.clickhouse_version or "").strip() or self.meta.get_field(
+			"clickhouse_version"
+		).default
 
 	def validate(self) -> None:
 		self.validate_token_verification()
@@ -91,6 +102,12 @@ class DatumServer(WorkflowBuilder):
 
 		if cint(self.timeout_seconds) < 1:
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
+
+		if not CLICKHOUSE_VERSION_PATTERN.fullmatch(self.clickhouse_version):
+			frappe.throw(
+				_("ClickHouse version must be a full package version, such as 26.3.52.9."),
+				frappe.ValidationError,
+			)
 
 	def before_save(self) -> None:
 		"""Passwords the install writes into ClickHouse. Hex, so none carries what
@@ -155,6 +172,8 @@ class DatumServer(WorkflowBuilder):
 		if machine_status != "Running":
 			frappe.throw(_("Machine must be running to set up datum."), frappe.ValidationError)
 
+		self.setup_log = None
+		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Setting Up")
 		self._setup.run_as_workflow()
 
@@ -231,7 +250,7 @@ class DatumServer(WorkflowBuilder):
 	def proxy_domains(self) -> tuple[str, ...]:
 		return tuple(
 			f"{site_name}.{self.wildcard_domain}"
-			for site_name in (TELEMETRY_WRITE_SITE_NAME, "telemetry-read-svc")
+			for site_name in (TELEMETRY_WRITE_SITE_NAME, TELEMETRY_READ_SITE_NAME)
 		)
 
 	@property
@@ -304,6 +323,7 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
 			"DATUM_PORT": DATUM_PORT,
+			"CLICKHOUSE_VERSION": self.clickhouse_version,
 		}
 
 
@@ -328,7 +348,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			"request_url": settings.central_webhook_url,
 			"request_method": "POST",
 			"request_structure": "JSON",
-			"condition": "doc.status in ('Active', 'Failed')",
+			"condition": "doc.status in ('Active', 'Unreachable', 'Failed')",
 			"webhook_json": frappe.as_json(
 				{
 					"region": settings.region,

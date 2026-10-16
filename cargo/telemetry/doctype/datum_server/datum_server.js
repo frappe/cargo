@@ -23,6 +23,9 @@ function set_headline(frm) {
 		Active: __(
 			"Datum is running. Pilots ship metrics and logs to it once Central hands out its URL."
 		),
+		Unreachable: __(
+			"Datum or ClickHouse stopped answering. See Error for which; this turns Active again by itself once both answer."
+		),
 		Failed: __(
 			"The last run failed. See the Setup Log below, then set up again — the machine is kept, so this retries on it."
 		),
@@ -84,7 +87,7 @@ function add_setup_button(frm) {
 	if (!frm.doc.machine || frm.doc.status === "Setting Up") return;
 
 	// Idempotent: the install re-runs on whatever is already there, so it doubles as retry.
-	const first = frm.doc.status !== "Active" && frm.doc.status !== "Failed";
+	const first = !["Active", "Unreachable", "Failed"].includes(frm.doc.status);
 	frm.add_custom_button(first ? __("Set Up Datum") : __("Set Up Again"), () => {
 		frappe.confirm(
 			first

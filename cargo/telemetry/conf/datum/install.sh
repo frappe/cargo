@@ -12,6 +12,7 @@ export DEBIAN_FRONTEND=noninteractive
 : "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
+: "${CLICKHOUSE_VERSION:?CLICKHOUSE_VERSION is required}"
 
 if [ -z "${DATUM_JWKS_URL:-}" ] || [ -z "${DATUM_REGION_ID:-}" ]; then
 	echo "set DATUM_JWKS_URL and DATUM_REGION_ID, or every call is a 401" >&2
@@ -66,14 +67,19 @@ wait_for() {
 
 # --- ClickHouse ------------------------------------------------------------------------
 # apt-key is gone in 24.04, so the key is dearmoured and the repo line signed-by= it.
-if ! command -v clickhouse-client > /dev/null; then
+# Pinned and held: unattended upgrades must not move ClickHouse past what this CPU runs.
+CLICKHOUSE_PACKAGES=(clickhouse-common-static clickhouse-server clickhouse-client)
+if ! dpkg-query -W -f='${db:Status-Status} ${Version}\n' clickhouse-server 2> /dev/null |
+	grep -qx "installed $CLICKHOUSE_VERSION"; then
 	curl -fsSL https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key |
 		gpg --dearmor --yes -o "$CLICKHOUSE_KEYRING"
 	chmod 644 "$CLICKHOUSE_KEYRING"
 	echo "deb [signed-by=$CLICKHOUSE_KEYRING] https://packages.clickhouse.com/deb stable main" \
 		> /etc/apt/sources.list.d/clickhouse.list
 	apt-get update -qq
-	apt-get install -y -qq clickhouse-server clickhouse-client
+	apt-get install -y -qq --allow-downgrades --allow-change-held-packages \
+		"${CLICKHOUSE_PACKAGES[@]/%/=$CLICKHOUSE_VERSION}"
+	apt-mark hold "${CLICKHOUSE_PACKAGES[@]}" > /dev/null
 fi
 
 # Two things a stock install will not do: let `default` issue CREATE USER, which the ACL
