@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import typing
 
 import frappe
@@ -27,6 +28,7 @@ TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
 TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 SETUP_TIMEOUT = 30 * 60
 MAX_PORT = 65535
+CLICKHOUSE_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\.\d+")
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
 WEBHOOK_NAME = "datum_server"
 SOURCE_HEADER = "X-FC-Source"
@@ -50,6 +52,7 @@ class DatumServer(WorkflowBuilder):
 		base_image: DF.Data | None
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
+		clickhouse_version: DF.Data
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
@@ -61,6 +64,13 @@ class DatumServer(WorkflowBuilder):
 		timeout_seconds: DF.Int
 		version: DF.Data
 	# end: auto-generated types
+
+	def before_validate(self) -> None:
+		"""A Single saved before the field existed has no value, and `mark` saves on every
+		status change, so the doctype default fills it rather than every save failing."""
+		self.clickhouse_version = (self.clickhouse_version or "").strip() or self.meta.get_field(
+			"clickhouse_version"
+		).default
 
 	def validate(self) -> None:
 		self.validate_token_verification()
@@ -92,6 +102,12 @@ class DatumServer(WorkflowBuilder):
 
 		if cint(self.timeout_seconds) < 1:
 			frappe.throw(_("Timeout must be at least a second."), frappe.ValidationError)
+
+		if not CLICKHOUSE_VERSION_PATTERN.fullmatch(self.clickhouse_version):
+			frappe.throw(
+				_("ClickHouse version must be a full package version, such as 26.3.52.9."),
+				frappe.ValidationError,
+			)
 
 	def before_save(self) -> None:
 		"""Passwords the install writes into ClickHouse. Hex, so none carries what
@@ -305,6 +321,7 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_REPOSITORY": self.repository,
 			"DATUM_VERSION": self.version,
 			"DATUM_PORT": DATUM_PORT,
+			"CLICKHOUSE_VERSION": self.clickhouse_version,
 		}
 
 

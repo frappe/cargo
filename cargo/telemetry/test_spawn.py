@@ -128,6 +128,7 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 		self.assertEqual(server.status, "Draft")
 		self.assertEqual(server.repository, CONFIG["repository"])
 		self.assertEqual(server.clickhouse_host, "127.0.0.1")
+		self.assertEqual(server.install_environment()["CLICKHOUSE_VERSION"], "26.3.52.9")
 		self.assertTrue(server.auto_spawn)
 
 	def test_a_host_already_filled_in_is_not_written_over(self):

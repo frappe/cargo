@@ -72,6 +72,21 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertFalse(self.saved(timeout_seconds=0))
 		self.assertFalse(self.saved(timeout_seconds=-5))
 
+	def test_a_clickhouse_version_that_is_not_a_package_version_is_refused(self):
+		"""It reaches apt as `clickhouse-server=<version>`, which only takes an exact one."""
+		for version in ("latest", "26.3", "26.3.52.9; reboot"):
+			with self.subTest(version=version):
+				self.assertFalse(self.saved(clickhouse_version=version))
+
+		self.assertTrue(self.saved(clickhouse_version="26.5.7.64"))
+
+	def test_a_host_saved_before_the_version_existed_gets_the_default(self):
+		self.addCleanup(frappe.db.rollback)
+		server = self.server(clickhouse_version=None)
+		server.save()
+
+		self.assertEqual(server.clickhouse_version, "26.3.52.9")
+
 	def saved_without(self, field: str, value) -> bool:
 		"""Save a host with one Cargo Setting cleared. `saved` lays the test settings down
 		first, so the clearing has to come after it, and the controller reads the cached
@@ -127,6 +142,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 
 		self.assertEqual(install["DATUM_REPOSITORY"], "https://github.com/frappe/datum")
 		self.assertEqual(install["DATUM_VERSION"], "develop")
+		self.assertEqual(install["CLICKHOUSE_VERSION"], "26.3.52.9")
 		self.assertNotIn("DATUM_REPOSITORY", doc.environment())
 
 	def test_nothing_unset_is_handed_to_datum(self):

@@ -18,6 +18,7 @@
   "clickhouse_section",
   "clickhouse_host",
   "clickhouse_port",
+  "clickhouse_version",
   "default_user_password",
   "column_break_clickhouse",
   "datum_user_password",
@@ -107,6 +108,14 @@
    "reqd": 1
   },
   {
+   "default": "26.3.52.9",
+   "description": "The ClickHouse package version the install pins and holds, e.g. 26.3.52.9. Builds from 26.6 on need AVX, which the guest CPU template hides.",
+   "fieldname": "clickhouse_version",
+   "fieldtype": "Data",
+   "label": "ClickHouse Version",
+   "reqd": 1
+  },
+  {
    "description": "The `default` superuser, set by the install. Only the migration uses it, to create the other two users.",
    "fieldname": "default_user_password",
    "fieldtype": "Password",
@@ -174,7 +183,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-16 12:00:00.000000",
+ "modified": "2026-10-16 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",
