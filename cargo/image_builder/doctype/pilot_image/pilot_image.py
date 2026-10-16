@@ -226,6 +226,14 @@ class PilotImage(WorkflowBuilder):
 		self.auto_retry_count = count
 		self.save()
 
+	@frappe.whitelist()
+	def build_apps_images(self) -> list[str]:
+		"""Build each signup app's newest release on this Site image, even if it has an image elsewhere."""
+		if self.image_type != "Site" or self.status != "Completed":
+			frappe.throw(_("Apps images can only be built on a Completed Site image."))
+
+		return start_apps_images_on(self, force=True)
+
 	@flow
 	def _create_image(self):
 		# Pinned first: the provision script fetches the releases pinned here.
@@ -483,10 +491,11 @@ def start_image(image: dict[str, str]) -> str | None:
 	return name
 
 
-def start_base_images() -> list[str]:
+def start_base_images(force: bool = False) -> list[str]:
 	"""Start a Base image of the newest Pilot release on the head commit of each Frappe branch.
-	A new Pilot release and a new Frappe commit both lead here, and the image is built once."""
-	if not is_tracking_releases():
+	A new Pilot release and a new Frappe commit both lead here, and the image is built once.
+	`force` runs it while release tracking is off."""
+	if not (force or is_tracking_releases()):
 		return []
 
 	pilot_version = get_latest_pilot_release()
@@ -552,40 +561,45 @@ def start_apps_images() -> list[str]:
 
 	started = []
 	for frappe_branch in get_frappe_branches():
-		site_image = get_newest_completed_image("Site", frappe_branch)
-		if not site_image:
+		if site_image := get_newest_completed_image("Site", frappe_branch):
+			started += start_apps_images_on(site_image)
+
+	return started
+
+
+def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> list[str]:
+	"""Start an Apps image of each signup app's newest stable release on `site_image`. Unless
+	`force` is set, a release that has an image on any Site image is skipped."""
+	started = []
+	for signup_app in get_signup_apps():
+		release = get_latest_stable_release(signup_app, site_image.frappe_version)
+		if not release:
 			continue
 
-		for signup_app in get_signup_apps():
-			release = get_latest_stable_release(signup_app, site_image.frappe_version)
-			if not release:
-				continue
-
-			# Any image of this release counts, whichever Site image it booted on.
-			if frappe.db.exists(
-				"Pilot Image",
-				{
-					"image_type": "Apps",
-					"frappe_branch": frappe_branch,
-					"signup_app": signup_app,
-					"app_commit": release.commit,
-				},
-			):
-				continue
-
-			if skip_app_release(release, site_image.frappe_version):
-				continue
-
-			image = {
-				"pilot_version": site_image.pilot_version,
-				"frappe_branch": frappe_branch,
-				"frappe_commit": site_image.frappe_commit,
+		if not force and frappe.db.exists(
+			"Pilot Image",
+			{
 				"image_type": "Apps",
+				"frappe_branch": site_image.frappe_branch,
 				"signup_app": signup_app,
 				"app_commit": release.commit,
-			}
-			if name := start_image(image):
-				started.append(name)
+			},
+		):
+			continue
+
+		if skip_app_release(release, site_image.frappe_version):
+			continue
+
+		image = {
+			"pilot_version": site_image.pilot_version,
+			"frappe_branch": site_image.frappe_branch,
+			"frappe_commit": site_image.frappe_commit,
+			"image_type": "Apps",
+			"signup_app": signup_app,
+			"app_commit": release.commit,
+		}
+		if name := start_image(image):
+			started.append(name)
 
 	return started
 
