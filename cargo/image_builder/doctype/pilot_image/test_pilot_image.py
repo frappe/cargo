@@ -558,7 +558,11 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			self.image(status="Failed").set_auto_retry_count(-1)
 
 	def start_latest_releases(
-		self, pilot_version: str, heads: dict[str, str] | None = None, tracking: int = 1
+		self,
+		pilot_version: str,
+		heads: dict[str, str] | None = None,
+		tracking: int = 1,
+		from_settings: bool = False,
 	) -> list[str]:
 		"""Start builds of `pilot_version` on each branch's head commit, without renting machines."""
 		heads = heads or {}
@@ -572,6 +576,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			patch.object(frappe.db, "commit"),
 			patch.object(frappe.db, "rollback"),
 		):
+			if from_settings:
+				return frappe.get_doc("Cargo Settings").build_base_images()
 			return start_base_images()
 
 	def start_sites(self, tracking: int = 1) -> list[str]:
@@ -679,6 +685,15 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(self.start_latest_releases(version, tracking=0), [])
 		self.assertEqual(self.start_sites(tracking=0), [])
 		self.assertFalse(frappe.db.exists("Pilot Image", {"pilot_version": version}))
+
+	def test_base_images_are_built_from_settings_while_tracking_is_off(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		started = self.start_latest_releases(version, tracking=0, from_settings=True)
+
+		self.assertEqual(
+			self.built_on(started), [("Base", "develop", COMMIT), ("Base", "version-16", COMMIT)]
+		)
 
 	def test_a_site_image_starts_once_its_base_image_completes(self):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"

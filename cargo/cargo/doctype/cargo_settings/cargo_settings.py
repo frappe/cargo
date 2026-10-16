@@ -1,7 +1,10 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
 
+import frappe
 from frappe.model.document import Document
+
+from cargo.image_builder.doctype.pilot_image.pilot_image import start_base_images
 
 
 class CargoSettings(Document):
@@ -47,3 +50,8 @@ class CargoSettings(Document):
 	def validate(self) -> None:
 		# Every consumer builds a domain from this, so it is canonicalised once, here.
 		self.wildcard_domain = (self.wildcard_domain or "").strip().strip(".").lower()
+
+	@frappe.whitelist()
+	def build_base_images(self) -> list[str]:
+		"""Start a Base image of the newest Pilot release on each Frappe branch head, if it has none."""
+		return start_base_images(force=True)

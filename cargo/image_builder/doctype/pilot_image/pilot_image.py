@@ -491,10 +491,11 @@ def start_image(image: dict[str, str]) -> str | None:
 	return name
 
 
-def start_base_images() -> list[str]:
+def start_base_images(force: bool = False) -> list[str]:
 	"""Start a Base image of the newest Pilot release on the head commit of each Frappe branch.
-	A new Pilot release and a new Frappe commit both lead here, and the image is built once."""
-	if not is_tracking_releases():
+	A new Pilot release and a new Frappe commit both lead here, and the image is built once.
+	`force` runs it while release tracking is off."""
+	if not (force or is_tracking_releases()):
 		return []
 
 	pilot_version = get_latest_pilot_release()
