@@ -232,7 +232,7 @@ class Machine(Document):
 		try:
 			AtlasClient.from_settings().set_power_state(self.vm_id, action)
 		except AtlasError as exception:
-			frappe.throw(_("Atlas would not {0} this machine: {1}").format(action, exception))
+			frappe.throw(_("Atlas would not {0} this machine: {1}").format(action, str(exception)))
 
 	@frappe.whitelist()
 	def grow_disk(self, disk_gb: int) -> None:
@@ -247,7 +247,7 @@ class Machine(Document):
 		try:
 			AtlasClient.from_settings().grow_disk(self.vm_id, disk_gb * MIB_PER_GB)
 		except AtlasError as exception:
-			frappe.throw(_("Atlas would not grow this machine's disk: {0}").format(exception))
+			frappe.throw(_("Atlas would not grow this machine's disk: {0}").format(str(exception)))
 
 	@frappe.whitelist()
 	def resize_machine(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
@@ -272,7 +272,7 @@ class Machine(Document):
 				disk_mib=disk_gb * MIB_PER_GB,
 			)
 		except AtlasError as exception:
-			frappe.throw(_("Atlas would not resize this machine: {0}").format(exception))
+			frappe.throw(_("Atlas would not resize this machine: {0}").format(str(exception)))
 
 	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
 		self.status = status
