@@ -61,15 +61,15 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 `cargo/image_builder/conf/pilot/provision.sh` runs as root. Steps 2 to 4 run for one image type only.
 
-1. Adds a temporary swap file, because the build machine has the memory the image boots with and that is not enough to build assets.
-2. Base: removes every regular user the Ubuntu image shipped, creates the bench user `frappe` at uid and gid 1000, and installs Pilot. It creates the bench with the admin domain and initialises it at `FRAPPE_COMMIT`: the commit is set as the branch in `bench.toml` so `init` fetches exactly that commit, then the branch name goes back so the bench follows the branch on update. The build stops if Frappe is at another commit.
+1. Adds a temporary 1 GB swap file. The build machine has the shape the image boots with, 1 vCPU and 1 GB by default, and installs and migrations run next to MariaDB.
+2. Base: removes every regular user the Ubuntu image shipped, creates the bench user `frappe` at uid and gid 1000, and installs Pilot. It creates the bench with the admin domain and initialises it at `FRAPPE_COMMIT`: the commit is set as the branch in `bench.toml` so `init` fetches exactly that commit, then the branch name goes back so the bench follows the branch on update. The build stops if Frappe is at another commit. It disables what a Firecracker guest does not use (fwupd, multipathd, ModemManager, udisks2 and the tty1 console), and installs `pilot-vm-memory.service`. At every boot, before swap starts, that unit turns transparent hugepages off, turns zswap on with zstd and a 20% pool, and enables a 1 GB swap file at `/var/lib/pilot/swap` (`VM_SWAP_SIZE`). The file is created at first boot, so the image does not carry it. MariaDB's unit keeps it out of swap.
 3. Site: creates the site.
 4. Apps: fetches each app in `REQUIRED_APPS` on its release branch at its release commit, with the prebuilt assets of that commit, then installs them on the site in that order.
 5. Runs `pilot setup production`.
 6. Verifies the image: nginx is enabled at boot, and on Site and Apps images `site.local` answers `/api/method/ping`. The probe calls the loopback worker, because nginx serves the Central pending screen once the Base image has run `setup central`. It waits for the workers rather than reading one cold start as a broken image.
 7. Runs `pilot setup central`, which enables Central management and writes the hostname aliases. Site runs it again to write the site alias, which Base had no site for.
 8. Installs an enabled, boot-time prewarm service. Atlas starts an isolated guest for five minutes before it captures a memory snapshot; the service reaches the Frappe loopback worker directly and warms `/api/method/ping`, the site home page, `/login`, and an authenticated `/desk` response. It creates a random, transient Administrator password in the temporary warm guest, logs out immediately after the Desk request, and saves neither the password nor its session. The captured disk removes a one-time marker, so a restored or later boot cannot reset the Administrator password. A Base image has no site, so it makes no password and warms the admin API only. A failed prewarm is logged and never prevents a normal boot.
-9. Removes the swap file and the build caches.
+9. Removes the temporary swap file and the build caches.
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 

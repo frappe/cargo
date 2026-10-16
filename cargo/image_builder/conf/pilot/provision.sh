@@ -22,16 +22,17 @@ PREWARM_SCRIPT="/usr/local/lib/pilot/prewarm-frappe.sh"
 PREWARM_UNIT="/etc/systemd/system/pilot-prewarm.service"
 PREWARM_MARKER="/var/lib/pilot/prewarm-pending"
 PROVIDER_SCRIPT="/usr/bin/bench-domain-provider"
+MEMORY_SCRIPT="/usr/local/lib/pilot/vm-memory.sh"
+MEMORY_UNIT="/etc/systemd/system/pilot-vm-memory.service"
+VM_SWAP_FILE="/var/lib/pilot/swap"
 
 BENCH_USER="${BENCH_USER:-frappe}"
 BENCH_UID="${BENCH_UID:-1000}"
 BENCH_GID="${BENCH_GID:-1000}"
-SWAP_SIZE="${SWAP_SIZE:-1536M}"
+SWAP_SIZE="${SWAP_SIZE:-1G}"
+VM_SWAP_SIZE="${VM_SWAP_SIZE:-1G}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
-# Node sizes its heap from its own guess of host memory, about 2GB on an 8GB machine,
-# which a frontend such as CRM's outgrows when an app has no prebuilt assets.
-NODE_HEAP_MB="${NODE_HEAP_MB:-4096}"
 # One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
@@ -47,7 +48,7 @@ INSTALLER="https://raw.githubusercontent.com/frappe/pilot/${VERSION}/install.sh"
 # `head` reads the device directly: a producer piped into it dies of SIGPIPE under `pipefail`.
 ADMIN_PASSWORD="$(head -c 18 /dev/urandom | base64)aA1#"
 
-# Assets need more memory than the image is baked with. Cleanup removes the file before the snapshot.
+# Installs and migrations run next to MariaDB on a 1 GB machine. Cleanup removes the file before the snapshot.
 fallocate -l "$SWAP_SIZE" /swapfile
 chmod 600 /swapfile
 mkswap -q /swapfile
@@ -108,6 +109,59 @@ if [ "$IMAGE_TYPE" = Base ]; then
 
 	checked_out=$(as_bench_user "git -C /home/$BENCH_USER/pilot/benches/$BENCH/apps/frappe rev-parse HEAD")
 	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
+
+	# A Firecracker guest has no screen, multipath storage, modem, removable disk or firmware to update.
+	for unit in fwupd.service fwupd-refresh.timer multipathd.socket multipathd.service ModemManager.service udisks2.service getty@tty1.service; do
+		systemctl disable --now "$unit" > /dev/null 2>&1 || true
+	done
+	systemctl mask --quiet fwupd.service fwupd-refresh.timer
+
+	install -d -m 755 "$(dirname "$MEMORY_SCRIPT")"
+	cat > "$MEMORY_SCRIPT" <<MEMORY_SCRIPT
+#!/bin/bash
+set -u
+
+swap="$VM_SWAP_FILE"
+
+# The kernel holds about 5% of memory free for huge pages, which nothing here uses.
+echo never > /sys/kernel/mm/transparent_hugepage/enabled
+
+# Swapped pages stay compressed in memory before they reach the disk. MariaDB's unit keeps it out of swap.
+modprobe zstd 2> /dev/null && echo zstd > /sys/module/zswap/parameters/compressor
+echo 20 > /sys/module/zswap/parameters/max_pool_percent
+echo Y > /sys/module/zswap/parameters/enabled
+
+# Made on first boot, so the image does not carry it.
+if [ ! -e "\$swap" ]; then
+	install -d -m 755 "\$(dirname "\$swap")"
+	if ! { fallocate -l "$VM_SWAP_SIZE" "\$swap" && chmod 600 "\$swap" && mkswap -q "\$swap"; }; then
+		rm -f "\$swap"
+		logger -t pilot-vm-memory "Could not create the swap file"
+		exit 0
+	fi
+fi
+swapon --show=NAME --noheadings | grep -qx "\$swap" || swapon "\$swap"
+MEMORY_SCRIPT
+	chmod 755 "$MEMORY_SCRIPT"
+
+	cat > "$MEMORY_UNIT" <<MEMORY_UNIT
+[Unit]
+Description=Swap and memory settings for a small VM
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service
+Before=swap.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$MEMORY_SCRIPT
+
+[Install]
+WantedBy=swap.target
+MEMORY_UNIT
+
+	systemctl daemon-reload
+	systemctl enable --quiet "$(basename "$MEMORY_UNIT")"
 fi
 
 if [ "$IMAGE_TYPE" = Site ]; then
@@ -118,7 +172,7 @@ if [ "$IMAGE_TYPE" = Apps ]; then
 	apps=()
 	# The branch lets Pilot download the assets the app's CI built for the commit.
 	while read -r app repo branch commit; do
-		as_bench_user "NODE_OPTIONS=--max-old-space-size=$NODE_HEAP_MB pilot --yes -b '$BENCH' get-app '$repo' --branch '$branch' --commit '$commit'"
+		as_bench_user "pilot --yes -b '$BENCH' get-app '$repo' --branch '$branch' --commit '$commit'"
 		apps+=("$app")
 	done <<< "$REQUIRED_APPS"
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"

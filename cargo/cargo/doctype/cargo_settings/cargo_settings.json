@@ -167,22 +167,22 @@
    "label": "Build Machine"
   },
   {
-   "default": "16",
-   "description": "Installing every signup app peaks at about 9 GB, before the build cleans up.",
+   "default": "10",
+   "description": "Holds the image, the 1 GB swap file the build adds, and the 1 GB swap file a machine creates when it first boots.",
    "fieldname": "build_machine_disk_gb",
    "fieldtype": "Int",
    "label": "Build Machine Disk (GB)",
    "reqd": 1
   },
   {
-   "default": "4000",
+   "default": "1000",
    "fieldname": "build_machine_cpu",
    "fieldtype": "Int",
    "label": "Build Machine CPU (millicores)",
    "reqd": 1
   },
   {
-   "default": "4",
+   "default": "1",
    "fieldname": "build_machine_memory",
    "fieldtype": "Int",
    "label": "Build Machine Memory (GB)",
@@ -268,7 +268,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-14 12:00:00.000000",
+ "modified": "2026-10-16 03:17:33.267338",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
