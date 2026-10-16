@@ -288,6 +288,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 				)
 				return False
 
+			# Metrics are not worth failing a node over; the next Datum token retries it.
+			try:
+				garage.install_metrics_exporter(garage.machine(machine.name), on_output=log.write)
+			except Exception:
+				frappe.log_error(title=f"Could not install the metrics exporter on {machine.name}")
+
 		return True
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)

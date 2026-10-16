@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+import tomllib
 import typing
 from pathlib import Path
 
@@ -16,6 +17,32 @@ RENEW_BEFORE_SECONDS = 24 * 60 * 60
 RENEWAL_COOLDOWN_SECONDS = 10 * 60
 RENEWAL_REQUESTED_KEY = "cargo:datum-token-renewal-requested"
 SETUP_TIMEOUT_SECONDS = 120
+
+
+class MetricsInfo(typing.TypedDict):
+	"""The metrics endpoint and token for a cluster"""
+
+	endpoint: str
+	token: str
+
+
+def get_metrics_info() -> MetricsInfo:
+	"""Steal metrics endpoint and token from `common_config.toml`"""
+	bench_path = Path(frappe.utils.get_bench_path())
+	common_bench_config = bench_path.parent / "common_config.toml"
+
+	parsed = tomllib.loads(common_bench_config.read_text()) if common_bench_config.exists() else {}
+	telemetry = parsed.get("telemetry") or {}
+	metrics_endpoint, metrics_token = telemetry.get("endpoint"), telemetry.get("token")
+
+	if not metrics_endpoint or not metrics_token:
+		request_datum_token()
+		raise RuntimeError(f"Cannot find metrics endpoint or token in {common_bench_config}")
+
+	if is_token_expiring(metrics_token):
+		request_datum_token()
+
+	return MetricsInfo(endpoint=metrics_endpoint, token=metrics_token)
 
 
 def is_token_expiring(token: str) -> bool:
