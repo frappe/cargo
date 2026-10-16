@@ -47,7 +47,7 @@ _create_image flow
   wait_for_snapshot    -> Atlas image available, destroy the build machine (Completed)
 ```
 
-`sync_pending_machines` runs every minute and moves an image on when Atlas reports its machine running.
+`sync_all_machines` runs every minute and moves an image on when Atlas reports its machine running.
 
 Running is not the same as booted. Before it sends the script, the build waits up to 60 seconds for the machine to answer a ping, then up to 180 seconds for sshd to answer a trivial command. A machine that does neither fails the build with which step it failed at, instead of a connection timeout.
 

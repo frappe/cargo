@@ -28,7 +28,7 @@ Each new machine boots from the Ubuntu system image that Atlas serves when the m
 1. Create an Object Storage Cluster. Cargo mints its `rpc_secret`, `admin_token`, and `metrics_token`, and points a webhook at Central.
 2. Select **Add > Gateway Node** and give it a size. Cargo asks Atlas for the machine.
 3. Select **Add > Storage Node** once for each storage machine. A cluster needs at least `replication_factor` of them.
-4. Wait. `sync_pending_machines` moves each machine to Running when Atlas reports it up with a mesh address.
+4. Wait. `sync_all_machines` moves each machine to Running when Atlas reports it up with a mesh address.
 5. Select **Set Up Cluster**.
 
 Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx in front of the gateway, and publishes the `s3-svc` and `s3-admin-svc` routes to the Proxy. The gateway nginx sends CORS headers on `s3-svc` for the origin of `central_url` only, so the Central dashboard can upload and download with presigned URLs. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.

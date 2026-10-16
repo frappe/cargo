@@ -150,10 +150,12 @@ def fill_machines(cluster: ObjectStorageCluster, config: dict) -> bool:
 
 def advance(cluster: ObjectStorageCluster) -> None:
 	"""Set the cluster up once its machines are up, and try again if a run failed."""
-	if cluster.status == "Draft":
-		if all(machine.status == "Running" for machine in cluster.all_nodes):
-			cluster.setup()
+	# A stopped or booting node would only fail the run and spend a retry.
+	if not all(machine.status == "Running" for machine in cluster.all_nodes):
+		return
 
+	if cluster.status == "Draft":
+		cluster.setup()
 		return
 
 	# Only bring-up retries. A live cluster fails because its machines died, and setting up

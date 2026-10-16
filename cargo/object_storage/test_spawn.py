@@ -350,6 +350,17 @@ class IntegrationTestSpawnRetry(SpawnTestCase):
 		self.run_once().assert_called_once()
 		self.assertEqual(self.auto_cluster().auto_setup_attempts, 1)
 
+	def test_a_stopped_node_waits_without_spending_a_retry(self):
+		frappe.db.set_value("Machine", self.cluster.machines[0].machine, "status", "Stopped")
+
+		self.run_once().assert_not_called()
+		self.assertEqual(self.auto_cluster().auto_setup_attempts, 0)
+
+	def test_a_live_cluster_whose_node_starts_again_is_not_set_up_again(self):
+		self.cluster.db_set({"status": "Active", "activated_on": frappe.utils.now_datetime()})
+
+		self.run_once().assert_not_called()
+
 	def test_trying_again_stops_once_the_budget_is_spent(self):
 		for _ in range(MAX_SETUP_ATTEMPTS):
 			self.run_once()

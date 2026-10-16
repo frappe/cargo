@@ -10,15 +10,24 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
+from cargo.atlas_client import (
+	DEAD_STATES,
+	MIB_PER_GB,
+	PAUSED_STATE,
+	RUNNING_STATE,
+	STOPPED_STATE,
+	AtlasError,
+	AtlasNotFound,
+)
 from cargo.client_models import NodeSpec, PlacementRule
 from cargo.ssh import create_keypair
 
 if TYPE_CHECKING:
 	from cargo.atlas_client import AtlasClient
 
-MachineStatus = Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
+MachineStatus = Literal["Draft", "Pending", "Running", "Stopped", "Paused", "Broken", "Terminated"]
 DEAD_MACHINE_STATES = ("Broken", "Terminated")
+POWER_ACTIONS = ("start", "stop", "pause", "resume", "restart")
 
 
 class Machine(Document):
@@ -43,7 +52,7 @@ class Machine(Document):
 		role: DF.Data
 		ssh_private_key: DF.Password | None
 		ssh_public_key: DF.SmallText | None
-		status: DF.Literal["Draft", "Pending", "Running", "Broken", "Terminated"]
+		status: DF.Literal["Draft", "Pending", "Running", "Stopped", "Paused", "Broken", "Terminated"]
 		vm_id: DF.Data | None
 		zone: DF.Data | None
 	# end: auto-generated types
@@ -162,30 +171,108 @@ class Machine(Document):
 		return True
 
 	def sync(self, client: AtlasClient) -> MachineStatus:
-		"""Record this machine's state and address from Atlas. A machine it no longer has is
-		one whose termination finished, so 404 is an answer rather than a failure."""
+		"""Record this machine's state, address and size from Atlas. Saves only on a change,
+		so an open form is not outdated every minute."""
+		before = self.synced_values
+		self.status, self.error = self.get_atlas_status(client)
 		self.last_synced_at = now_datetime()
 
+		if self.synced_values == before:
+			self.db_set("last_synced_at", self.last_synced_at, update_modified=False)
+		else:
+			self.save(ignore_permissions=True)
+
+		return self.status
+
+	@property
+	def synced_values(self) -> tuple:
+		return (self.status, self.error, self.address, self.cpu_millicores, self.ram_gb, self.disk_size_gb)
+
+	def get_atlas_status(self, client: AtlasClient) -> tuple[MachineStatus, str | None]:
+		"""The status and error Atlas's state maps to. A machine Atlas no longer has is one whose
+		termination finished, so 404 is an answer rather than a failure."""
 		try:
 			payload = client.get_vm(self.vm_id)
 		except AtlasNotFound:
-			return self.record("Terminated", error="Atlas no longer has this machine")
+			return "Terminated", "Atlas no longer has this machine"
 		except Exception as exception:
-			return self.record(self.status, error=str(exception))
+			return self.status, str(exception)
+
+		if compute := payload.get("compute"):
+			self.cpu_millicores = compute["cpu_millicores"]
+			self.ram_gb = compute["memory_mib"] // MIB_PER_GB
+		if disk := payload.get("disk"):
+			self.disk_size_gb = disk["size_mib"] // MIB_PER_GB
 
 		state = payload.get("current_state")
 		if state in DEAD_STATES:
-			reason = payload.get("error") or _("no reason given")
-			return self.record("Broken", error=f"Atlas reported {state}: {reason}")
-
+			return "Broken", f"Atlas reported {state}: {payload.get('error') or _('no reason given')}"
+		if state == STOPPED_STATE:
+			return "Stopped", None
+		if state == PAUSED_STATE:
+			return "Paused", None
 		if state != RUNNING_STATE:
-			return self.record(self.status)
+			return self.status, None
 
 		self.address = payload.get("network", {}).get("mesh_ipv6")
 		if not self.address:
-			return self.record("Broken", error="Atlas reported no mesh address")
+			return "Broken", "Atlas reported no mesh address"
 
-		return self.record("Running")
+		return "Running", None
+
+	@frappe.whitelist()
+	def change_power_state(self, action: str) -> None:
+		"""Start, stop, pause, resume or restart the VM in Atlas."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		if action not in POWER_ACTIONS:
+			frappe.throw(_("Unknown power action {0}.").format(action))
+
+		try:
+			AtlasClient.from_settings().set_power_state(self.vm_id, action)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not {0} this machine: {1}").format(action, str(exception)))
+
+	@frappe.whitelist()
+	def grow_disk(self, disk_gb: int) -> None:
+		"""Ask Atlas to grow the disk without stopping the VM. The sync records the new size."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		disk_gb = int(disk_gb)
+		if disk_gb <= self.disk_size_gb:
+			frappe.throw(_("The new disk size must be larger than {0} GB.").format(self.disk_size_gb))
+
+		try:
+			AtlasClient.from_settings().grow_disk(self.vm_id, disk_gb * MIB_PER_GB)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not grow this machine's disk: {0}").format(str(exception)))
+
+	@frappe.whitelist()
+	def resize_machine(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
+		"""Ask Atlas to resize the stopped VM. The disk only grows. The sync records the new size."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		cpu_millicores, ram_gb, disk_gb = int(cpu_millicores), int(ram_gb), int(disk_gb)
+		if disk_gb < self.disk_size_gb:
+			frappe.throw(_("Disk size can only be increased, not decreased."))
+
+		try:
+			client = AtlasClient.from_settings()
+			state = client.get_vm(self.vm_id).get("current_state")
+			if state != STOPPED_STATE:
+				frappe.throw(_("Stop the machine before resizing it. Atlas reports it {0}.").format(state))
+
+			client.resize_vm(
+				self.vm_id,
+				cpu_millicores=cpu_millicores,
+				memory_mib=ram_gb * MIB_PER_GB,
+				disk_mib=disk_gb * MIB_PER_GB,
+			)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not resize this machine: {0}").format(str(exception)))
 
 	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
 		self.status = status
@@ -195,20 +282,24 @@ class Machine(Document):
 		return self.status
 
 
-def sync_pending_machines() -> None:
-	"""Refresh every machine Atlas is still building, then let each owner react."""
+def sync_all_machines() -> None:
+	"""Refresh every machine Atlas has not terminated, then let each owner whose machine
+	changed status react."""
 	from cargo.atlas_client import AtlasClient
 
 	client = AtlasClient.from_settings()
-	settled: set[tuple[str, str]] = set()
+	changed: set[tuple[str, str]] = set()
+	names = frappe.get_all(
+		"Machine", filters={"status": ("!=", "Terminated"), "vm_id": ("is", "set")}, pluck="name"
+	)
 
-	for name in frappe.get_all("Machine", filters={"status": "Pending"}, pluck="name"):
+	for name in names:
 		machine: Machine = frappe.get_doc("Machine", name)
-		if machine.sync(client) != "Pending":
-			settled.add((machine.reference_doctype, machine.reference_name))
+		before = machine.status
+		if machine.sync(client) != before:
+			changed.add((machine.reference_doctype, machine.reference_name))
 
-	# Only owners whose machines actually moved: the rest have nothing new to judge.
-	for doctype, name in settled:
+	for doctype, name in changed:
 		try:
 			frappe.get_doc(doctype, name).sync_machines()
 		except Exception:

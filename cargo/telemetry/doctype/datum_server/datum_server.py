@@ -11,7 +11,7 @@ from frappe import _
 from frappe.utils import cint
 
 from cargo.atlas_client import base_image_id
-from cargo.cargo.doctype.machine.machine import DEAD_STATES
+from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
@@ -283,11 +283,11 @@ class DatumServer(WorkflowBuilder):
 			self.mark("Active")
 
 	def sync_machines(self) -> None:
-		"""What this host's machine settling means for it. Its state is already recorded;
-		`sync_pending_machines` calls this once it changes."""
+		"""What this host's machine changing status means for it. `sync_all_machines` calls
+		this once it changes. A stopped machine shows up as Unreachable through the health ping."""
 		status = frappe.db.get_value("Machine", self.machine, "status")
 
-		if status in DEAD_STATES:
+		if status in DEAD_MACHINE_STATES:
 			return self.mark("Failed")
 
 	def mark(self, status: str, error: str | None = None) -> None:
