@@ -702,10 +702,12 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		releases: dict[str, str | None] | None = None,
 		without_assets: tuple[str, ...] = (),
 		require_prebuilt_assets: bool = True,
+		site: PilotImage | None = None,
 	) -> list[str]:
 		"""Start Apps images, where `releases` maps an app to its newest stable commit, or to None
 		when it has no stable release, and the apps in `without_assets` published no assets."""
 		releases = releases or {}
+		build = site.build_apps_images if site else start_apps_images
 
 		def newest_stable(app: str, frappe_version: str) -> AppRelease | None:
 			commit = releases.get(app, f"{app}-commit")
@@ -723,7 +725,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			patch.object(frappe.db, "commit"),
 			patch.object(frappe.db, "rollback"),
 		):
-			return start_apps_images()
+			return build()
 
 	def completed_site(self, frappe_branch: str = "version-16", frappe_commit: str = COMMIT) -> PilotImage:
 		site = self.image("Site", "Completed", frappe_branch=frappe_branch, frappe_commit=frappe_commit)
@@ -838,6 +840,32 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			frappe.db.get_value("Pilot Image", started[0], ["app_commit", "frappe_commit"]),
 			("erpnext-new-commit", NEW_COMMIT),
 		)
+
+	def test_a_chosen_site_image_rebuilds_a_release_that_has_an_image(self):
+		set_signup_apps(("erpnext",))
+		self.image("Apps", "Completed", signup_app="erpnext")
+		self.completed_site(frappe_commit=NEW_COMMIT)
+		older_site = self.completed_site(frappe_commit=frappe.generate_hash(length=40))
+
+		started = self.start_apps(site=older_site)
+
+		self.assertEqual(
+			frappe.db.get_value("Pilot Image", started[0], ["app_commit", "frappe_commit"]),
+			("erpnext-commit", older_site.frappe_commit),
+		)
+
+	def test_a_release_is_not_built_twice_on_a_chosen_site_image(self):
+		set_signup_apps(("erpnext",))
+		site = self.completed_site()
+		self.start_apps()
+
+		self.assertEqual(self.start_apps(site=site), [])
+
+	def test_apps_images_are_built_only_on_a_completed_site_image(self):
+		with self.assertRaises(frappe.ValidationError):
+			self.image("Site", "Building").build_apps_images()
+		with self.assertRaises(frappe.ValidationError):
+			self.image("Base", "Completed").build_apps_images()
 
 	def test_no_apps_image_starts_before_a_site_image_completes(self):
 		self.image("Site", "Building")

@@ -36,6 +36,22 @@ function add_actions(frm) {
 		});
 	}
 
+	if (frm.doc.image_type === "Site" && frm.doc.status === "Completed") {
+		frm.add_custom_button(__("Build Apps Images"), () => {
+			frappe.confirm(
+				__(
+					"Build each signup app's newest release on this Site image, even if that release already has an image?"
+				),
+				() =>
+					frm
+						.call({ doc: frm.doc, method: "build_apps_images", freeze: true })
+						.then(({ message }) =>
+							frappe.show_alert(__("Started {0} Apps images", [message.length]))
+						)
+			);
+		});
+	}
+
 	if (frm.doc.status === "Failed") {
 		frm.add_custom_button(__("Restart Build"), () => {
 			frappe.confirm(
