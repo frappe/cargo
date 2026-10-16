@@ -115,7 +115,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		self.assertEqual(self.machine.address, MESH_ADDRESS)
 
-	def test_resizing_asks_atlas_then_records_the_new_shape(self):
+	def test_resizing_asks_atlas_and_waits_for_the_sync_to_record_the_size(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "stopped"}
 			self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
@@ -124,9 +124,7 @@ class IntegrationTestMachine(IntegrationTestCase):
 			self.machine.vm_id, cpu_millicores=4000, memory_mib=8192, disk_mib=40960
 		)
 		self.machine.reload()
-		self.assertEqual(
-			(self.machine.cpu_millicores, self.machine.ram_gb, self.machine.disk_size_gb), (4000, 8, 40)
-		)
+		self.assertEqual(self.machine.disk_size_gb, 20)
 
 	def test_a_smaller_disk_is_refused_before_asking_atlas(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
@@ -166,13 +164,26 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		atlas.from_settings.return_value.set_power_state.assert_not_called()
 
-	def test_growing_the_disk_asks_atlas_then_records_the_size(self):
+	def test_growing_the_disk_asks_atlas_and_waits_for_the_sync_to_record_the_size(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			self.machine.grow_disk(30)
 
 		atlas.from_settings.return_value.grow_disk.assert_called_once_with(self.machine.vm_id, 30720)
 		self.machine.reload()
-		self.assertEqual(self.machine.disk_size_gb, 30)
+		self.assertEqual(self.machine.disk_size_gb, 20)
+
+	def test_the_size_atlas_applied_is_recorded(self):
+		vm = {
+			**running_vm(),
+			"compute": {"cpu_millicores": 4000, "memory_mib": 8192},
+			"disk": {"size_mib": 40960},
+		}
+		self.machine.sync(self.client(vm))
+
+		self.machine.reload()
+		self.assertEqual(
+			(self.machine.cpu_millicores, self.machine.ram_gb, self.machine.disk_size_gb), (4000, 8, 40)
+		)
 
 	def test_a_disk_that_does_not_grow_is_refused(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:

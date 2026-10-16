@@ -171,18 +171,22 @@ class Machine(Document):
 		return True
 
 	def sync(self, client: AtlasClient) -> MachineStatus:
-		"""Record this machine's state and address from Atlas. Saves only on a change, so an
-		open form is not outdated every minute."""
-		before = (self.status, self.error, self.address)
+		"""Record this machine's state, address and size from Atlas. Saves only on a change,
+		so an open form is not outdated every minute."""
+		before = self.synced_values
 		self.status, self.error = self.get_atlas_status(client)
 		self.last_synced_at = now_datetime()
 
-		if (self.status, self.error, self.address) == before:
+		if self.synced_values == before:
 			self.db_set("last_synced_at", self.last_synced_at, update_modified=False)
 		else:
 			self.save(ignore_permissions=True)
 
 		return self.status
+
+	@property
+	def synced_values(self) -> tuple:
+		return (self.status, self.error, self.address, self.cpu_millicores, self.ram_gb, self.disk_size_gb)
 
 	def get_atlas_status(self, client: AtlasClient) -> tuple[MachineStatus, str | None]:
 		"""The status and error Atlas's state maps to. A machine Atlas no longer has is one whose
@@ -193,6 +197,12 @@ class Machine(Document):
 			return "Terminated", "Atlas no longer has this machine"
 		except Exception as exception:
 			return self.status, str(exception)
+
+		if compute := payload.get("compute"):
+			self.cpu_millicores = compute["cpu_millicores"]
+			self.ram_gb = compute["memory_mib"] // MIB_PER_GB
+		if disk := payload.get("disk"):
+			self.disk_size_gb = disk["size_mib"] // MIB_PER_GB
 
 		state = payload.get("current_state")
 		if state in DEAD_STATES:
@@ -226,7 +236,7 @@ class Machine(Document):
 
 	@frappe.whitelist()
 	def grow_disk(self, disk_gb: int) -> None:
-		"""Grow the disk in Atlas without stopping the VM, then record the new size."""
+		"""Ask Atlas to grow the disk without stopping the VM. The sync records the new size."""
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
@@ -239,12 +249,9 @@ class Machine(Document):
 		except AtlasError as exception:
 			frappe.throw(_("Atlas would not grow this machine's disk: {0}").format(exception))
 
-		self.disk_size_gb = disk_gb
-		self.save(ignore_permissions=True)
-
 	@frappe.whitelist()
 	def resize_machine(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
-		"""Resize the stopped VM in Atlas, then record the new shape. The disk only grows."""
+		"""Ask Atlas to resize the stopped VM. The disk only grows. The sync records the new size."""
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
@@ -266,11 +273,6 @@ class Machine(Document):
 			)
 		except AtlasError as exception:
 			frappe.throw(_("Atlas would not resize this machine: {0}").format(exception))
-
-		self.cpu_millicores = cpu_millicores
-		self.ram_gb = ram_gb
-		self.disk_size_gb = disk_gb
-		self.save(ignore_permissions=True)
 
 	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
 		self.status = status

@@ -107,7 +107,7 @@ function ask_for_shape(frm) {
 			frm.call("resize_machine", values).then(() => {
 				frappe.show_alert({
 					message: __(
-						"Asked Atlas to resize the machine. Start it once the resize finishes."
+						"Asked Atlas to resize the machine. The new size shows here once Atlas applies it; start it after."
 					),
 					indicator: "blue",
 				});
@@ -131,7 +131,9 @@ function ask_for_disk(frm) {
 		(values) =>
 			frm.call("grow_disk", values).then(() => {
 				frappe.show_alert({
-					message: __("Asked Atlas to grow the disk."),
+					message: __(
+						"Asked Atlas to grow the disk. The new size shows here once Atlas applies it."
+					),
 					indicator: "blue",
 				});
 				frm.reload_doc();
