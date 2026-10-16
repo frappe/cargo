@@ -10,7 +10,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
-from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasNotFound
+from cargo.atlas_client import DEAD_STATES, MIB_PER_GB, RUNNING_STATE, AtlasError, AtlasNotFound
 from cargo.client_models import NodeSpec, PlacementRule
 from cargo.ssh import create_keypair
 
@@ -186,6 +186,28 @@ class Machine(Document):
 			return self.record("Broken", error="Atlas reported no mesh address")
 
 		return self.record("Running")
+
+	def resize_machine(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
+		"""Resize the VM in Atlas, then record the new shape. The disk only grows."""
+		from cargo.atlas_client import AtlasClient
+
+		if disk_gb < self.disk_size_gb:
+			frappe.throw(_("Disk size can only be increased, not decreased."))
+
+		try:
+			AtlasClient.from_settings().resize_vm(
+				self.vm_id,
+				cpu_millicores=cpu_millicores,
+				memory_mib=ram_gb * MIB_PER_GB,
+				disk_mib=disk_gb * MIB_PER_GB,
+			)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not resize this machine: {0}").format(exception))
+
+		self.cpu_millicores = cpu_millicores
+		self.ram_gb = ram_gb
+		self.disk_size_gb = disk_gb
+		self.save(ignore_permissions=True)
 
 	def record(self, status: MachineStatus, error: str | None = None) -> MachineStatus:
 		self.status = status

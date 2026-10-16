@@ -131,6 +131,14 @@ class AtlasClient:
 		"""Start termination. The VM route answers 404 once cleanup finishes."""
 		self.call("DELETE", f"/virtual-machines/{vm_id}")
 
+	def resize_vm(self, vm_id: str, *, cpu_millicores: int, memory_mib: int, disk_mib: int) -> None:
+		"""Change the VM's shape. Atlas only resizes a stopped VM and only grows the disk."""
+		self.call(
+			"POST",
+			f"/virtual-machines/{vm_id}/actions/resize",
+			{"cpu_millicores": cpu_millicores, "memory_mib": memory_mib, "disk_mib": disk_mib},
+		)
+
 	def create_snapshot(
 		self,
 		vm_id: str,

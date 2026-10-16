@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.atlas_client import AtlasNotFound
+from cargo.atlas_client import AtlasError, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine
 from cargo.client_models import NodeSpec
 from cargo.testing import use_test_settings
@@ -112,3 +112,31 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.machine.sync(self.client(running_vm()))
 
 		self.assertEqual(self.machine.address, MESH_ADDRESS)
+
+	def test_resizing_asks_atlas_then_records_the_new_shape(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
+
+		atlas.from_settings.return_value.resize_vm.assert_called_once_with(
+			self.machine.vm_id, cpu_millicores=4000, memory_mib=8192, disk_mib=40960
+		)
+		self.machine.reload()
+		self.assertEqual(
+			(self.machine.cpu_millicores, self.machine.ram_gb, self.machine.disk_size_gb), (4000, 8, 40)
+		)
+
+	def test_a_smaller_disk_is_refused_before_asking_atlas(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			with self.assertRaises(frappe.ValidationError):
+				self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=10)
+
+		atlas.from_settings.return_value.resize_vm.assert_not_called()
+
+	def test_a_resize_atlas_refuses_leaves_the_shape_unchanged(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.resize_vm.side_effect = AtlasError("Stop the Virtual Machine")
+			with self.assertRaises(frappe.ValidationError):
+				self.machine.resize_machine(cpu_millicores=4000, ram_gb=8, disk_gb=40)
+
+		self.machine.reload()
+		self.assertEqual(self.machine.disk_size_gb, 20)
