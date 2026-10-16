@@ -24,6 +24,7 @@ if typing.TYPE_CHECKING:
 
 DATUM_PORT = 8000
 TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
+TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 SETUP_TIMEOUT = 30 * 60
 MAX_PORT = 65535
 USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
@@ -56,7 +57,7 @@ class DatumServer(WorkflowBuilder):
 		machine: DF.Link | None
 		repository: DF.Data
 		setup_log: DF.Code | None
-		status: DF.Literal["Draft", "Setting Up", "Active", "Failed"]
+		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed"]
 		timeout_seconds: DF.Int
 		version: DF.Data
 	# end: auto-generated types
@@ -231,7 +232,7 @@ class DatumServer(WorkflowBuilder):
 	def proxy_domains(self) -> tuple[str, ...]:
 		return tuple(
 			f"{site_name}.{self.wildcard_domain}"
-			for site_name in (TELEMETRY_WRITE_SITE_NAME, "telemetry-read-svc")
+			for site_name in (TELEMETRY_WRITE_SITE_NAME, TELEMETRY_READ_SITE_NAME)
 		)
 
 	@property
@@ -328,7 +329,7 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 			"request_url": settings.central_webhook_url,
 			"request_method": "POST",
 			"request_structure": "JSON",
-			"condition": "doc.status in ('Active', 'Failed')",
+			"condition": "doc.status in ('Active', 'Unreachable', 'Failed')",
 			"webhook_json": frappe.as_json(
 				{
 					"region": settings.region,

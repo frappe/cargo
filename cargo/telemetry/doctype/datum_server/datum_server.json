@@ -59,7 +59,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nSetting Up\nActive\nFailed",
+   "options": "Draft\nSetting Up\nActive\nUnreachable\nFailed",
    "read_only": 1
   },
   {
@@ -174,7 +174,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-25 18:17:09.397184",
+ "modified": "2026-10-16 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",

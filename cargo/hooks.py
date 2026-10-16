@@ -279,6 +279,7 @@ scheduler_events = {
 			"cargo.cargo.doctype.machine.machine.sync_pending_machines",
 			"cargo.object_storage.spawn.ensure_cluster",
 			"cargo.telemetry.spawn.ensure_telemetry",
+			"cargo.telemetry.health.live.ping_host_machine",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_site_images",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_apps_images",
 			"cargo.image_builder.doctype.pilot_image.pilot_image.retry_failed_images",
