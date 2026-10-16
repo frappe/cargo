@@ -45,7 +45,7 @@ class IntegrationTestTelemetryConfig(IntegrationTestCase):
 
 	def test_a_datum_field_with_no_default_must_be_given(self):
 		"""The host cannot be inserted without these, and they have no default to fall back
-		on -- unlike base_image and clickhouse_port."""
+		on -- unlike clickhouse_port."""
 		for field in DATUM_FIELDS:
 			for value in (None, "", "   "):
 				with self.subTest(field=field, value=value):
@@ -195,15 +195,6 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 			ensure_telemetry()
 
 		self.assertEqual(atlas.create_vm.call_args.kwargs["image_id"], "img-42")
-
-	def test_a_base_image_set_on_the_host_is_used_as_is(self):
-		atlas = self.atlas()
-		self.server.db_set("base_image", "img-pinned")
-		with self.configured():
-			ensure_telemetry()
-
-		self.assertEqual(atlas.create_vm.call_args.kwargs["image_id"], "img-pinned")
-		atlas.find_system_image.assert_not_called()
 
 	def test_the_next_run_asks_for_nothing_more(self):
 		atlas = self.atlas()

@@ -49,7 +49,6 @@ class DatumServer(WorkflowBuilder):
 
 		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
-		base_image: DF.Data | None
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
 		clickhouse_version: DF.Data
@@ -141,7 +140,7 @@ class DatumServer(WorkflowBuilder):
 				ram_gb=cint(ram_gb),
 				disk_gb=cint(disk_gb),
 			),
-			base_image=self.base_image or base_image_id(),
+			base_image=base_image_id(),
 		)
 		self.machine = machine.name
 		self.save()
