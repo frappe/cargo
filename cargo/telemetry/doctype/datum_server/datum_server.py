@@ -14,7 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
-from cargo.ssh import OutputLog, run_over_ssh, script
+from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -172,6 +172,8 @@ class DatumServer(WorkflowBuilder):
 		if machine_status != "Running":
 			frappe.throw(_("Machine must be running to set up datum."), frappe.ValidationError)
 
+		self.setup_log = None
+		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Setting Up")
 		self._setup.run_as_workflow()
 
