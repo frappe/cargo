@@ -1,6 +1,7 @@
 import argparse
 import json
 
+from cargo_dashboard import add_cargo_dashboard
 from object_storage_dashboard import add_object_storage_dashboard
 from workbook import Workbook
 
@@ -10,5 +11,6 @@ if __name__ == "__main__":
 	arguments = parser.parse_args()
 
 	workbook = Workbook("Cargo", arguments.data_source)
+	add_cargo_dashboard(workbook)
 	add_object_storage_dashboard(workbook)
 	print(json.dumps(workbook.export(), indent=1))
