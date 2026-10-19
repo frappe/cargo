@@ -68,7 +68,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Environment="RUST_LOG=garage=info" "RUST_BACKTRACE=1"
+Environment="RUST_LOG=garage=info" "RUST_BACKTRACE=1" "GARAGE_LOG_TO_JOURNALD=1"
 ExecStart=$GARAGE_BINARY server
 Restart=on-failure
 RestartSec=5
