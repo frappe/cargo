@@ -5,6 +5,7 @@ Builds the Cargo workbook for [Insights](https://github.com/frappe/insights) fro
 | File | Owns |
 | --- | --- |
 | `sql/<key>.sql` | The query behind one chart. It returns `time`, `series` and `value` for a line chart, or the columns a table or number chart reads. |
+| `cargo_dashboard.py` | The Cargo dashboard for the Cargo host itself: disk, host metrics, bench processes, MariaDB, HTTP and logs. |
 | `object_storage_dashboard.py` | The Cargo - Object Storage dashboard: which charts, in which order, how they look. |
 | `workbook.py` | `Workbook`, `Dashboard` and the chart config helpers. |
 | `generate_workbook.py` | Prints the workbook as JSON. |
@@ -19,7 +20,7 @@ python3 generate_workbook.py --data-source datum > /tmp/cargo-workbook.json
 cd <bench>/sites && ../env/bin/python <this folder>/import_workbook.py <insights site> /tmp/cargo-workbook.json
 ```
 
-The import updates the workbook titled Cargo, or creates it. Every query, chart and dashboard keeps its name, such as `c-host-cpu` or `dashboard-cargo-object-storage`, so links stay the same. It overwrites edits made in Insights, so change the scripts instead.
+The import updates the workbook titled Cargo, or creates it. Every query, chart and dashboard keeps its name, such as `c-host-cpu`, `dashboard-cargo` or `dashboard-cargo-object-storage`, so links stay the same. It overwrites edits made in Insights, so change the scripts instead.
 
 ## Add a chart
 

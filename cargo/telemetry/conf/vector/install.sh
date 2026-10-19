@@ -1,16 +1,20 @@
 #!/bin/bash
-# Runs over SSH on one of a cluster's machines. Arguments come from the environment.
+# Runs over SSH on a machine Cargo rented: a Garage node or the Datum host. Arguments come
+# from the environment; CLUSTER is left out on a machine no cluster owns.
 # Idempotent: run again with a new DATUM_TOKEN to rotate it.
 set -euo pipefail
 
 : "${VECTOR_VERSION:?VECTOR_VERSION is required}"
 : "${DATUM_ENDPOINT:?DATUM_ENDPOINT is required}"
 : "${DATUM_TOKEN:?DATUM_TOKEN is required}"
-: "${CLUSTER:?CLUSTER is required}"
 : "${REGION:?REGION is required}"
 : "${ROLE:?ROLE is required}"
 : "${MACHINE:?MACHINE is required}"
 VECTOR_BINARY=/usr/local/bin/vector
+CLUSTER_TAG=""
+if [ -n "${CLUSTER:-}" ]; then
+	CLUSTER_TAG=".tags.cluster = \"$CLUSTER\""
+fi
 
 if ! "$VECTOR_BINARY" --version 2>/dev/null | grep -q "vector $VECTOR_VERSION "; then
 	target="$(uname -m)-unknown-linux-musl"
@@ -45,7 +49,7 @@ filesystem.filesystems.excludes = ["tmpfs", "devtmpfs", "overlay", "squashfs", "
 type = "remap"
 inputs = ["host"]
 source = '''
-.tags.cluster = "$CLUSTER"
+$CLUSTER_TAG
 .tags.region = "$REGION"
 .tags.role = "$ROLE"
 .tags.machine = "$MACHINE"

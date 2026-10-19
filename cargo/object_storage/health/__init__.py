@@ -5,7 +5,7 @@ import typing
 import frappe
 
 from cargo.object_storage.health.live import LiveHealth, prune_history
-from cargo.object_storage.health.telemetry import Telemetry
+from cargo.object_storage.health.relay import Telemetry
 from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
@@ -17,7 +17,7 @@ if typing.TYPE_CHECKING:
 __all__ = [
 	"LiveHealth",
 	"Telemetry",
-	"install_metrics_exporters",
+	"install_garage_metrics_exporters",
 	"prune_history",
 	"refresh_health",
 	"ship_metrics",
@@ -56,7 +56,7 @@ def ship_metrics() -> None:
 			frappe.log_error(title=f"Could not ship {name} metrics")
 
 
-def install_metrics_exporters() -> None:
+def install_garage_metrics_exporters() -> None:
 	"""Hand every live cluster's nodes the current Datum token, one job per cluster."""
 	for name in live_clusters():
 		frappe.enqueue(

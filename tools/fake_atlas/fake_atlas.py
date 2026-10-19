@@ -33,8 +33,14 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 PREFIX = "/api/atlas"
 CONTAINER_PREFIX = "cargo-fake"
-IMAGES = {"ubuntu-24.04": "ubuntu:24.04", "ubuntu-22.04": "ubuntu:22.04"}
-# What `GET /images` offers as the System image to bake on.
+IMAGES = {
+	"ubuntu-24.04": "ubuntu:24.04",
+	"ubuntu-24.04-minimal": "ubuntu:24.04",
+	"ubuntu-22.04": "ubuntu:22.04",
+}
+# What `GET /images` offers as the System image to bake on. Cargo asks for a full or a minimal
+# one by the `minimal` tag; both are the same Ubuntu here.
+SYSTEM_IMAGE_IDS = ("ubuntu-24.04", "ubuntu-24.04-minimal")
 SYSTEM_IMAGE = {
 	"id": "ubuntu-24.04",
 	"title": "Ubuntu 24.04",
@@ -44,7 +50,7 @@ SYSTEM_IMAGE = {
 	"enabled": True,
 	"rootfs_size_mib": 64,
 	"created_at": int(time.time()),
-	"tags": {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"},
+	"tags": {"purpose": "base", "os": "Ubuntu", "os_version": "24.04", "minimal": "false"},
 }
 # Atlas machines take minutes to boot. A few seconds here is enough to prove the variant
 # really goes Provisioning -> scheduler sweep -> Building, rather than racing straight through.
@@ -150,7 +156,13 @@ def docker_images() -> list[tuple[str, dict]]:
 
 def image_response(image_id: str, inspected: dict | None = None) -> dict:
 	if image_id in IMAGES:
-		return dict(SYSTEM_IMAGE)
+		minimal = image_id.endswith("-minimal")
+		return {
+			**SYSTEM_IMAGE,
+			"id": image_id,
+			"title": f"{SYSTEM_IMAGE['title']} Minimal" if minimal else SYSTEM_IMAGE["title"],
+			"tags": {**SYSTEM_IMAGE["tags"], "minimal": "true" if minimal else "false"},
+		}
 
 	inspected = inspected or inspect_image(image_id)
 	if not inspected:
@@ -197,7 +209,7 @@ def list_images(query: str) -> dict:
 				raise ValueError("tag filters must use key:value")
 			required_tags[key] = value
 
-	images = [image_response("ubuntu-24.04")]
+	images = [image_response(image_id) for image_id in SYSTEM_IMAGE_IDS]
 	for image_id, inspected in docker_images():
 		try:
 			images.append(image_response(image_id, inspected))
@@ -364,6 +376,35 @@ def live_containers() -> set[str] | None:
 	)
 
 	return set(shown.stdout.split()) if shown.returncode == 0 else None
+
+
+def adopt_containers() -> None:
+	"""Take back the machines a previous run left running. `VMS` lives in memory, and without
+	this a restart answers 404 for them, which Cargo reads as terminated."""
+	shown = subprocess.run(
+		["docker", "ps", "--filter", f"name={CONTAINER_PREFIX}-vm-", "--format", "{{.Names}}\t{{.Ports}}"],
+		capture_output=True,
+		text=True,
+	)
+	for line in shown.stdout.splitlines():
+		name, _, ports = line.partition("\t")
+		ssh = re.search(r"127\.0\.0\.1:(\d+)->22/tcp", ports)
+		if not ssh:
+			continue
+
+		vm_id, port = name.removeprefix(f"{CONTAINER_PREFIX}-"), int(ssh.group(1))
+		slot = port - FIRST_PORT + 1
+		VMS[vm_id] = {
+			"state": "running",
+			"slot": slot,
+			"address": f"{HOST_PREFIX}{slot}",
+			"port": port,
+			"role": GATEWAY if f"->{ADMIN_PORT}/tcp" in ports else None,
+			"container": name,
+			"image_id": None,
+			"metadata_path": None,
+		}
+		print(f"  = {vm_id} adopted -> {HOST_PREFIX}{slot} (ssh {port})", flush=True)
 
 
 def write_ssh_config() -> None:
@@ -764,6 +805,8 @@ def main() -> None:
 	print("point Cargo Settings' Atlas URL at it, then build an Image")
 	names = " ".join(f"{HOST_PREFIX}{slot}" for slot in range(1, SLOTS + 1))
 	print(f"\nadd this line to /etc/hosts once, so the machine names resolve:\n127.0.0.1 {names}\n")
+	adopt_containers()
+	write_ssh_config()
 	ThreadingHTTPServer(("127.0.0.1", args.port), Handler).serve_forever()
 
 

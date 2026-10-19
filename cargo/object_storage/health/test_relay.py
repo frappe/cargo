@@ -9,11 +9,11 @@ import requests
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.doctype.object_storage_cluster import setup as setup_module
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
-from cargo.object_storage.health import install_cluster_metrics_exporters, install_metrics_exporters
-from cargo.object_storage.health import telemetry as telemetry_module
-from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
+from cargo.object_storage.health import install_cluster_metrics_exporters, install_garage_metrics_exporters
+from cargo.object_storage.health import relay as telemetry_module
+from cargo.object_storage.health.relay import Telemetry, parse_metrics
+from cargo.telemetry import vector as vector_module
 from cargo.testing import use_test_settings
 
 METRICS = """\
@@ -244,7 +244,7 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 	def install(self, run=None) -> MagicMock:
 		run = run or MagicMock()
 		with (
-			patch.object(setup_module, "get_metrics_info", return_value=INFO),
+			patch.object(vector_module, "get_metrics_info", return_value=INFO),
 			patch.object(Setup, "run", run),
 		):
 			install_cluster_metrics_exporters(self.cluster.name)
@@ -263,13 +263,13 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 		self.assertIn("export DATUM_TOKEN=datum-jwt", sent)
 
 	def test_the_node_labels_its_metrics_with_where_it_runs(self):
-		with patch.object(setup_module, "get_metrics_info", return_value=INFO):
-			garage = Setup(self.cluster)
-			environment = garage.metrics_exporter_environment(garage.machine(self.storage))
+		sent = next(
+			call.args[1] for call in self.install().call_args_list if call.args[0]["name"] == self.storage
+		)
 
-		self.assertEqual(environment["CLUSTER"], self.cluster.name)
-		self.assertEqual(environment["MACHINE"], self.storage)
-		self.assertEqual(environment["ROLE"], STORAGE)
+		self.assertIn(f"export CLUSTER={self.cluster.name}", sent)
+		self.assertIn(f"export MACHINE={self.storage}", sent)
+		self.assertIn(f"export ROLE={STORAGE}", sent)
 
 	def test_one_unreachable_node_does_not_keep_the_token_from_the_rest(self):
 		run = self.install(run=MagicMock(side_effect=[RuntimeError("ssh refused"), ""]))
@@ -279,7 +279,7 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 	def test_a_new_token_reaches_every_live_cluster_once(self):
 		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
 		with patch.object(frappe, "enqueue") as enqueue:
-			install_metrics_exporters()
+			install_garage_metrics_exporters()
 
 		enqueued = [call for call in enqueue.call_args_list if call.kwargs["cluster"] == self.cluster.name]
 		self.assertEqual(len(enqueued), 1)

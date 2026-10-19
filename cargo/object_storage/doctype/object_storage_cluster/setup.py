@@ -15,9 +15,8 @@ from cargo.atlas_client import host_port
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import run_over_ssh, script
-from cargo.telemetry.credential import get_metrics_info
+from cargo.telemetry.vector import install_script
 
-VECTOR_VERSION = "0.43.1"
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
 NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
@@ -189,29 +188,13 @@ class Setup(Client):
 		self.connect_nodes([identifier])
 		self.stage_role(machine, identifier)
 
-	def metrics_exporter_environment(self, machine: MachineRow) -> dict[str, str]:
-		"""What Vector needs to push one node's host metrics to Datum."""
-		info = get_metrics_info()
-
-		return {
-			"VECTOR_VERSION": VECTOR_VERSION,
-			"DATUM_ENDPOINT": info["endpoint"],
-			"DATUM_TOKEN": info["token"],
-			"CLUSTER": self.cluster.name,
-			"REGION": self.cluster.region,
-			"ROLE": machine["role"],
-			"MACHINE": machine["name"],
-		}
-
 	def install_metrics_exporter(
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:
 		"""Install Vector on a node, or hand it a new Datum token. Safe to repeat."""
 		self.run(
 			machine,
-			script(
-				*CONF, "install_metrics_exporter.sh", environment=self.metrics_exporter_environment(machine)
-			),
+			install_script(machine["role"], machine["name"], self.cluster.region, cluster=self.cluster.name),
 			on_output,
 		)
 

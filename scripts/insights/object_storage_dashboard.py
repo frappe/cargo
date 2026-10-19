@@ -168,7 +168,7 @@ def add_object_storage_dashboard(workbook: Workbook) -> None:
 		"Average request time by endpoint. Gaps mean no requests to that endpoint.", width=20)  # fmt: skip
 
 	dashboard.heading("Storage")
-	chart("garage-disk-used", "Garage Disk Used", "Line", line("Used", "%", PERCENT, max=100, reference_lines=RED_LINE_AT_80),
+	chart("garage-disk-used", "Garage Disk Used", "Line", line("Used", "%", PERCENT, max=100, reference_lines=RED_LINE_AT_80, show_data_points=True),
 		"Garage data volume used share per node.")  # fmt: skip
 	chart("garage-block-io", "Garage Block I/O", "Line", line("MB/s", "MB / s", MB_PER_SECOND, "sum"),
 		"MB per second Garage read from and wrote to its data blocks, per node.")  # fmt: skip
