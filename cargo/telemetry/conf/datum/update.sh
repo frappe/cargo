@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Runs over SSH on a datum host install.sh set up. Arguments come from the environment.
 #
-# Moves the checkout to DATUM_COMMIT, or to the newest commit of DATUM_VERSION, then migrates
+# Moves the checkout to DATUM_COMMIT, or to the newest commit of DATUM_BRANCH, then migrates
 # ClickHouse and restarts datum. ClickHouse, the unit and /etc/datum.env are left as they are.
 set -euo pipefail
 
 : "${DATUM_REPOSITORY:?DATUM_REPOSITORY is required}"
-: "${DATUM_VERSION:?DATUM_VERSION is required}"
+: "${DATUM_BRANCH:?DATUM_BRANCH is required}"
 : "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
@@ -16,7 +16,7 @@ DATUM_DIR="${DATUM_DIR:-/home/$SERVICE_USER/datum}"
 DATUM_HOST="${DATUM_HOST:-127.0.0.1}"
 DATUM_PORT="${DATUM_PORT:-8000}"
 UV="${UV:-/usr/local/bin/uv}"
-TARGET="${DATUM_COMMIT:-$DATUM_VERSION}"
+TARGET="${DATUM_COMMIT:-$DATUM_BRANCH}"
 
 if [ ! -d "$DATUM_DIR/.git" ] || [ ! -f /etc/datum.env ]; then
 	echo "datum is not installed in $DATUM_DIR; set the host up first" >&2

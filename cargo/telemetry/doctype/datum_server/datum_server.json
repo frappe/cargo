@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_bulk_edit": 1,
- "creation": "2026-09-16 16:46:40.395422",
+ "creation": "2026-10-19 13:44:49.529172",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -11,7 +11,8 @@
   "status",
   "error",
   "repository",
-  "version",
+  "branch",
+  "commit",
   "auto_spawn",
   "auto_setup_attempts",
   "clickhouse_section",
@@ -68,13 +69,6 @@
    "fieldname": "repository",
    "fieldtype": "Data",
    "label": "Repository",
-   "reqd": 1
-  },
-  {
-   "description": "DATUM_VERSION. A branch, tag or commit. A branch follows origin on every install; a commit is pinned.",
-   "fieldname": "version",
-   "fieldtype": "Data",
-   "label": "Version",
    "reqd": 1
   },
   {
@@ -170,6 +164,20 @@
    "fieldtype": "Int",
    "label": "Auto Setup Attempts",
    "read_only": 1
+  },
+  {
+   "default": "main",
+   "description": "DATUM_BRANCH. Setup and an update without a commit take its newest commit.",
+   "fieldname": "branch",
+   "fieldtype": "Data",
+   "label": "Branch",
+   "reqd": 1
+  },
+  {
+   "description": "DATUM_COMMIT. The commit datum runs at, recorded by setup and every update. Set before setup to pin one.",
+   "fieldname": "commit",
+   "fieldtype": "Data",
+   "label": "Commit"
   }
  ],
  "grid_page_length": 50,
@@ -182,7 +190,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-19 14:00:00.000000",
+ "modified": "2026-10-19 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",

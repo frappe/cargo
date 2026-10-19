@@ -49,9 +49,11 @@ class DatumServer(WorkflowBuilder):
 
 		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
+		branch: DF.Data
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
 		clickhouse_version: DF.Data
+		commit: DF.Data
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
@@ -61,15 +63,14 @@ class DatumServer(WorkflowBuilder):
 		setup_log: DF.Code | None
 		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed", "Updating"]
 		timeout_seconds: DF.Int
-		version: DF.Data
 	# end: auto-generated types
 
 	def before_validate(self) -> None:
-		"""A Single saved before the field existed has no value, and `mark` saves on every
+		"""A Single saved before a field existed has no value, and `mark` saves on every
 		status change, so the doctype default fills it rather than every save failing."""
-		self.clickhouse_version = (self.clickhouse_version or "").strip() or self.meta.get_field(
-			"clickhouse_version"
-		).default
+		for fieldname in ("clickhouse_version", "branch"):
+			value = (self.get(fieldname) or "").strip()
+			self.set(fieldname, value or self.meta.get_field(fieldname).default)
 
 	def validate(self) -> None:
 		self.validate_token_verification()
@@ -187,7 +188,11 @@ class DatumServer(WorkflowBuilder):
 				run_over_ssh(
 					machine.address,
 					script(
-						"telemetry", "conf", "datum", "install.sh", environment=self.install_environment()
+						"telemetry",
+						"conf",
+						"datum",
+						"install.sh",
+						environment=self.install_environment(commit=self.commit),
 					),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,
@@ -204,8 +209,8 @@ class DatumServer(WorkflowBuilder):
 		return True
 
 	@frappe.whitelist()
-	def update_datum(self, commit: str | None = None) -> None:
-		"""Move datum to `commit`, or to the newest commit of its version, and restart it."""
+	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
+		"""Move datum to `commit`, or to the newest commit of `branch`, and restart it."""
 		if self.status not in ("Active", "Unreachable"):
 			frappe.throw(_("Set datum up before updating it."), frappe.ValidationError)
 
@@ -215,11 +220,12 @@ class DatumServer(WorkflowBuilder):
 		self.setup_log = None
 		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Updating")
-		self._update.run_as_workflow((commit or "").strip())
+		self._update.run_as_workflow((branch or "").strip() or self.branch, (commit or "").strip())
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
-	def update_on_machine(self, commit: str) -> bool:
-		"""Pull datum to `commit` and restart it. Streams to `setup_log` as it runs."""
+	def update_on_machine(self, branch: str, commit: str) -> bool:
+		"""Pull datum to `commit`, or the newest of `branch`, and restart it. Streams to
+		`setup_log` as it runs."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
@@ -228,7 +234,11 @@ class DatumServer(WorkflowBuilder):
 				run_over_ssh(
 					machine.address,
 					script(
-						"telemetry", "conf", "datum", "update.sh", environment=self.update_environment(commit)
+						"telemetry",
+						"conf",
+						"datum",
+						"update.sh",
+						environment=self.install_environment(branch, commit),
 					),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,
@@ -236,7 +246,7 @@ class DatumServer(WorkflowBuilder):
 				)
 			except Exception:
 				frappe.log_error(
-					title=f"{self.name} failed to update to {commit or self.version}",
+					title=f"{self.name} failed to update to {commit or branch}",
 					message=frappe.get_traceback(with_context=True),
 				)
 				return False
@@ -256,13 +266,14 @@ class DatumServer(WorkflowBuilder):
 		).strip()
 
 	@flow
-	def _update(self, commit: str) -> None:
+	def _update(self, branch: str, commit: str) -> None:
 		"""Never Failed, which the spawner answers with a full setup. Unreachable leaves the
 		health ping to find out whether datum still answers, and the operator to try again."""
-		if not self.update_on_machine(commit):
+		if not self.update_on_machine(branch, commit):
 			return self.mark("Unreachable", _("Could not update datum. See the Setup Log."))
 
-		self.version = self.get_datum_commit()
+		self.branch = branch
+		self.commit = self.get_datum_commit()
 		self.mark("Active")
 
 	def on_workflow_failure(self, workflow) -> None:
@@ -343,6 +354,8 @@ class DatumServer(WorkflowBuilder):
 		if not self.start_setup_on_machine():
 			return
 
+		self.commit = self.get_datum_commit()
+
 		if not self.configure_routing():
 			return
 
@@ -382,19 +395,16 @@ class DatumServer(WorkflowBuilder):
 
 		return {name: value for name, value in variables.items() if value}
 
-	def install_environment(self) -> dict[str, str]:
-		"""What the install script needs on top of datum's own: which datum to install."""
-		return {
+	def install_environment(self, branch: str | None = None, commit: str | None = None) -> dict[str, str]:
+		"""What the install and update scripts need on top of datum's own: which datum to run.
+		Without a commit they take the newest commit of the branch."""
+		environment = {
 			**self.environment(),
 			"DATUM_REPOSITORY": self.repository,
-			"DATUM_VERSION": self.version,
+			"DATUM_BRANCH": branch or self.branch,
 			"DATUM_PORT": DATUM_PORT,
 			"CLICKHOUSE_VERSION": self.clickhouse_version,
 		}
-
-	def update_environment(self, commit: str) -> dict[str, str]:
-		"""The install's environment, plus the commit to move to. Blank takes the newest of `version`."""
-		environment = self.install_environment()
 		if commit:
 			environment["DATUM_COMMIT"] = commit
 

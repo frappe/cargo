@@ -34,7 +34,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 			{
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 				**changes,
 			}
 		)
@@ -134,14 +134,15 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertEqual(environment["DATUM_USER_PASSWORD"], "ch")
 
 	def test_the_install_needs_which_datum_to_install(self):
-		"""`environment` is what datum runs on; the repo and version are how it got there."""
+		"""`environment` is what datum runs on; the repo and branch are how it got there."""
 		doc = self.server()
 		doc.save()
 		self.addCleanup(frappe.db.rollback)
 		install = doc.install_environment()
 
 		self.assertEqual(install["DATUM_REPOSITORY"], "https://github.com/frappe/datum")
-		self.assertEqual(install["DATUM_VERSION"], "develop")
+		self.assertEqual(install["DATUM_BRANCH"], "develop")
+		self.assertNotIn("DATUM_COMMIT", install)
 		self.assertEqual(install["CLICKHOUSE_VERSION"], "26.3.52.9")
 		self.assertNotIn("DATUM_REPOSITORY", doc.environment())
 
@@ -173,7 +174,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 			{
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 			}
 		).save()
 
@@ -243,7 +244,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 				"doctype": "Datum Server",
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 			}
 		).insert()
 
@@ -264,7 +265,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 			{
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 			}
 		).save()
 
@@ -341,7 +342,7 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 				"doctype": "Datum Server",
 				"clickhouse_host": "clickhouse.internal",
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 			}
 		).insert()
 		self.machine = frappe.get_doc(
@@ -401,7 +402,11 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 
 	def steps(self, installed=True, routed=True, published=True):
 		return (
-			patch.object(DatumServer, "start_setup_on_machine", return_value=installed),
+			patch.multiple(
+				DatumServer,
+				start_setup_on_machine=Mock(return_value=installed),
+				get_datum_commit=Mock(return_value="c" * 40),
+			),
 			patch.object(DatumServer, "configure_routing", return_value=routed),
 			patch.object(DatumServer, "publish_proxy_routes", return_value=published),
 		)
@@ -422,6 +427,29 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		published.assert_not_called()
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Active")
+
+	def test_setup_records_the_commit_it_installed(self):
+		install, routing, publishing = self.steps()
+		with install, routing, publishing:
+			self.server._setup()
+
+		self.server.reload()
+		self.assertEqual(self.server.commit, "c" * 40)
+
+	def test_setup_installs_the_pinned_commit(self):
+		self.server.db_set("commit", "abc1234")
+		self.server.reload()
+
+		with patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh") as ran:
+			self.server.start_setup_on_machine()
+
+		self.assertIn("export DATUM_COMMIT=abc1234", ran.call_args.args[1])
+
+	def test_a_blank_branch_falls_back_to_main(self):
+		self.server.branch = ""
+		self.server.save()
+
+		self.assertEqual(self.server.branch, "main")
 
 	def test_a_host_is_active_once_every_step_lands(self):
 		install, routing, publishing = self.steps()
@@ -494,29 +522,38 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Machine must be running"):
 			self.server.update_datum()
 
-	def test_an_update_runs_as_a_workflow_with_its_commit(self):
+	def test_an_update_runs_as_a_workflow_with_its_branch_and_commit(self):
 		self.server.mark("Active")
 
 		with patch.object(DatumServer, "_update") as update:
-			self.server.update_datum(" abc1234 ")
+			self.server.update_datum(" main ", " abc1234 ")
 
-		update.run_as_workflow.assert_called_once_with("abc1234")
+		update.run_as_workflow.assert_called_once_with("main", "abc1234")
 		self.assertEqual(self.server.status, "Updating")
+
+	def test_an_update_without_a_branch_keeps_the_hosts(self):
+		self.server.mark("Active")
+
+		with patch.object(DatumServer, "_update") as update:
+			self.server.update_datum()
+
+		update.run_as_workflow.assert_called_once_with("develop", "")
 
 	def test_the_update_script_is_given_the_commit(self):
 		with self.ssh() as ran:
-			self.assertTrue(self.server.update_on_machine("abc1234"))
+			self.assertTrue(self.server.update_on_machine("main", "abc1234"))
 
 		sent = ran.call_args.args[1]
+		self.assertIn("export DATUM_BRANCH=main", sent)
 		self.assertIn("export DATUM_COMMIT=abc1234", sent)
-		self.assertIn('TARGET="${DATUM_COMMIT:-$DATUM_VERSION}"', sent)
+		self.assertIn('TARGET="${DATUM_COMMIT:-$DATUM_BRANCH}"', sent)
 		self.assertIn("systemctl restart datum", sent)
 
-	def test_no_commit_takes_the_newest_of_the_version(self):
-		environment = self.server.update_environment("")
+	def test_no_commit_takes_the_newest_of_the_branch(self):
+		environment = self.server.install_environment("main", "")
 
 		self.assertNotIn("DATUM_COMMIT", environment)
-		self.assertEqual(environment["DATUM_VERSION"], "develop")
+		self.assertEqual(environment["DATUM_BRANCH"], "main")
 
 	UPDATED = "c" * 40
 
@@ -526,7 +563,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 			patch.object(DatumServer, "update_on_machine", return_value=landed),
 			patch.object(DatumServer, "get_datum_commit", return_value=self.UPDATED) as read,
 		):
-			self.server._update("abc1234")
+			self.server._update("main", "abc1234")
 
 		self.server.reload()
 		return read
@@ -535,18 +572,20 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.run_update(True)
 
 		self.assertEqual(self.server.status, "Active")
-		self.assertEqual(self.server.version, self.UPDATED)
+		self.assertEqual(self.server.branch, "main")
+		self.assertEqual(self.server.commit, self.UPDATED)
 
 	def test_a_failed_update_leaves_the_host_to_the_health_ping(self):
 		read = self.run_update(False)
 
 		self.assertEqual(self.server.status, "Unreachable")
-		self.assertEqual(self.server.version, "develop")
+		self.assertEqual(self.server.branch, "develop")
+		self.assertFalse(self.server.commit)
 		read.assert_not_called()
 
 	def test_a_failed_update_never_fails_the_host(self):
 		with self.ssh(side_effect=RuntimeError("connection reset")):
-			self.assertFalse(self.server.update_on_machine("abc1234"))
+			self.assertFalse(self.server.update_on_machine("main", "abc1234"))
 
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Failed")

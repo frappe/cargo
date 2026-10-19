@@ -7,7 +7,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 : "${DATUM_REPOSITORY:?DATUM_REPOSITORY is required}"
-: "${DATUM_VERSION:?DATUM_VERSION is required}"
+: "${DATUM_BRANCH:?DATUM_BRANCH is required}"
 : "${DATUM_CLICKHOUSE_USER:?set it to the user datum-api connects as}"
 : "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
@@ -121,10 +121,10 @@ fi
 cd "$DATUM_DIR"
 
 # `as_user` hands its argument to a login shell, which parses it again -- so everything
-# that came from outside this script is quoted for that second pass. A version is whatever
+# that came from outside this script is quoted for that second pass. A ref is whatever
 # the operator typed; unquoted, one carrying `;` or `$(` would run as the service account.
 DIR=$(printf '%q' "$DATUM_DIR")
-VERSION=$(printf '%q' "$DATUM_VERSION")
+REF=$(printf '%q' "${DATUM_COMMIT:-$DATUM_BRANCH}")
 REPOSITORY=$(printf '%q' "$DATUM_REPOSITORY")
 
 as_user "git -C $DIR remote set-url origin $REPOSITORY"
@@ -132,13 +132,13 @@ as_user "git -C $DIR fetch --quiet --tags --prune origin"
 
 # A branch has to follow the remote, so it is reset to origin's; a tag or commit is
 # checked out detached.
-if as_user "git -C $DIR rev-parse --verify --quiet refs/remotes/origin/$VERSION" > /dev/null; then
-	as_user "git -C $DIR checkout --quiet -B $VERSION origin/$VERSION"
-	as_user "git -C $DIR reset --quiet --hard origin/$VERSION"
-elif as_user "git -C $DIR rev-parse --verify --quiet $VERSION^{commit}" > /dev/null; then
-	as_user "git -C $DIR checkout --quiet --detach $VERSION"
+if as_user "git -C $DIR rev-parse --verify --quiet refs/remotes/origin/$REF" > /dev/null; then
+	as_user "git -C $DIR checkout --quiet -B $REF origin/$REF"
+	as_user "git -C $DIR reset --quiet --hard origin/$REF"
+elif as_user "git -C $DIR rev-parse --verify --quiet $REF^{commit}" > /dev/null; then
+	as_user "git -C $DIR checkout --quiet --detach $REF"
 else
-	echo "no branch, tag or commit named '$DATUM_VERSION' in $DATUM_REPOSITORY" >&2
+	echo "no branch, tag or commit named '${DATUM_COMMIT:-$DATUM_BRANCH}' in $DATUM_REPOSITORY" >&2
 	exit 1
 fi
 echo "datum is at $(as_user "git -C $DIR rev-parse --short HEAD")"

@@ -98,7 +98,7 @@ function add_setup_button(frm) {
 				? __("Install datum on this machine?")
 				: __(
 						"Run the install again? It checks out {0} afresh, re-runs the migration and restarts the service.",
-						[frm.doc.version || __("the configured version")]
+						[frm.doc.commit || frm.doc.branch]
 				  ),
 			() =>
 				frm.call("setup").then(() => {
@@ -120,16 +120,21 @@ function add_update_button(frm) {
 		frappe.prompt(
 			[
 				{
+					fieldname: "branch",
+					label: __("Branch"),
+					fieldtype: "Data",
+					default: frm.doc.branch,
+					reqd: 1,
+				},
+				{
 					fieldname: "commit",
 					label: __("Commit"),
 					fieldtype: "Data",
-					description: __("Leave blank for the newest commit of {0}.", [
-						frm.doc.version,
-					]),
+					description: __("Leave blank for the newest commit of the branch."),
 				},
 			],
-			({ commit }) =>
-				frm.call("update_datum", { commit }).then(() => {
+			({ branch, commit }) =>
+				frm.call("update_datum", { branch, commit }).then(() => {
 					frappe.show_alert({
 						message: __("Updating. Datum restarts once it is pulled."),
 						indicator: "green",

@@ -24,7 +24,9 @@ if typing.TYPE_CHECKING:
 
 CONFIG_KEY = "default_telemetry_config"
 LOCK_NAME = "telemetry-spawn"
-DATUM_FIELDS = ("repository", "version")
+DATUM_FIELDS = ("repository",)
+# The branch defaults to main, and without a commit setup takes the branch's newest.
+OPTIONAL_DATUM_FIELDS = ("branch", "commit")
 # Setting up again rents no machine, so a transient fault is worth another run. Three is
 # where saying so beats trying again.
 MAX_SETUP_ATTEMPTS = 3
@@ -59,6 +61,10 @@ def validate_config(config: dict) -> None:
 		if not isinstance(config.get(field), str) or not config[field].strip():
 			frappe.throw(_("{0} must be set.").format(field))
 
+	for field in OPTIONAL_DATUM_FIELDS:
+		if field in config and (not isinstance(config[field], str) or not config[field].strip()):
+			frappe.throw(_("{0} must be left out or set.").format(field))
+
 	validate_node_size(config.get(TELEMETRY), TELEMETRY)
 
 
@@ -88,7 +94,7 @@ def provision(server: DatumServer, config: dict) -> None:
 	server.update(
 		{
 			"auto_spawn": 1,
-			**{field: config[field] for field in DATUM_FIELDS},
+			**{field: config[field] for field in (*DATUM_FIELDS, *OPTIONAL_DATUM_FIELDS) if field in config},
 		}
 	).save(ignore_permissions=True)
 
