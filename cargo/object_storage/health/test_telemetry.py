@@ -10,7 +10,7 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
-from cargo.object_storage.health import install_cluster_metrics_exporters, install_metrics_exporters
+from cargo.object_storage.health import install_cluster_metrics_exporters, install_garage_metrics_exporters
 from cargo.object_storage.health import telemetry as telemetry_module
 from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
 from cargo.telemetry import vector as vector_module
@@ -279,7 +279,7 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 	def test_a_new_token_reaches_every_live_cluster_once(self):
 		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
 		with patch.object(frappe, "enqueue") as enqueue:
-			install_metrics_exporters()
+			install_garage_metrics_exporters()
 
 		enqueued = [call for call in enqueue.call_args_list if call.kwargs["cluster"] == self.cluster.name]
 		self.assertEqual(len(enqueued), 1)

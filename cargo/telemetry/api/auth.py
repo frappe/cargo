@@ -2,7 +2,7 @@ import frappe
 from frappe import _
 
 from cargo.auth import verify_token
-from cargo.object_storage.health import install_metrics_exporters
+from cargo.object_storage.health import install_garage_metrics_exporters
 from cargo.telemetry.credential import write_telemetry_credential
 from cargo.telemetry.doctype.datum_server.datum_server import install_datum_metrics_exporter
 from cargo.telemetry.vector import write_local_credential
@@ -19,5 +19,5 @@ def accept_datum_token(token: str) -> None:
 	endpoint = frappe.get_single("Datum Server").service_endpoint
 	write_telemetry_credential(endpoint, token)
 	write_local_credential(endpoint, token)
-	install_metrics_exporters()
+	install_garage_metrics_exporters()
 	install_datum_metrics_exporter()
