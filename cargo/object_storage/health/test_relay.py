@@ -11,8 +11,8 @@ from frappe.tests import IntegrationTestCase
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 from cargo.object_storage.health import install_cluster_metrics_exporters, install_garage_metrics_exporters
-from cargo.object_storage.health import telemetry as telemetry_module
-from cargo.object_storage.health.telemetry import Telemetry, parse_metrics
+from cargo.object_storage.health import relay as telemetry_module
+from cargo.object_storage.health.relay import Telemetry, parse_metrics
 from cargo.telemetry import vector as vector_module
 from cargo.testing import use_test_settings
 
