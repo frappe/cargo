@@ -277,8 +277,11 @@ class DatumServer(WorkflowBuilder):
 		self.mark("Active")
 
 	def on_workflow_failure(self, workflow) -> None:
-		"""An update whose workflow died would otherwise sit in Updating, which nothing watches."""
-		if self.status == "Updating":
+		"""A flow that raised would otherwise leave the host in Setting Up or Updating, which
+		nothing watches. Failed setup is retried by the spawner; a failed update is not."""
+		if self.status == "Setting Up":
+			self.mark("Failed", _("Setup stopped before it finished. See the Setup Log."))
+		elif self.status == "Updating":
 			self.mark("Unreachable", _("The update stopped before it finished. See the Setup Log."))
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)

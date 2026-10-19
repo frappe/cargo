@@ -597,12 +597,19 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.server.reload()
 		self.assertEqual(self.server.status, "Unreachable")
 
-	def test_a_dead_workflow_leaves_a_host_that_is_not_updating_alone(self):
+	def test_a_setup_whose_workflow_died_is_failed_for_the_spawner_to_retry(self):
 		self.server.mark("Setting Up")
 		self.server.on_workflow_failure(Mock())
 
 		self.server.reload()
-		self.assertEqual(self.server.status, "Setting Up")
+		self.assertEqual(self.server.status, "Failed")
+
+	def test_a_dead_workflow_leaves_a_settled_host_alone(self):
+		self.server.mark("Active")
+		self.server.on_workflow_failure(Mock())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Active")
 
 	def test_the_commit_datum_runs_at_is_read_from_the_host(self):
 		with self.ssh(return_value=f"{self.UPDATED}\n") as ran:
