@@ -297,7 +297,5 @@ scheduler_events = {
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_base_images",
 		],
 	},
-	"hourly": [
-		"cargo.object_storage.health.prune_history",
-	],
+	"hourly": ["cargo.object_storage.health.prune_history", "cargo.image_builder.health.ship_metrics"],
 }
