@@ -62,12 +62,9 @@ else
 	echo "no branch, tag or commit named '$TARGET' in $DATUM_REPOSITORY" >&2
 	exit 1
 fi
-after=$(as_user "git -C $DIR rev-parse --short HEAD")
-if [ "$after" = "$before" ] && curl -fs -o /dev/null "http://$DATUM_HOST:$DATUM_PORT/health"; then
-	echo "datum is already at $after"
-	exit 0
-fi
-echo "datum moves from $before to $after"
+# No skip on the same commit: a run that stopped before the restart leaves the old process
+# answering /health, so the checkout says nothing about what is running. This reloads it.
+echo "datum moves from $before to $(as_user "git -C $DIR rev-parse --short HEAD")"
 
 as_user "$UV sync --group api --directory $DIR"
 
