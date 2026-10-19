@@ -15,10 +15,13 @@ from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
+from cargo.telemetry.vector import install_script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
+	from collections.abc import Callable
+
 	from frappe.integrations.doctype.webhook.webhook import Webhook
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -206,7 +209,30 @@ class DatumServer(WorkflowBuilder):
 				self.mark("Failed", "datum did not install. See the Setup Log.")
 				return False
 
+			# Metrics are not worth failing a host over; the next Datum token retries it.
+			try:
+				self.install_metrics_exporter(on_output=log.write)
+			except RuntimeError:
+				pass
+			except Exception:
+				frappe.log_error(title=f"Could not install the metrics exporter on {self.machine}")
+
 		return True
+
+	def install_metrics_exporter(self, on_output: Callable[[str], None] | None = None) -> None:
+		"""Install Vector on the host, or hand it a new Datum token. Safe to repeat. Raises
+		`RuntimeError` while Cargo has no token, which a new host waits for."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+		run_over_ssh(
+			machine.address,
+			install_script(TELEMETRY, machine.name, settings.region),
+			machine.get_password("ssh_private_key"),
+			timeout=SETUP_TIMEOUT,
+			on_output=on_output,
+		)
 
 	@frappe.whitelist()
 	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
@@ -455,3 +481,22 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		}
 	)
 	webhook.save(ignore_permissions=True)
+
+
+def install_datum_metrics_exporter() -> None:
+	"""Hand the Datum host the current token in the background. A host still being set up
+	takes it at the end of its own setup."""
+	server: DatumServer = frappe.get_single("Datum Server")
+	if server.status not in ("Active", "Unreachable") or not server.machine:
+		return
+
+	frappe.enqueue_doc(
+		server.doctype,
+		server.name,
+		"install_metrics_exporter",
+		queue="long",
+		timeout=SETUP_TIMEOUT,
+		job_id="install-metrics-exporter:datum",
+		deduplicate=True,
+		enqueue_after_commit=True,
+	)
