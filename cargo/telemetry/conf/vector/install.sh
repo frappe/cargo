@@ -111,14 +111,11 @@ if level == "info" && includes(chatter, module) {
 }
 
 # On every line, not only request lines: until its unit is rewritten, a node's Garage
-# still logs plain text that carries no module.
+# still logs coloured text that carries no module.
 message = strip_ansi_escape_codes(string(.message) ?? "")
 if contains(message, "/v2/GetClusterHealth") || contains(message, "/v2/GetClusterStatus") {
 	abort
 }
-
-# A presigned URL works for whoever holds it until it expires.
-message = replace(message, r'X-Amz-Signature=[^&\s]+', "X-Amz-Signature=redacted")
 
 . = {
 	"ts": .timestamp,
@@ -203,7 +200,9 @@ type = "remap"
 inputs = [$LOG_INPUTS]
 drop_on_error = true
 source = '''
-.message = truncate(string(.message) ?? "", 8192)
+# Every source can carry a presigned URL, which works for whoever holds it until it expires.
+message = replace(string(.message) ?? "", r'X-Amz-Signature=[^&\s"]+', "X-Amz-Signature=redacted")
+.message = truncate(message, 8192)
 .attributes = {
 	"region": "$REGION",
 	"role": "$ROLE",
