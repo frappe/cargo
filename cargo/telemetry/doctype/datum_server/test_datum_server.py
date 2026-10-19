@@ -518,19 +518,56 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.assertNotIn("DATUM_COMMIT", environment)
 		self.assertEqual(environment["DATUM_VERSION"], "develop")
 
-	def test_an_update_that_lands_leaves_the_host_active(self):
+	PREVIOUS = "c" * 40
+
+	def run_update(self, *outcomes: bool):
+		"""Run the update flow with each update.sh run landing or failing in turn."""
 		self.server.mark("Updating")
-		with self.ssh():
+		with (
+			patch.object(DatumServer, "get_datum_commit", return_value=self.PREVIOUS),
+			patch.object(DatumServer, "update_on_machine", side_effect=outcomes) as ran,
+		):
 			self.server._update("abc1234")
 
 		self.server.reload()
+		return [call.args[0] for call in ran.call_args_list]
+
+	def test_an_update_that_lands_leaves_the_host_active(self):
+		self.assertEqual(self.run_update(True), ["abc1234"])
 		self.assertEqual(self.server.status, "Active")
 
-	def test_an_update_that_fails_says_so(self):
-		self.server.mark("Updating")
-		with self.ssh(side_effect=RuntimeError("datum did not come up")):
-			self.server._update("abc1234")
+	def test_a_failed_update_rolls_back_to_the_commit_datum_was_on(self):
+		self.assertEqual(self.run_update(False, True), ["abc1234", self.PREVIOUS])
+		self.assertEqual(self.server.status, "Active")
+		self.assertIn(self.PREVIOUS[:12], self.server.error)
+
+	def test_a_failed_rollback_leaves_the_host_to_the_health_ping(self):
+		self.run_update(False, False)
+		self.assertEqual(self.server.status, "Unreachable")
+
+	def test_a_failed_update_never_fails_the_host(self):
+		with self.ssh(side_effect=RuntimeError("connection reset")):
+			self.assertFalse(self.server.update_on_machine("abc1234"))
 
 		self.server.reload()
-		self.assertEqual(self.server.status, "Failed")
-		self.assertIn("did not update", self.server.error)
+		self.assertNotEqual(self.server.status, "Failed")
+
+	def test_an_update_whose_workflow_died_does_not_stay_updating(self):
+		self.server.mark("Updating")
+		self.server.on_workflow_failure(Mock())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Unreachable")
+
+	def test_a_dead_workflow_leaves_a_host_that_is_not_updating_alone(self):
+		self.server.mark("Setting Up")
+		self.server.on_workflow_failure(Mock())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Setting Up")
+
+	def test_the_commit_datum_runs_at_is_read_from_the_host(self):
+		with self.ssh(return_value=f"{self.PREVIOUS}\n") as ran:
+			self.assertEqual(self.server.get_datum_commit(), self.PREVIOUS)
+
+		self.assertIn("rev-parse HEAD", ran.call_args.args[1])

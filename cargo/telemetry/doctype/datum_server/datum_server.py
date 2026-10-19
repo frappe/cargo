@@ -236,18 +236,45 @@ class DatumServer(WorkflowBuilder):
 				)
 			except Exception:
 				frappe.log_error(
-					title=f"{self.name} failed to update",
+					title=f"{self.name} failed to update to {commit or self.version}",
 					message=frappe.get_traceback(with_context=True),
 				)
-				self.mark("Failed", "datum did not update. See the Setup Log.")
 				return False
 
 		return True
 
+	@task
+	def get_datum_commit(self) -> str:
+		"""The commit datum runs at now, which a failed update rolls back to."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		return run_over_ssh(
+			machine.address,
+			"su - frappe -c 'git -C datum rev-parse HEAD'",
+			machine.get_password("ssh_private_key"),
+		).strip()
+
 	@flow
 	def _update(self, commit: str) -> None:
+		"""Never Failed, which the spawner answers with a full setup. Unreachable leaves the
+		health ping to find out whether datum still answers."""
+		previous = self.get_datum_commit()
 		if self.update_on_machine(commit):
-			self.mark("Active")
+			return self.mark("Active")
+
+		if self.update_on_machine(previous):
+			return self.mark(
+				"Active",
+				_("Could not update datum, so it is back at {0}. See the Setup Log.").format(previous[:12]),
+			)
+
+		self.mark("Unreachable", _("Could not update datum or roll it back. See the Setup Log."))
+
+	def on_workflow_failure(self, workflow) -> None:
+		"""An update whose workflow died would otherwise sit in Updating, which nothing watches."""
+		if self.status == "Updating":
+			self.mark("Unreachable", _("The update stopped before it finished. See the Setup Log."))
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def configure_routing(self) -> bool:

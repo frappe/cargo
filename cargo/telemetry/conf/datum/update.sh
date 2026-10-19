@@ -51,18 +51,27 @@ REPOSITORY=$(printf '%q' "$DATUM_REPOSITORY")
 
 before=$(as_user "git -C $DIR rev-parse --short HEAD")
 as_user "git -C $DIR remote set-url origin $REPOSITORY"
-as_user "git -C $DIR fetch --quiet --tags --prune origin"
+# A rollback names a commit the checkout already holds, so it goes ahead without the network.
+if ! as_user "git -C $DIR fetch --quiet --tags --prune origin"; then
+	[ -n "${DATUM_COMMIT:-}" ] || exit 1
+	echo "could not fetch $DATUM_REPOSITORY; looking for $TARGET in the checkout" >&2
+fi
 
 if as_user "git -C $DIR rev-parse --verify --quiet refs/remotes/origin/$REF" > /dev/null; then
-	as_user "git -C $DIR checkout --quiet -B $REF origin/$REF"
+	as_user "git -C $DIR checkout --quiet --force -B $REF origin/$REF"
 	as_user "git -C $DIR reset --quiet --hard origin/$REF"
 elif as_user "git -C $DIR rev-parse --verify --quiet $REF^{commit}" > /dev/null; then
-	as_user "git -C $DIR checkout --quiet --detach $REF"
+	as_user "git -C $DIR checkout --quiet --force --detach $REF"
 else
 	echo "no branch, tag or commit named '$TARGET' in $DATUM_REPOSITORY" >&2
 	exit 1
 fi
-echo "datum moves from $before to $(as_user "git -C $DIR rev-parse --short HEAD")"
+after=$(as_user "git -C $DIR rev-parse --short HEAD")
+if [ "$after" = "$before" ] && curl -fs -o /dev/null "http://$DATUM_HOST:$DATUM_PORT/health"; then
+	echo "datum is already at $after"
+	exit 0
+fi
+echo "datum moves from $before to $after"
 
 as_user "$UV sync --group api --directory $DIR"
 
