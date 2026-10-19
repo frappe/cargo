@@ -518,32 +518,31 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.assertNotIn("DATUM_COMMIT", environment)
 		self.assertEqual(environment["DATUM_VERSION"], "develop")
 
-	PREVIOUS = "c" * 40
+	UPDATED = "c" * 40
 
-	def run_update(self, *outcomes: bool):
-		"""Run the update flow with each update.sh run landing or failing in turn."""
+	def run_update(self, landed: bool):
 		self.server.mark("Updating")
 		with (
-			patch.object(DatumServer, "get_datum_commit", return_value=self.PREVIOUS),
-			patch.object(DatumServer, "update_on_machine", side_effect=outcomes) as ran,
+			patch.object(DatumServer, "update_on_machine", return_value=landed),
+			patch.object(DatumServer, "get_datum_commit", return_value=self.UPDATED) as read,
 		):
 			self.server._update("abc1234")
 
 		self.server.reload()
-		return [call.args[0] for call in ran.call_args_list]
+		return read
 
-	def test_an_update_that_lands_leaves_the_host_active(self):
-		self.assertEqual(self.run_update(True), ["abc1234"])
+	def test_an_update_that_lands_records_the_commit_datum_is_at(self):
+		self.run_update(True)
+
 		self.assertEqual(self.server.status, "Active")
+		self.assertEqual(self.server.version, self.UPDATED)
 
-	def test_a_failed_update_rolls_back_to_the_commit_datum_was_on(self):
-		self.assertEqual(self.run_update(False, True), ["abc1234", self.PREVIOUS])
-		self.assertEqual(self.server.status, "Active")
-		self.assertIn(self.PREVIOUS[:12], self.server.error)
+	def test_a_failed_update_leaves_the_host_to_the_health_ping(self):
+		read = self.run_update(False)
 
-	def test_a_failed_rollback_leaves_the_host_to_the_health_ping(self):
-		self.run_update(False, False)
 		self.assertEqual(self.server.status, "Unreachable")
+		self.assertEqual(self.server.version, "develop")
+		read.assert_not_called()
 
 	def test_a_failed_update_never_fails_the_host(self):
 		with self.ssh(side_effect=RuntimeError("connection reset")):
@@ -567,7 +566,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.assertEqual(self.server.status, "Setting Up")
 
 	def test_the_commit_datum_runs_at_is_read_from_the_host(self):
-		with self.ssh(return_value=f"{self.PREVIOUS}\n") as ran:
-			self.assertEqual(self.server.get_datum_commit(), self.PREVIOUS)
+		with self.ssh(return_value=f"{self.UPDATED}\n") as ran:
+			self.assertEqual(self.server.get_datum_commit(), self.UPDATED)
 
 		self.assertIn("rev-parse HEAD", ran.call_args.args[1])

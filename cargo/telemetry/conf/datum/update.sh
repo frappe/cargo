@@ -51,11 +51,7 @@ REPOSITORY=$(printf '%q' "$DATUM_REPOSITORY")
 
 before=$(as_user "git -C $DIR rev-parse --short HEAD")
 as_user "git -C $DIR remote set-url origin $REPOSITORY"
-# A rollback names a commit the checkout already holds, so it goes ahead without the network.
-if ! as_user "git -C $DIR fetch --quiet --tags --prune origin"; then
-	[ -n "${DATUM_COMMIT:-}" ] || exit 1
-	echo "could not fetch $DATUM_REPOSITORY; looking for $TARGET in the checkout" >&2
-fi
+as_user "git -C $DIR fetch --quiet --tags --prune origin"
 
 if as_user "git -C $DIR rev-parse --verify --quiet refs/remotes/origin/$REF" > /dev/null; then
 	as_user "git -C $DIR checkout --quiet --force -B $REF origin/$REF"

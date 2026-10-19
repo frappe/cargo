@@ -245,7 +245,7 @@ class DatumServer(WorkflowBuilder):
 
 	@task
 	def get_datum_commit(self) -> str:
-		"""The commit datum runs at now, which a failed update rolls back to."""
+		"""The commit datum runs at now."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
@@ -258,18 +258,12 @@ class DatumServer(WorkflowBuilder):
 	@flow
 	def _update(self, commit: str) -> None:
 		"""Never Failed, which the spawner answers with a full setup. Unreachable leaves the
-		health ping to find out whether datum still answers."""
-		previous = self.get_datum_commit()
-		if self.update_on_machine(commit):
-			return self.mark("Active")
+		health ping to find out whether datum still answers, and the operator to try again."""
+		if not self.update_on_machine(commit):
+			return self.mark("Unreachable", _("Could not update datum. See the Setup Log."))
 
-		if self.update_on_machine(previous):
-			return self.mark(
-				"Active",
-				_("Could not update datum, so it is back at {0}. See the Setup Log.").format(previous[:12]),
-			)
-
-		self.mark("Unreachable", _("Could not update datum or roll it back. See the Setup Log."))
+		self.version = self.get_datum_commit()
+		self.mark("Active")
 
 	def on_workflow_failure(self, workflow) -> None:
 		"""An update whose workflow died would otherwise sit in Updating, which nothing watches."""
