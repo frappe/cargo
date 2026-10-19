@@ -5,7 +5,7 @@ import typing
 import frappe
 
 from cargo.object_storage.health.live import LiveHealth, prune_history
-from cargo.object_storage.health.telemetry import Telemetry
+from cargo.object_storage.health.relay import Telemetry
 from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
