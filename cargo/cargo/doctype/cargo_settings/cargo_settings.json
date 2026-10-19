@@ -26,6 +26,7 @@
   "track_pilot_releases",
   "frappe_branches",
   "max_auto_retry_count",
+  "update_pilot_in_base_image",
   "signup_apps_section",
   "signup_apps",
   "require_prebuilt_assets",
@@ -167,22 +168,22 @@
    "label": "Build Machine"
   },
   {
-   "default": "10",
-   "description": "Holds the image, the 1 GB swap file the build adds, and the 1 GB swap file a machine creates when it first boots.",
+   "default": "16",
+   "description": "Installing every signup app peaks at about 9 GB, before the build cleans up.",
    "fieldname": "build_machine_disk_gb",
    "fieldtype": "Int",
    "label": "Build Machine Disk (GB)",
    "reqd": 1
   },
   {
-   "default": "1000",
+   "default": "4000",
    "fieldname": "build_machine_cpu",
    "fieldtype": "Int",
    "label": "Build Machine CPU (millicores)",
    "reqd": 1
   },
   {
-   "default": "1",
+   "default": "4",
    "fieldname": "build_machine_memory",
    "fieldtype": "Int",
    "label": "Build Machine Memory (GB)",
@@ -238,6 +239,13 @@
    "label": "Require Prebuilt Assets"
   },
   {
+   "default": "0",
+   "description": "Update pilot in previous base image instead of building image from scratch.",
+   "fieldname": "update_pilot_in_base_image",
+   "fieldtype": "Check",
+   "label": "Update Pilot In Base Image"
+  },
+  {
    "fieldname": "placement_tab",
    "fieldtype": "Tab Break",
    "label": "Placement"
@@ -268,7 +276,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-16 03:17:33.267338",
+ "modified": "2026-10-19 10:56:15.425640",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

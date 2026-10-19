@@ -101,10 +101,10 @@ class PilotImage(WorkflowBuilder):
 		self.db_set({"machine": machine, "status": "Provisioning"})
 
 	def get_boot_image(self) -> str:
-		"""Base boots on Ubuntu, Site on the Base image of its build, and Apps on the Site image
-		of its build."""
+		"""Base boots on Ubuntu, or on the branch's newest Base image when Cargo Settings updates
+		Pilot in place. Site boots on the Base image of its build, and Apps on its Site image."""
 		if self.image_type == "Base":
-			return base_image_id(minimal=True)
+			return self.previous_base_image or base_image_id(minimal=True)
 
 		boot_image_type = "Base" if self.image_type == "Site" else "Site"
 		snapshot_id = frappe.db.get_value(
@@ -134,6 +134,24 @@ class PilotImage(WorkflowBuilder):
 			return None
 
 		return frappe.get_doc("Machine", self.machine)
+
+	@property
+	def build_settings(self) -> "CargoSettings":
+		return frappe.get_cached_doc("Cargo Settings")
+
+	@property
+	def previous_base_image(self) -> str | None:
+		"""The snapshot of the branch's newest completed Base image, which may be of an older
+		Pilot release or Frappe commit. None unless Cargo Settings updates Pilot in place."""
+		if not self.build_settings.update_pilot_in_base_image:
+			return None
+
+		return frappe.db.get_value(
+			"Pilot Image",
+			{"image_type": "Base", "status": "Completed", "frappe_branch": self.frappe_branch},
+			"snapshot_id",
+			order_by="creation desc",
+		)
 
 	def sync_machines(self) -> None:
 		"""Once the machine is live we can start the initial build process."""
@@ -331,11 +349,10 @@ class PilotImage(WorkflowBuilder):
 	def get_provision_environment(self) -> dict[str, str]:
 		"""What provision.sh reads. The bench, site and admin domain are the same for every
 		image, so the script names those itself."""
-		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-		proxy_subnet = f"fdaa:{int(settings.region_id or 0):x}::/64"
+		proxy_subnet = f"fdaa:{int(self.build_settings.region_id or 0):x}::/64"
 		domain_provider = (
 			script(*DOMAIN_PROVIDER)
-			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{settings.wildcard_domain}"))
+			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.build_settings.wildcard_domain}"))
 			.replace('"__PROXY_SUBNET__"', json.dumps(proxy_subnet))
 		)
 
@@ -343,7 +360,7 @@ class PilotImage(WorkflowBuilder):
 			"VERSION": self.pilot_version,
 			"FRAPPE_BRANCH": self.frappe_branch,
 			"FRAPPE_COMMIT": self.frappe_commit,
-			"WILDCARD_DOMAIN": settings.wildcard_domain or "",
+			"WILDCARD_DOMAIN": self.build_settings.wildcard_domain or "",
 			"PROXY_SUBNET": proxy_subnet,
 			"DOMAIN_PROVIDER": domain_provider,
 			"IMAGE_TYPE": self.image_type,

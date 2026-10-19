@@ -16,6 +16,7 @@ SETTINGS = {
 	# Release tracking is off unless a test turns it on, whatever ran before it.
 	"track_pilot_releases": 0,
 	"max_auto_retry_count": 3,
+	"update_pilot_in_base_image": 0,
 	"storage_node_spread": "Separate hosts",
 	"storage_node_spread_within": "",
 }

@@ -44,6 +44,7 @@ class CargoSettings(Document):
 		storage_node_spread: DF.Literal["Separate hosts", "Off"]
 		storage_node_spread_within: DF.Data | None
 		track_pilot_releases: DF.Check
+		update_pilot_in_base_image: DF.Check
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 
