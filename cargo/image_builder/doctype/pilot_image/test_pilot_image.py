@@ -144,6 +144,31 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.assertEqual(request.call_args.kwargs["base_image"], "img-1")
 		self.assertEqual(image.status, "Provisioning")
 
+	def test_a_base_image_updated_in_place_boots_on_the_newest_base_image_of_its_branch(self):
+		frappe.db.set_single_value("Cargo Settings", "update_pilot_in_base_image", 1)
+		self.completed(self.image("Base"), "img-old")
+		self.completed(self.image("Base", frappe_commit=NEW_COMMIT), "img-newest")
+		# Another branch's Base image must not be picked, nor one still building.
+		self.completed(self.image("Base", frappe_branch="develop"), "img-develop")
+		self.image("Base", "Building")
+
+		self.assertEqual(self.image("Base").get_boot_image(), "img-newest")
+
+	def test_a_base_image_updated_in_place_boots_on_ubuntu_without_an_earlier_base_image(self):
+		frappe.db.set_single_value("Cargo Settings", "update_pilot_in_base_image", 1)
+		frappe.db.delete("Pilot Image", {"image_type": "Base"})
+
+		with patch(f"{CONTROLLER}.base_image_id", return_value="img-ubuntu") as base_image:
+			self.assertEqual(self.image("Base").get_boot_image(), "img-ubuntu")
+
+		base_image.assert_called_once_with(minimal=True)
+
+	def test_a_base_image_boots_on_ubuntu_unless_updated_in_place(self):
+		self.completed(self.image("Base"), "img-old")
+
+		with patch(f"{CONTROLLER}.base_image_id", return_value="img-ubuntu"):
+			self.assertEqual(self.image("Base").get_boot_image(), "img-ubuntu")
+
 	def test_a_site_image_boots_on_the_base_image_of_its_build(self):
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
 		self.completed(self.image("Base", pilot_version=version), "img-base")

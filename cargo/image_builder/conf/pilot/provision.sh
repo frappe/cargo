@@ -55,8 +55,15 @@ as_bench_user() {
 # names reached through an alias never match. The parent image carries it, so remove it until the end.
 rm -f "$PROVIDER_SCRIPT"
 
+BENCH_PATH="/home/$BENCH_USER/pilot/benches/$BENCH"
+
+# A Base build that boots on an earlier Base image finds the bench there. It moves Pilot to the
+# newest release and Frappe to the commit; the host setup below is already in the image.
+if [ "$IMAGE_TYPE" = Base ] && [ -d "$BENCH_PATH" ]; then
+	as_bench_user "pilot --yes -b '$BENCH' admin upgrade"
+	as_bench_user "pilot --yes -b '$BENCH' init --no-dev --commit '$FRAPPE_COMMIT'"
 # The Base image already holds the user, Pilot and the bench, so only Base builds them.
-if [ "$IMAGE_TYPE" = Base ]; then
+elif [ "$IMAGE_TYPE" = Base ]; then
 	# Started now, so installs and migrations next to MariaDB swap to the file every VM uses.
 	install -d -m 755 "$(dirname "$MEMORY_SCRIPT")"
 	cat > "$MEMORY_SCRIPT" <<MEMORY_SCRIPT
@@ -136,14 +143,11 @@ MEMORY_UNIT
 
 	# `new` writes bench.toml; `init` clones the framework app on the branch it names, then
 	# checks out the commit on that branch. Pilot finds the commit's prebuilt assets by branch.
-	bench_toml="/home/$BENCH_USER/pilot/benches/$BENCH/bench.toml"
+	bench_toml="$BENCH_PATH/bench.toml"
 	as_bench_user "sed -i '/^name = \"frappe\"\$/,/^\$/ s|^branch = .*|branch = \"$FRAPPE_BRANCH\"|' '$bench_toml'"
 	# A silent miss would build the default branch, so check the edit took.
 	as_bench_user "grep -q '^branch = \"$FRAPPE_BRANCH\"' '$bench_toml'"
 	as_bench_user "pilot --yes -b '$BENCH' init --no-dev --commit '$FRAPPE_COMMIT'"
-
-	checked_out=$(as_bench_user "git -C /home/$BENCH_USER/pilot/benches/$BENCH/apps/frappe rev-parse HEAD")
-	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
 
 	# A Firecracker guest has no screen, multipath storage, modem, removable disk or firmware to update.
 	for unit in fwupd.service fwupd-refresh.timer multipathd.socket multipathd.service ModemManager.service udisks2.service getty@tty1.service; do
@@ -152,7 +156,16 @@ MEMORY_UNIT
 	systemctl mask --quiet fwupd.service fwupd-refresh.timer
 fi
 
-# Base starts the VM swap above; Site and Apps start it at boot. Each build needs it on a 1 GB machine.
+if [ "$IMAGE_TYPE" = Base ]; then
+	# The installer and `admin upgrade` both take the newest release, which may have moved past VERSION.
+	installed=$(cat "/home/$BENCH_USER/pilot/VERSION")
+	[ "$installed" = "$VERSION" ] || { echo "Pilot is at $installed, not $VERSION" >&2; exit 1; }
+
+	checked_out=$(as_bench_user "git -C '$BENCH_PATH/apps/frappe' rev-parse HEAD")
+	[ "$checked_out" = "$FRAPPE_COMMIT" ] || { echo "Frappe is at $checked_out, not $FRAPPE_COMMIT" >&2; exit 1; }
+fi
+
+# A Base build from Ubuntu starts the VM swap above; every other build starts it at boot. Each build needs it on a 1 GB machine.
 swapon --show=NAME --noheadings | grep -qx "$VM_SWAP_FILE"
 
 if [ "$IMAGE_TYPE" = Site ]; then
@@ -202,7 +215,7 @@ as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*
 
 # The admin API answers on its own Gunicorn bind. The prewarm reaches it there, past nginx,
 # for the same reason it reaches the site on the loopback upstream.
-ADMIN_UPSTREAM="http://$(sed -n 's/^bind = "\(.*\)"$/\1/p' "/home/$BENCH_USER/pilot/benches/$BENCH/config/admin-gunicorn.conf.py")"
+ADMIN_UPSTREAM="http://$(sed -n 's/^bind = "\(.*\)"$/\1/p' "$BENCH_PATH/config/admin-gunicorn.conf.py")"
 [ "$ADMIN_UPSTREAM" != "http://" ]
 
 # Atlas boots a separate guest for five minutes before it captures the warm image. The
