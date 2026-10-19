@@ -4,6 +4,7 @@ WITH deltas AS (
   WHERE resource_id LIKE 'cargo:%' AND metric = 'mariadb_queries_total' AND ts > now() - INTERVAL 24 HOUR - INTERVAL 10 MINUTE
   WINDOW w AS (PARTITION BY labels['kind'] ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
 )
-SELECT ts AS time, kind AS series, if(value < previous, value, value - previous) / dateDiff('millisecond', previous_ts, ts) * 1000 AS value
+SELECT toStartOfMinute(ts) AS time, kind AS series, avg(if(value < previous, value, value - previous) / dateDiff('millisecond', previous_ts, ts) * 1000) AS value
 FROM deltas
 WHERE position > 1 AND ts > now() - INTERVAL 24 HOUR
+GROUP BY time, series

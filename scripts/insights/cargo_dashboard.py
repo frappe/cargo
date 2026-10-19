@@ -77,7 +77,7 @@ def add_cargo_dashboard(workbook: Workbook) -> None:
 
 	dashboard.heading("Host")
 	chart("cargo-cpu", "CPU", "Line", line("CPU", "%", PERCENT, max=100, reference_lines=RED_LINE_AT_80),
-		"Busy share, and time in user, system, iowait and steal.")  # fmt: skip
+		"Busy share, and time waiting on disk (iowait).")  # fmt: skip
 	chart("cargo-memory", "Memory", "Line", line("GB", "GB", GB),
 		"Total, used, cached and swap used.")  # fmt: skip
 	chart("cargo-load", "Load Average", "Line", line("Load", "load", {"decimals": 2}),
