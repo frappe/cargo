@@ -59,7 +59,7 @@ class DatumServer(WorkflowBuilder):
 		machine: DF.Link | None
 		repository: DF.Data
 		setup_log: DF.Code | None
-		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed"]
+		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed", "Updating"]
 		timeout_seconds: DF.Int
 		version: DF.Data
 	# end: auto-generated types
@@ -203,6 +203,52 @@ class DatumServer(WorkflowBuilder):
 
 		return True
 
+	@frappe.whitelist()
+	def update_datum(self, commit: str | None = None) -> None:
+		"""Move datum to `commit`, or to the newest commit of its version, and restart it."""
+		if self.status not in ("Active", "Unreachable"):
+			frappe.throw(_("Set datum up before updating it."), frappe.ValidationError)
+
+		if frappe.db.get_value("Machine", self.machine, "status") != "Running":
+			frappe.throw(_("Machine must be running to update datum."), frappe.ValidationError)
+
+		self.setup_log = None
+		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
+		self.mark("Updating")
+		self._update.run_as_workflow((commit or "").strip())
+
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def update_on_machine(self, commit: str) -> bool:
+		"""Pull datum to `commit` and restart it. Streams to `setup_log` as it runs."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				run_over_ssh(
+					machine.address,
+					script(
+						"telemetry", "conf", "datum", "update.sh", environment=self.update_environment(commit)
+					),
+					machine.get_password("ssh_private_key"),
+					timeout=SETUP_TIMEOUT,
+					on_output=log.write,
+				)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} failed to update",
+					message=frappe.get_traceback(with_context=True),
+				)
+				self.mark("Failed", "datum did not update. See the Setup Log.")
+				return False
+
+		return True
+
+	@flow
+	def _update(self, commit: str) -> None:
+		if self.update_on_machine(commit):
+			self.mark("Active")
+
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def configure_routing(self) -> bool:
 		"""Put nginx on port 80 in front of datum and ClickHouse."""
@@ -324,6 +370,14 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_PORT": DATUM_PORT,
 			"CLICKHOUSE_VERSION": self.clickhouse_version,
 		}
+
+	def update_environment(self, commit: str) -> dict[str, str]:
+		"""The install's environment, plus the commit to move to. Blank takes the newest of `version`."""
+		environment = self.install_environment()
+		if commit:
+			environment["DATUM_COMMIT"] = commit
+
+		return environment
 
 
 def configure_telemetry_webhook(server: DatumServer) -> None:

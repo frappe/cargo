@@ -47,13 +47,13 @@
   },
   {
    "default": "Draft",
-   "description": "Draft — no machine yet, or it is still booting.\nSetting Up — installing datum on the machine.\nActive — datum is running and answering.\nFailed — the machine died, or the last install did not finish. See the Setup Log.",
+   "description": "Draft \u2014 no machine yet, or it is still booting.\nSetting Up \u2014 installing datum on the machine.\nActive \u2014 datum is running and answering.\nFailed \u2014 the machine died, or the last install did not finish. See the Setup Log.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Draft\nSetting Up\nActive\nUnreachable\nFailed",
+   "options": "Draft\nSetting Up\nActive\nUnreachable\nFailed\nUpdating",
    "read_only": 1
   },
   {
@@ -176,7 +176,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-16 16:00:00.000000",
+ "modified": "2026-10-19 11:46:49.908871",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",

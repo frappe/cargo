@@ -473,3 +473,64 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
 		self.assertIn("nginx", self.server.error)
+
+
+class IntegrationTestDatumUpdate(IntegrationTestCase):
+	"""An update pulls datum on a host that is set up, and leaves it Active only if it answers."""
+
+	setUp = IntegrationTestTelemetryRouting.setUp
+
+	def ssh(self, **behaviour):
+		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
+
+	def test_a_host_that_is_not_set_up_cannot_be_updated(self):
+		with self.assertRaisesRegex(frappe.ValidationError, "Set datum up"):
+			self.server.update_datum()
+
+	def test_a_stopped_machine_cannot_be_updated(self):
+		self.server.mark("Active")
+		self.machine.db_set("status", "Stopped")
+
+		with self.assertRaisesRegex(frappe.ValidationError, "Machine must be running"):
+			self.server.update_datum()
+
+	def test_an_update_runs_as_a_workflow_with_its_commit(self):
+		self.server.mark("Active")
+
+		with patch.object(DatumServer, "_update") as update:
+			self.server.update_datum(" abc1234 ")
+
+		update.run_as_workflow.assert_called_once_with("abc1234")
+		self.assertEqual(self.server.status, "Updating")
+
+	def test_the_update_script_is_given_the_commit(self):
+		with self.ssh() as ran:
+			self.assertTrue(self.server.update_on_machine("abc1234"))
+
+		sent = ran.call_args.args[1]
+		self.assertIn("export DATUM_COMMIT=abc1234", sent)
+		self.assertIn('TARGET="${DATUM_COMMIT:-$DATUM_VERSION}"', sent)
+		self.assertIn("systemctl restart datum", sent)
+
+	def test_no_commit_takes_the_newest_of_the_version(self):
+		environment = self.server.update_environment("")
+
+		self.assertNotIn("DATUM_COMMIT", environment)
+		self.assertEqual(environment["DATUM_VERSION"], "develop")
+
+	def test_an_update_that_lands_leaves_the_host_active(self):
+		self.server.mark("Updating")
+		with self.ssh():
+			self.server._update("abc1234")
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Active")
+
+	def test_an_update_that_fails_says_so(self):
+		self.server.mark("Updating")
+		with self.ssh(side_effect=RuntimeError("datum did not come up")):
+			self.server._update("abc1234")
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Failed")
+		self.assertIn("did not update", self.server.error)

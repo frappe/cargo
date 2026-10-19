@@ -8,6 +8,7 @@ frappe.ui.form.on("Datum Server", {
 		follow_setup_log(frm);
 		add_machine_button(frm);
 		add_setup_button(frm);
+		add_update_button(frm);
 		add_reset_attempts_button(frm);
 		add_password_buttons(frm);
 		set_headline(frm);
@@ -19,6 +20,9 @@ function set_headline(frm) {
 		Draft: __("Add the telemetry node. Atlas builds it, and setting up starts once it boots."),
 		"Setting Up": __(
 			"Cloning datum, migrating ClickHouse and starting the service. Follow the Setup Log below."
+		),
+		Updating: __(
+			"Pulling datum, migrating ClickHouse and restarting the service. Follow the Setup Log below."
 		),
 		Active: __(
 			"Datum is running. Pilots ship metrics and logs to it once Central hands out its URL."
@@ -84,7 +88,7 @@ function ask_for_machine(frm) {
 }
 
 function add_setup_button(frm) {
-	if (!frm.doc.machine || frm.doc.status === "Setting Up") return;
+	if (!frm.doc.machine || is_running(frm)) return;
 
 	// Idempotent: the install re-runs on whatever is already there, so it doubles as retry.
 	const first = !["Active", "Unreachable", "Failed"].includes(frm.doc.status);
@@ -106,6 +110,40 @@ function add_setup_button(frm) {
 				})
 		);
 	}).addClass(first ? "btn-primary" : "");
+}
+
+// Only a host that is set up has a checkout and a service to move.
+function add_update_button(frm) {
+	if (!["Active", "Unreachable"].includes(frm.doc.status)) return;
+
+	frm.add_custom_button(__("Update Datum"), () => {
+		frappe.prompt(
+			[
+				{
+					fieldname: "commit",
+					label: __("Commit"),
+					fieldtype: "Data",
+					description: __("Leave blank for the newest commit of {0}.", [
+						frm.doc.version,
+					]),
+				},
+			],
+			({ commit }) =>
+				frm.call("update_datum", { commit }).then(() => {
+					frappe.show_alert({
+						message: __("Updating. Datum restarts once it is pulled."),
+						indicator: "green",
+					});
+					frm.reload_doc();
+				}),
+			__("Update Datum"),
+			__("Update")
+		);
+	});
+}
+
+function is_running(frm) {
+	return ["Setting Up", "Updating"].includes(frm.doc.status);
 }
 
 function add_reset_attempts_button(frm) {
@@ -186,8 +224,8 @@ function follow_setup_log(frm) {
 		scroll_to_latest(frm, fieldname);
 	});
 
-	// While setup runs its log is in the cache, not the row, so a reload has to ask.
-	if (frm.doc.status !== "Setting Up") {
+	// While setup or an update runs its log is in the cache, not the row, so a reload has to ask.
+	if (!is_running(frm)) {
 		scroll_to_latest(frm, "setup_log");
 		return;
 	}
