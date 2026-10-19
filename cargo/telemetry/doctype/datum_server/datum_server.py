@@ -49,9 +49,11 @@ class DatumServer(WorkflowBuilder):
 
 		auto_setup_attempts: DF.Int
 		auto_spawn: DF.Check
+		branch: DF.Data
 		clickhouse_host: DF.Data | None
 		clickhouse_port: DF.Int
 		clickhouse_version: DF.Data
+		commit: DF.Data
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
@@ -59,17 +61,16 @@ class DatumServer(WorkflowBuilder):
 		machine: DF.Link | None
 		repository: DF.Data
 		setup_log: DF.Code | None
-		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed"]
+		status: DF.Literal["Draft", "Setting Up", "Active", "Unreachable", "Failed", "Updating"]
 		timeout_seconds: DF.Int
-		version: DF.Data
 	# end: auto-generated types
 
 	def before_validate(self) -> None:
-		"""A Single saved before the field existed has no value, and `mark` saves on every
+		"""A Single saved before a field existed has no value, and `mark` saves on every
 		status change, so the doctype default fills it rather than every save failing."""
-		self.clickhouse_version = (self.clickhouse_version or "").strip() or self.meta.get_field(
-			"clickhouse_version"
-		).default
+		for fieldname in ("clickhouse_version", "branch"):
+			value = (self.get(fieldname) or "").strip()
+			self.set(fieldname, value or self.meta.get_field(fieldname).default)
 
 	def validate(self) -> None:
 		self.validate_token_verification()
@@ -187,7 +188,11 @@ class DatumServer(WorkflowBuilder):
 				run_over_ssh(
 					machine.address,
 					script(
-						"telemetry", "conf", "datum", "install.sh", environment=self.install_environment()
+						"telemetry",
+						"conf",
+						"datum",
+						"install.sh",
+						environment=self.install_environment(commit=self.commit),
 					),
 					machine.get_password("ssh_private_key"),
 					timeout=SETUP_TIMEOUT,
@@ -202,6 +207,82 @@ class DatumServer(WorkflowBuilder):
 				return False
 
 		return True
+
+	@frappe.whitelist()
+	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
+		"""Move datum to `commit`, or to the newest commit of `branch`, and restart it."""
+		if self.status not in ("Active", "Unreachable"):
+			frappe.throw(_("Set datum up before updating it."), frappe.ValidationError)
+
+		if frappe.db.get_value("Machine", self.machine, "status") != "Running":
+			frappe.throw(_("Machine must be running to update datum."), frappe.ValidationError)
+
+		self.setup_log = None
+		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
+		self.mark("Updating")
+		self._update.run_as_workflow((branch or "").strip() or self.branch, (commit or "").strip())
+
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def update_on_machine(self, branch: str, commit: str) -> bool:
+		"""Pull datum to `commit`, or the newest of `branch`, and restart it. Streams to
+		`setup_log` as it runs."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		with OutputLog(self, "setup_log", append=True) as log:
+			try:
+				run_over_ssh(
+					machine.address,
+					script(
+						"telemetry",
+						"conf",
+						"datum",
+						"update.sh",
+						environment=self.install_environment(branch, commit),
+					),
+					machine.get_password("ssh_private_key"),
+					timeout=SETUP_TIMEOUT,
+					on_output=log.write,
+				)
+			except Exception:
+				frappe.log_error(
+					title=f"{self.name} failed to update to {commit or branch}",
+					message=frappe.get_traceback(with_context=True),
+				)
+				return False
+
+		return True
+
+	@task
+	def get_datum_commit(self) -> str:
+		"""The commit datum runs at now."""
+		from cargo.cargo.doctype.machine.machine import Machine
+
+		machine: Machine = frappe.get_doc("Machine", self.machine)
+		return run_over_ssh(
+			machine.address,
+			"su - frappe -c 'git -C datum rev-parse HEAD'",
+			machine.get_password("ssh_private_key"),
+		).strip()
+
+	@flow
+	def _update(self, branch: str, commit: str) -> None:
+		"""Never Failed, which the spawner answers with a full setup. Unreachable leaves the
+		health ping to find out whether datum still answers, and the operator to try again."""
+		if not self.update_on_machine(branch, commit):
+			return self.mark("Unreachable", _("Could not update datum. See the Setup Log."))
+
+		self.branch = branch
+		self.commit = self.get_datum_commit()
+		self.mark("Active")
+
+	def on_workflow_failure(self, workflow) -> None:
+		"""A flow that raised would otherwise leave the host in Setting Up or Updating, which
+		nothing watches. Failed setup is retried by the spawner; a failed update is not."""
+		if self.status == "Setting Up":
+			self.mark("Failed", _("Setup stopped before it finished. See the Setup Log."))
+		elif self.status == "Updating":
+			self.mark("Unreachable", _("The update stopped before it finished. See the Setup Log."))
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def configure_routing(self) -> bool:
@@ -276,6 +357,8 @@ class DatumServer(WorkflowBuilder):
 		if not self.start_setup_on_machine():
 			return
 
+		self.commit = self.get_datum_commit()
+
 		if not self.configure_routing():
 			return
 
@@ -315,15 +398,20 @@ class DatumServer(WorkflowBuilder):
 
 		return {name: value for name, value in variables.items() if value}
 
-	def install_environment(self) -> dict[str, str]:
-		"""What the install script needs on top of datum's own: which datum to install."""
-		return {
+	def install_environment(self, branch: str | None = None, commit: str | None = None) -> dict[str, str]:
+		"""What the install and update scripts need on top of datum's own: which datum to run.
+		Without a commit they take the newest commit of the branch."""
+		environment = {
 			**self.environment(),
 			"DATUM_REPOSITORY": self.repository,
-			"DATUM_VERSION": self.version,
+			"DATUM_BRANCH": branch or self.branch,
 			"DATUM_PORT": DATUM_PORT,
 			"CLICKHOUSE_VERSION": self.clickhouse_version,
 		}
+		if commit:
+			environment["DATUM_COMMIT"] = commit
+
+		return environment
 
 
 def configure_telemetry_webhook(server: DatumServer) -> None:

@@ -32,7 +32,7 @@ class IntegrationTestPingHostMachine(IntegrationTestCase):
 		self.server.update(
 			{
 				"repository": "https://github.com/frappe/datum",
-				"version": "develop",
+				"branch": "develop",
 				"machine": machine.name,
 				"status": "Active",
 				"error": None,

@@ -13,6 +13,7 @@ from cargo.telemetry.spawn import (
 	CONFIG_KEY,
 	DATUM_FIELDS,
 	MAX_SETUP_ATTEMPTS,
+	OPTIONAL_DATUM_FIELDS,
 	ensure_telemetry,
 	validate_config,
 )
@@ -20,7 +21,7 @@ from cargo.testing import SETTINGS, reset_datum_server, use_test_settings
 
 CONFIG = {
 	"repository": "https://github.com/frappe/datum",
-	"version": "develop",
+	"branch": "develop",
 	TELEMETRY: {"cpu_millicores": 2000, "ram_gb": 4, "disk_gb": 100},
 }
 
@@ -48,6 +49,15 @@ class IntegrationTestTelemetryConfig(IntegrationTestCase):
 		on -- unlike clickhouse_port."""
 		for field in DATUM_FIELDS:
 			for value in (None, "", "   "):
+				with self.subTest(field=field, value=value):
+					self.assertTrue(self.refused({**CONFIG, field: value}))
+
+	def test_the_branch_and_commit_may_be_left_out(self):
+		self.assertFalse(self.refused({key: value for key, value in CONFIG.items() if key != "branch"}))
+
+	def test_a_branch_or_commit_that_is_given_must_be_set(self):
+		for field in OPTIONAL_DATUM_FIELDS:
+			for value in (None, "", "   ", 3):
 				with self.subTest(field=field, value=value):
 					self.assertTrue(self.refused({**CONFIG, field: value}))
 
@@ -132,15 +142,30 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 		self.assertEqual(server.install_environment()["CLICKHOUSE_VERSION"], "26.3.52.9")
 		self.assertTrue(server.auto_spawn)
 
+	def test_a_region_that_names_no_branch_takes_main_at_its_newest(self):
+		with self.configured({key: value for key, value in CONFIG.items() if key != "branch"}):
+			ensure_telemetry()
+
+		server = self.host()
+		self.assertEqual(server.branch, "main")
+		self.assertFalse(server.commit)
+		self.assertNotIn("DATUM_COMMIT", server.install_environment(commit=server.commit))
+
+	def test_a_region_can_pin_a_commit(self):
+		with self.configured({**CONFIG, "commit": "abc1234"}):
+			ensure_telemetry()
+
+		self.assertEqual(self.host().commit, "abc1234")
+
 	def test_a_host_already_filled_in_is_not_written_over(self):
 		"""The Single always exists, so a later run must not take site config as the truth."""
 		with self.configured():
 			ensure_telemetry()
 
-		with self.configured({**CONFIG, "version": "some-other-branch"}):
+		with self.configured({**CONFIG, "branch": "some-other-branch"}):
 			ensure_telemetry()
 
-		self.assertEqual(self.host().version, CONFIG["version"])
+		self.assertEqual(self.host().branch, CONFIG["branch"])
 
 	def test_datum_checks_tokens_against_this_regions_key_set(self):
 		"""The key set and the region are Cargo Settings' own, so a spawned host inherits
@@ -160,7 +185,7 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 				"doctype": "Datum Server",
 				"clickhouse_host": "clickhouse.internal",
 				"repository": CONFIG["repository"],
-				"version": CONFIG["version"],
+				"branch": CONFIG["branch"],
 			}
 		).insert()
 		atlas = self.atlas()

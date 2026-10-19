@@ -206,9 +206,14 @@
    "group": "Build Machine",
    "link_doctype": "Machine",
    "link_fieldname": "reference_name"
+  },
+  {
+   "group": "Workflows",
+   "link_doctype": "Press Workflow",
+   "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-12 23:30:00.000000",
+ "modified": "2026-10-19 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Pilot Image",
