@@ -63,6 +63,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		# An Atlas without affinity rules rejects the fields, so they are sent only when set.
 		self.assertNotIn("tags", body)
 		self.assertNotIn("placement_rules", body)
+		self.assertNotIn("is_termination_protected", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
 		self.assertTrue(body["ipv4_internet_access"])
@@ -99,6 +100,28 @@ class UnitTestAtlasClient(UnitTestCase):
 				}
 			],
 		)
+
+	def test_create_asks_atlas_to_protect_the_machine(self):
+		with self.call(response(201, {"id": "vm-9"})) as request:
+			self.client.create_vm(
+				image_id="ubuntu-24.04",
+				cpu_millicores=1000,
+				memory_mib=1024,
+				disk_mib=1024,
+				public_key="key",
+				hostname="host",
+				is_termination_protected=True,
+			)
+
+		self.assertTrue(request.call_args.kwargs["json"]["is_termination_protected"])
+
+	def test_protecting_a_machine_patches_the_vm(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.set_vm_termination_protection("vm-1", enabled=True)
+
+		self.assertEqual(request.call_args.args[0], "PATCH")
+		self.assertTrue(request.call_args.args[1].endswith("/virtual-machines/vm-1/termination-protection"))
+		self.assertEqual(request.call_args.kwargs["json"], {"enabled": True})
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):

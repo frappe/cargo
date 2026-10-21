@@ -93,6 +93,64 @@ class IntegrationTestMachine(IntegrationTestCase):
 		self.assertIsNone(machine.address)
 		self.assertEqual((machine.cpu_millicores, machine.ram_gb, machine.disk_size_gb), (2000, 4, 20))
 
+	def test_a_protected_request_asks_atlas_to_protect_the_machine(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.create_vm.return_value = {"id": "vm-00004"}
+			machine = Machine.request(
+				self.cluster,
+				NodeSpec(role="storage", cpu_millicores=1000, ram_gb=2, disk_gb=20),
+				base_image="img-1",
+				is_termination_protected=True,
+			)
+
+		self.assertTrue(
+			atlas.from_settings.return_value.create_vm.call_args.kwargs["is_termination_protected"]
+		)
+		self.assertTrue(machine.is_termination_protected)
+
+	def test_the_protection_atlas_reports_is_recorded(self):
+		self.machine.sync(self.client({**running_vm(), "is_termination_protected": True}))
+
+		self.assertEqual(frappe.db.get_value("Machine", self.machine.name, "is_termination_protected"), 1)
+
+	def test_protecting_asks_atlas_and_records_it(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.set_termination_protection(True)
+
+		atlas.from_settings.return_value.set_vm_termination_protection.assert_called_once_with(
+			self.machine.vm_id, True
+		)
+		self.assertEqual(frappe.db.get_value("Machine", self.machine.name, "is_termination_protected"), 1)
+
+	def test_protection_atlas_refuses_is_not_recorded(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas, self.assertRaises(frappe.ValidationError):
+			atlas.from_settings.return_value.set_vm_termination_protection.side_effect = AtlasError("no")
+			self.machine.set_termination_protection(True)
+
+		self.assertEqual(frappe.db.get_value("Machine", self.machine.name, "is_termination_protected"), 0)
+
+	def test_a_protected_machine_keeps_its_protection_unless_released(self):
+		self.machine.db_set("is_termination_protected", 1)
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.terminate()
+
+		atlas.from_settings.return_value.set_vm_termination_protection.assert_not_called()
+		atlas.from_settings.return_value.terminate_vm.assert_called_once_with(self.machine.vm_id)
+
+	def test_releasing_a_protected_machine_lifts_protection_before_terminating(self):
+		self.machine.db_set("is_termination_protected", 1)
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			client = atlas.from_settings.return_value
+			calls = Mock()
+			calls.attach_mock(client.set_vm_termination_protection, "protect")
+			calls.attach_mock(client.terminate_vm, "terminate")
+			self.assertTrue(self.machine.terminate(release_protection=True))
+
+		self.assertEqual([call[0] for call in calls.mock_calls], ["protect", "terminate"])
+		client.set_vm_termination_protection.assert_called_once_with(self.machine.vm_id, False)
+		self.assertEqual(self.machine.status, "Terminated")
+		self.assertFalse(self.machine.is_termination_protected)
+
 	def test_a_machine_is_photographed_as_a_cached_system_image(self):
 		"""Both flags are what lets a host build a warm template from the image."""
 		tags = {"purpose": "pilot", "pilot_version": "1.2.3"}

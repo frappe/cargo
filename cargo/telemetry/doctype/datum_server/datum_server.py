@@ -145,6 +145,7 @@ class DatumServer(WorkflowBuilder):
 				disk_gb=cint(disk_gb),
 			),
 			base_image=base_image_id(),
+			is_termination_protected=True,
 		)
 		self.machine = machine.name
 		self.save()

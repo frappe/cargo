@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import now_datetime
+from frappe.utils import cint, now_datetime
 
 from cargo.atlas_client import (
 	DEAD_STATES,
@@ -45,6 +45,7 @@ class Machine(Document):
 		cpu_millicores: DF.Int
 		disk_size_gb: DF.Int
 		error: DF.SmallText | None
+		is_termination_protected: DF.Check
 		last_synced_at: DF.Datetime | None
 		ram_gb: DF.Int
 		reference_doctype: DF.Link
@@ -74,6 +75,7 @@ class Machine(Document):
 		ssh_keypair: tuple[str, str] | None = None,
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
+		is_termination_protected: bool = False,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
 		row rolled back, so nothing is left claiming a VM that was never made."""
@@ -89,6 +91,7 @@ class Machine(Document):
 				"disk_size_gb": spec.disk_gb,
 				"zone": zone,
 				"status": "Draft",
+				"is_termination_protected": is_termination_protected,
 				"ssh_public_key": public_key,
 				"ssh_private_key": private_key,
 			}
@@ -120,6 +123,7 @@ class Machine(Document):
 				metadata={"role": self.role},
 				tags=tags,
 				placement_rules=placement_rules,
+				is_termination_protected=bool(self.is_termination_protected),
 			)
 		except Exception:
 			frappe.log_error(
@@ -151,13 +155,18 @@ class Machine(Document):
 			tags=tags,
 		)
 
-	def terminate(self) -> bool:
+	def terminate(self, release_protection: bool = False) -> bool:
 		"""Tell Atlas to let this machine go. A refusal leaves it Broken rather than
-		pretending it is gone, since it is still running and still costing money."""
+		pretending it is gone, since it is still running and still costing money. A protected
+		machine is refused unless the caller releases its protection on purpose."""
 		from cargo.atlas_client import AtlasClient
 
 		try:
-			AtlasClient.from_settings().terminate_vm(self.vm_id)
+			client = AtlasClient.from_settings()
+			if release_protection and self.is_termination_protected:
+				client.set_vm_termination_protection(self.vm_id, False)
+				self.is_termination_protected = 0
+			client.terminate_vm(self.vm_id)
 		except Exception:
 			frappe.log_error(
 				title=f"Could not terminate {self.role} machine {self.name}",
@@ -186,7 +195,15 @@ class Machine(Document):
 
 	@property
 	def synced_values(self) -> tuple:
-		return (self.status, self.error, self.address, self.cpu_millicores, self.ram_gb, self.disk_size_gb)
+		return (
+			self.status,
+			self.error,
+			self.address,
+			self.cpu_millicores,
+			self.ram_gb,
+			self.disk_size_gb,
+			self.is_termination_protected,
+		)
 
 	def get_atlas_status(self, client: AtlasClient) -> tuple[MachineStatus, str | None]:
 		"""The status and error Atlas's state maps to. A machine Atlas no longer has is one whose
@@ -198,11 +215,7 @@ class Machine(Document):
 		except Exception as exception:
 			return self.status, str(exception)
 
-		if compute := payload.get("compute"):
-			self.cpu_millicores = compute["cpu_millicores"]
-			self.ram_gb = compute["memory_mib"] // MIB_PER_GB
-		if disk := payload.get("disk"):
-			self.disk_size_gb = disk["size_mib"] // MIB_PER_GB
+		self.take_atlas_settings(payload)
 
 		state = payload.get("current_state")
 		if state in DEAD_STATES:
@@ -220,6 +233,16 @@ class Machine(Document):
 
 		return "Running", None
 
+	def take_atlas_settings(self, payload: dict) -> None:
+		"""Shape and protection, which change at Atlas without Cargo asking."""
+		if compute := payload.get("compute"):
+			self.cpu_millicores = compute["cpu_millicores"]
+			self.ram_gb = compute["memory_mib"] // MIB_PER_GB
+		if disk := payload.get("disk"):
+			self.disk_size_gb = disk["size_mib"] // MIB_PER_GB
+		if "is_termination_protected" in payload:
+			self.is_termination_protected = int(bool(payload["is_termination_protected"]))
+
 	@frappe.whitelist()
 	def change_power_state(self, action: str) -> None:
 		"""Start, stop, pause, resume or restart the VM in Atlas."""
@@ -233,6 +256,22 @@ class Machine(Document):
 			AtlasClient.from_settings().set_power_state(self.vm_id, action)
 		except AtlasError as exception:
 			frappe.throw(_("Atlas would not {0} this machine: {1}").format(action, str(exception)))
+
+	@frappe.whitelist()
+	def set_termination_protection(self, enabled: bool) -> None:
+		"""Ask Atlas to refuse, or allow again, terminating this machine."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		enabled = bool(cint(enabled))
+		try:
+			AtlasClient.from_settings().set_vm_termination_protection(self.vm_id, enabled)
+		except AtlasError as exception:
+			frappe.throw(
+				_("Atlas would not change this machine's termination protection: {0}").format(str(exception))
+			)
+
+		self.db_set("is_termination_protected", enabled)
 
 	@frappe.whitelist()
 	def grow_disk(self, disk_gb: int) -> None:
