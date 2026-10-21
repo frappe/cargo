@@ -19,6 +19,15 @@ if [ -n "${CLUSTER:-}" ]; then
 fi
 # The log pipelines this role ships, filled in below. The Datum host ships none yet.
 LOG_INPUTS=""
+METRIC_INPUTS='"host"'
+IS_GARAGE_NODE=false
+if [ "$ROLE" = "gateway" ] || [ "$ROLE" = "storage" ]; then
+	IS_GARAGE_NODE=true
+	: "${GARAGE_ADMIN_PORT:?GARAGE_ADMIN_PORT is required on a Garage node}"
+	: "${GARAGE_METRICS_TOKEN:?GARAGE_METRICS_TOKEN is required on a Garage node}"
+	: "${GARAGE_SCRAPE_SECONDS:?GARAGE_SCRAPE_SECONDS is required on a Garage node}"
+	METRIC_INPUTS='"host", "garage_metrics"'
+fi
 
 if ! "$VECTOR_BINARY" --version 2>/dev/null | grep -q "vector $VECTOR_VERSION "; then
 	target="$(uname -m)-unknown-linux-musl"
@@ -37,6 +46,9 @@ cat > /etc/vector/datum.env <<DATUM_ENV
 DATUM_ENDPOINT=${DATUM_ENDPOINT%/}
 DATUM_TOKEN=$DATUM_TOKEN
 DATUM_ENV
+if [ "$IS_GARAGE_NODE" = true ]; then
+	echo "GARAGE_METRICS_TOKEN=$GARAGE_METRICS_TOKEN" >> /etc/vector/datum.env
+fi
 chmod 600 /etc/vector/datum.env
 
 cat > /etc/vector/vector.toml <<VECTOR_TOML
@@ -53,7 +65,7 @@ filesystem.filesystems.excludes = ["tmpfs", "devtmpfs", "overlay", "squashfs", "
 
 [transforms.labelled]
 type = "remap"
-inputs = ["host"]
+inputs = [$METRIC_INPUTS]
 source = '''
 $CLUSTER_TAG
 .tags.region = "$REGION"
@@ -74,10 +86,57 @@ healthcheck.enabled = false
 buffer.when_full = "drop_newest"
 VECTOR_TOML
 
+# Garage's own metrics, read from its admin API on this node, so they keep flowing while
+# Cargo is down. Histograms keep only _sum and _count: buckets are most of every scrape,
+# would push a batch past Datum's 10,000 samples, and no chart reads them.
+if [ "$IS_GARAGE_NODE" = true ]; then
+	cat >> /etc/vector/vector.toml <<GARAGE_METRICS
+
+[sources.garage_scrape]
+type = "prometheus_scrape"
+endpoints = ["http://127.0.0.1:$GARAGE_ADMIN_PORT/metrics"]
+scrape_interval_secs = $GARAGE_SCRAPE_SECONDS
+auth.strategy = "bearer"
+auth.token = "\${GARAGE_METRICS_TOKEN}"
+
+[transforms.garage_events]
+type = "metric_to_log"
+inputs = ["garage_scrape"]
+
+# Garage names some series garage_* and some not; Datum's samples table is shared, where a
+# bare cluster_healthy would collide with anyone's.
+[transforms.garage_series]
+type = "remap"
+inputs = ["garage_events"]
+drop_on_error = true
+source = '''
+name = string!(.name)
+if !starts_with(name, "garage_") { name = "garage_" + name }
+.name = name
+if exists(.aggregated_histogram) {
+	histogram = del(.aggregated_histogram)
+	sum = .
+	sum.name = name + "_sum"
+	sum.counter = {"value": to_float!(histogram.sum)}
+	count = .
+	count.name = name + "_count"
+	count.counter = {"value": to_float!(histogram.count)}
+	. = [sum, count]
+}
+'''
+
+[transforms.garage_metrics]
+type = "log_to_metric"
+inputs = ["garage_series"]
+all_metrics = true
+metrics = []
+GARAGE_METRICS
+fi
+
 # Garage logs to journald with its own priority and module, rather than coloured text.
 # The gateway's request lines are kept as its access log. Per-block, per-item and
 # per-worker chatter is not, nor Cargo's own once-a-minute health probes.
-if [ "$ROLE" = "gateway" ] || [ "$ROLE" = "storage" ]; then
+if [ "$IS_GARAGE_NODE" = true ]; then
 	LOG_INPUTS='"garage_lines"'
 	cat >> /etc/vector/vector.toml <<GARAGE_LOGS
 

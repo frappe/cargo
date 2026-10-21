@@ -7,19 +7,27 @@ VECTOR_VERSION = "0.43.1"
 SCRIPT = ("telemetry", "conf", "vector", "install.sh")
 
 
-def install_script(role: str, machine: str, region: str, cluster: str | None = None) -> str:
+def install_script(
+	role: str,
+	machine: str,
+	region: str,
+	cluster: str | None = None,
+	environment: dict[str, str | int] | None = None,
+) -> str:
 	"""The script that installs Vector on a rented machine, or hands it a new Datum token.
-	Raises `RuntimeError` while this host has no Datum token to hand over."""
+	`environment` carries what only this role needs. Raises `RuntimeError` while this host
+	has no Datum token to hand over."""
 	info = get_metrics_info()
-	environment = {
+	variables = {
 		"VECTOR_VERSION": VECTOR_VERSION,
 		"DATUM_ENDPOINT": info["endpoint"],
 		"DATUM_TOKEN": info["token"],
 		"REGION": region,
 		"ROLE": role,
 		"MACHINE": machine,
+		**(environment or {}),
 	}
 	if cluster:
-		environment["CLUSTER"] = cluster
+		variables["CLUSTER"] = cluster
 
-	return script(*SCRIPT, environment=environment)
+	return script(*SCRIPT, environment=variables)
