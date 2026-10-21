@@ -32,15 +32,18 @@ class CargoSettings(Document):
 		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
 		central_webhook_url: DF.Data | None
+		first_storage_disk_growth_percent: DF.Percent
 		frappe_branches: DF.Table[FrappeBranch]
 		jwks_url: DF.Data
 		max_auto_retry_count: DF.Int
+		max_storage_node_disk: DF.Int
 		proxy_token: DF.Password
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
 		require_prebuilt_assets: DF.Check
 		signup_apps: DF.Table[SignupApp]
+		storage_disk_predict_hours: DF.Int
 		storage_node_spread: DF.Literal["Separate hosts", "Off"]
 		storage_node_spread_within: DF.Data | None
 		track_pilot_releases: DF.Check
