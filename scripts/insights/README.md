@@ -7,6 +7,7 @@ Builds the Cargo workbook for [Insights](https://github.com/frappe/insights) fro
 | `sql/<key>.sql` | The query behind one chart. It returns `time`, `series` and `value` for a line chart, or the columns a table or number chart reads. |
 | `cargo_dashboard.py` | The Cargo dashboard for the Cargo host itself: disk, host metrics, bench processes, MariaDB, HTTP and logs. |
 | `object_storage_dashboard.py` | The Cargo - Object Storage dashboard: which charts, in which order, how they look. |
+| `pilot_image_dashboard.py` | The Cargo - Pilot Images dashboard: the latest build of each image, stuck builds and recent failures. |
 | `workbook.py` | `Workbook`, `Dashboard` and the chart config helpers. |
 | `generate_workbook.py` | Prints the workbook as JSON. |
 | `import_workbook.py` | Runs in the Insights bench and updates the workbook in place. |
