@@ -101,6 +101,7 @@ class AtlasClient:
 		metadata: dict[str, str] | None = None,
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
+		is_termination_protected: bool = False,
 	) -> dict[str, Any]:
 		"""Ask Atlas for one machine and return the record it made."""
 		payload = {
@@ -118,6 +119,8 @@ class AtlasClient:
 			payload["tags"] = tags
 		if placement_rules:
 			payload["placement_rules"] = [rule.asdict() for rule in placement_rules]
+		if is_termination_protected:
+			payload["is_termination_protected"] = True
 
 		created = self.call("POST", "/virtual-machines", payload)
 		if not isinstance(created, dict) or not created.get("id"):
@@ -132,6 +135,10 @@ class AtlasClient:
 	def terminate_vm(self, vm_id: str) -> None:
 		"""Start termination. The VM route answers 404 once cleanup finishes."""
 		self.call("DELETE", f"/virtual-machines/{vm_id}")
+
+	def set_vm_termination_protection(self, vm_id: str, enabled: bool) -> None:
+		"""Set or clear a VM's termination protection. Atlas refuses to terminate a protected VM."""
+		self.call("PATCH", f"/virtual-machines/{vm_id}/termination-protection", {"enabled": enabled})
 
 	def set_power_state(self, vm_id: str, action: str) -> None:
 		"""Ask Atlas to start, stop, pause, resume or restart the VM. It answers before the VM gets there."""

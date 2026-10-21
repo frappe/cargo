@@ -176,6 +176,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			zone=self.region,
 			tags=tags,
 			placement_rules=placement_rules,
+			is_termination_protected=True,
 		)
 
 		self.append("machines", {"machine": machine.name, "role": role})
@@ -431,12 +432,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task(queue="short")
 	def terminate_machines(self, machines: list[str]) -> None:
-		"""Terminate the machines at Atlas and drop their rows. A machine Atlas refuses to
+		"""Terminate the machines at Atlas and drop their rows. Releasing is the one deliberate
+		way out, so it lifts their termination protection. A machine Atlas refuses to
 		terminate keeps its row."""
 		failed_terminations = []
 		for name in machines:
 			machine_doc: Machine = frappe.get_doc("Machine", name)
-			terminated = machine_doc.terminate()
+			terminated = machine_doc.terminate(release_protection=True)
 			if not terminated:
 				failed_terminations.append(name)
 

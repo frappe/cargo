@@ -87,6 +87,15 @@ class IntegrationTestObjectStorageCluster(IntegrationTestCase):
 		self.assertEqual(self.machine_names(), {self.gateway})
 		self.assertEqual(frappe.db.get_value("Machine", self.storage, "status"), "Terminated")
 
+	def test_releasing_lifts_the_termination_protection_first(self):
+		frappe.db.set_value("Machine", self.storage, "is_termination_protected", 1)
+		with patch("cargo.atlas_client.AtlasClient") as atlas, self._nothing_joined():
+			self.cluster.release_machines([self.storage])
+
+		client = atlas.from_settings.return_value
+		client.set_vm_termination_protection.assert_called_once_with(self.vm_ids[self.storage], False)
+		client.terminate_vm.assert_called_once_with(self.vm_ids[self.storage])
+
 	def test_the_machine_row_outlives_the_release(self):
 		with patch("cargo.atlas_client.AtlasClient"), self._nothing_joined():
 			self.cluster.release_machines([self.storage])

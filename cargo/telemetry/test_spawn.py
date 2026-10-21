@@ -212,6 +212,7 @@ class IntegrationTestTelemetrySpawnMachine(SpawnTestCase):
 
 		asked = atlas.create_vm.call_args.kwargs
 		self.assertEqual(asked["cpu_millicores"], CONFIG[TELEMETRY]["cpu_millicores"])
+		self.assertTrue(asked["is_termination_protected"])
 		self.assertTrue(self.host().machine)
 
 	def test_the_base_image_comes_from_atlas_and_not_a_name(self):

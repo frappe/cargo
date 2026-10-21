@@ -182,6 +182,14 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 		}
 		self.assertEqual(sizes, {(2000, 4 * 1024, 20 * 1024), (2000, 4 * 1024, 100 * 1024)})
 
+	def test_every_node_is_protected_from_termination(self):
+		client = self.atlas()
+		with self.configured():
+			ensure_cluster()
+
+		protected = [call.kwargs["is_termination_protected"] for call in client.create_vm.call_args_list]
+		self.assertEqual(protected, [True] * (1 + CONFIG["storage_node_count"]))
+
 	def test_each_node_boots_from_the_image_atlas_serves_now(self):
 		client = self.atlas()
 		images = [f"img-{number}" for number in range(10)]
