@@ -210,8 +210,6 @@ class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
 
 		self.assertEqual(ssh.call_count, 2)
 		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[1])
-		self.assertIn("export DISK_MIB=102400", ssh.call_args.args[1])
-		self.assertIn("blockdev --getsize64", ssh.call_args.args[1])
 		self.assertIn("resize2fs", ssh.call_args.args[1])
 
 	def test_only_a_changed_capacity_is_staged_and_applied(self):

@@ -451,14 +451,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.machines = kept_rows
 		self.save()
 
-	@frappe.whitelist()
-	def resume_disk_growth(self) -> str:
-		"""Finish a failed disk growth, to the size Atlas already gave the storage disks."""
-		from cargo.object_storage.automation.disk_full import GrowStorageNodeDisks
-
-		self.check_permission("write")
-		return GrowStorageNodeDisks(self).resume()
-
 	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
 		"""A failed growth is not retried, and Garage keeps the old capacities until it is resumed."""
 		if workflow.main_method_name == "_grow_storage_disks":
