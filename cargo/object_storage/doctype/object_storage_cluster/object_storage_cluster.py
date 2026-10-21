@@ -25,6 +25,7 @@ if typing.TYPE_CHECKING:
 	from frappe.integrations.doctype.webhook.webhook import Webhook
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.workflow_engine.doctype.press_workflow.press_workflow import PressWorkflow
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
@@ -449,6 +450,24 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		self.machines = kept_rows
 		self.save()
+
+	@frappe.whitelist()
+	def resume_disk_growth(self) -> str:
+		"""Finish a failed disk growth, to the size Atlas already gave the storage disks."""
+		from cargo.object_storage.automation.disk_full import GrowStorageNodeDisks
+
+		self.check_permission("write")
+		return GrowStorageNodeDisks(self).resume()
+
+	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
+		"""A failed growth is not retried, and Garage keeps the old capacities until it is resumed."""
+		if workflow.main_method_name == "_grow_storage_disks":
+			frappe.log_error(
+				f"Storage disk growth failed on {self.name}",
+				message=f"Fix the cause, then run Resume Disk Growth.\n\n{workflow.workflow_traceback}",
+				reference_doctype=workflow.doctype,
+				reference_name=workflow.name,
+			)
 
 	@flow
 	def _grow_storage_disks(self, disk_gb: int) -> None:
