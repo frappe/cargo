@@ -611,7 +611,17 @@ class Handler(BaseHTTPRequestHandler):
 		# Atlas refuses to delete a protected image. This fake protects nothing, so it only
 		# answers for an image it knows.
 		route = self.route
-		if len(route) >= 3 and route[0] == "images" and route[-1] == "termination-protection":
+		if len(route) == 3 and route[0] == "virtual-machines" and route[2] == "termination-protection":
+			enabled = self.body().get("enabled")
+			if not isinstance(enabled, bool):
+				self.fail("enabled must be a boolean", 400)
+			elif route[1] not in VMS:
+				self.fail("The resource does not exist.", 404, "not_found")
+			else:
+				with LOCK:
+					VMS[route[1]]["protected"] = enabled
+				self.reply(self.as_response(route[1]), 202)
+		elif len(route) >= 3 and route[0] == "images" and route[-1] == "termination-protection":
 			self.body()
 			try:
 				self.reply(self.get_image(unquote("/".join(route[1:-1]))), 202)
@@ -626,7 +636,10 @@ class Handler(BaseHTTPRequestHandler):
 
 		route = self.route
 		if len(route) == 2 and route[0] == "virtual-machines":
-			self.reply(self.terminate(route[1]), 202)
+			if VMS.get(route[1], {}).get("protected"):
+				self.fail(f"Virtual Machine {route[1]} is termination protected.", 409, "conflict")
+			else:
+				self.reply(self.terminate(route[1]), 202)
 		elif len(route) >= 2 and route[0] == "images":
 			try:
 				self.reply(self.delete_image(unquote("/".join(route[1:]))), 202)
@@ -656,7 +669,11 @@ class Handler(BaseHTTPRequestHandler):
 			raise
 		hostnames = metadata_hostnames(metadata)
 		with LOCK:
-			VMS[vm_id].update(image_id=image_id, metadata_path=metadata_path)
+			VMS[vm_id].update(
+				image_id=image_id,
+				metadata_path=metadata_path,
+				protected=bool(payload.get("is_termination_protected")),
+			)
 		write_ssh_config()
 		print(f"-> create {vm_id} ({role or 'no role'})", flush=True)
 		threading.Thread(
@@ -688,6 +705,7 @@ class Handler(BaseHTTPRequestHandler):
 			"current_state": vm["state"],
 			"desired_state": "running",
 			"error": None,
+			"is_termination_protected": vm.get("protected", False),
 			"compute": {"cpu_millicores": 1000, "memory_mib": 1024, "sleep_after_idle_seconds": 0},
 			"disk": {"size_mib": 10240, "used_mib": 0, "iops": 0, "throughput_mibps": 0},
 			"network": {
