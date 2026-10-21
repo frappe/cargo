@@ -191,10 +191,22 @@ class Setup(Client):
 	def install_metrics_exporter(
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:
-		"""Install Vector on a node, or hand it a new Datum token. Safe to repeat."""
+		"""Install Vector on a node, or hand it a new Datum token or scrape interval. Safe to
+		repeat. Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
+		garage_metrics = {
+			"GARAGE_ADMIN_PORT": self.cluster.admin_port,
+			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
+			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
+		}
 		self.run(
 			machine,
-			install_script(machine["role"], machine["name"], self.cluster.region, cluster=self.cluster.name),
+			install_script(
+				machine["role"],
+				machine["name"],
+				self.cluster.region,
+				cluster=self.cluster.name,
+				environment=garage_metrics,
+			),
 			on_output,
 		)
 
