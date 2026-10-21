@@ -8,7 +8,7 @@ Use this as a starting map, not timeless truth. Verify each relevant statement i
 |---|---|---|
 | Storage control | Central/Atlas → Cargo → Garage Admin API | New buckets, credentials, quotas, and cluster administration stop. |
 | Storage data | Client/bench → Proxy/Garage gateway → Garage nodes | Existing S3 traffic does not pass through Cargo. Gateway and quorum determine availability. |
-| Garage telemetry | Cargo scheduler → each Garage `/metrics` → Datum | Scraping and forwarding stop when Cargo or its scheduler stops. Each node is scraped independently. |
+| Garage telemetry | Vector on each Garage node → its own `/metrics` → Datum | Continues while Cargo is down. Stops for a node when that node's Vector, Garage admin API, or Datum token fails. |
 | General telemetry | Producers → Proxy → Datum → ClickHouse | Datum is hosted separately from Cargo; trace producer credentials, Proxy, Datum, and ClickHouse before deciding whether ingestion survives. |
 | Health reporting | Cargo probes → Cargo records/logs/webhooks → Central | Self-monitoring cannot prove Cargo itself is alive. Look for an external probe and a freshness alert. |
 
@@ -16,7 +16,7 @@ Use this as a starting map, not timeless truth. Verify each relevant statement i
 
 - Cargo scheduling: `cargo/hooks.py`
 - Garage health and local history: `cargo/object_storage/health/live.py`, `docs/health.md`
-- Garage metric scrape and Datum delivery: `cargo/object_storage/health/telemetry.py`
+- Garage metric scrape and Datum delivery: Vector config in `cargo/telemetry/conf/vector/install.sh`, installed by `cargo/object_storage/health/__init__.py`
 - Datum health probe: `cargo/telemetry/health/live.py`
 - Datum lifecycle and Central webhook: `cargo/telemetry/doctype/datum_server/datum_server.py`
 - Telemetry auto-provisioning: `cargo/telemetry/spawn.py`
@@ -33,7 +33,7 @@ Use this as a starting map, not timeless truth. Verify each relevant statement i
 
 - Cargo is a control-plane dependency for bucket operations, not the path for existing S3 object traffic.
 - Garage health is refreshed every minute through its gateway. Storage health changes are stored locally; verify whether current code sends them to Central or an alert manager.
-- Garage metrics are shipped every five minutes. A scrape failure for one node does not prevent attempts for other nodes.
+- Garage metrics are scraped by Vector on each node every `metrics_scrape_seconds` (Object Storage Cluster, default 30) and shipped in one batch a minute. Histograms arrive as `_sum` and `_count` only.
 - Datum intentionally drops failed writes rather than buffering them; verify current retry behavior and data-loss expectations.
 - Datum health is checked by Cargo. This does not detect Cargo's own death.
 - At replication factor 2, the documented effect of losing one storage node can be roughly two-thirds of partitions becoming unwritable. Confirm the deployed replication factor and Garage health response.

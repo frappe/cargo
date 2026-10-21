@@ -29,6 +29,7 @@
   "rpc_port",
   "column_break_ports",
   "admin_port",
+  "metrics_scrape_seconds",
   "section_break_secrets",
   "rpc_secret",
   "admin_token",
@@ -204,6 +205,15 @@
    "fieldname": "admin_port",
    "fieldtype": "Int",
    "label": "Admin API",
+   "reqd": 1
+  },
+  {
+   "default": "60",
+   "description": "How often Vector on each node reads Garage's metrics and hands them to Datum. Vector sends once a minute and keeps only the latest reading per series, so 60 is the finest that reaches Datum. Saving a new value re-installs Vector on the nodes of a live cluster.",
+   "fieldname": "metrics_scrape_seconds",
+   "fieldtype": "Int",
+   "label": "Metrics Scrape Interval (Seconds)",
+   "non_negative": 1,
    "reqd": 1
   },
   {

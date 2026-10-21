@@ -288,11 +288,6 @@ scheduler_events = {
 			# is what sets alerting latency; the read is two calls to the gateway.
 			"cargo.object_storage.health.refresh_health",
 		],
-		# One SSH session per node, so five minutes rather than one. Nothing Garage
-		# exports moves meaningfully faster.
-		"*/5 * * * *": [
-			"cargo.object_storage.health.ship_metrics",
-		],
 		"0 */2 * * *": [
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_base_images",
 		],

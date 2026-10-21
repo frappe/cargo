@@ -15,6 +15,7 @@ from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.health import queue_cluster_metrics_exporters
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT, OutputLog
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
@@ -36,6 +37,7 @@ CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 S3_SITE_NAME = "s3-svc"
 S3_ADMIN_SITE_NAME = "s3-admin-svc"
 PROXY_SITE_NAMES = (S3_SITE_NAME, S3_ADMIN_SITE_NAME)
+MIN_SCRAPE_SECONDS = 60
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -68,6 +70,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		health_reason: DF.Data | None
 		machines: DF.Table[ObjectStorageNode]
 		metadata_dir: DF.Data
+		metrics_scrape_seconds: DF.Int
 		metrics_token: DF.Password | None
 		replication_factor: DF.Int
 		rpc_port: DF.Int
@@ -136,6 +139,16 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def validate(self) -> None:
 		if self.status == "Active":
 			ensure_no_other_active_cluster(self)
+
+		if self.metrics_scrape_seconds < MIN_SCRAPE_SECONDS:
+			frappe.throw(
+				_("Metrics Scrape Interval must be at least {0} seconds.").format(MIN_SCRAPE_SECONDS)
+			)
+
+	def on_update(self) -> None:
+		"""A new scrape interval only reaches the nodes when Vector is installed again."""
+		if self.is_live and self.has_value_changed("metrics_scrape_seconds"):
+			queue_cluster_metrics_exporters(self.name)
 
 	def before_insert(self) -> None:
 		if all(self.get(name) for name in CLUSTER_SECRETS):
