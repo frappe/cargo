@@ -5,8 +5,6 @@ import typing
 import frappe
 
 from cargo.object_storage.health.live import LiveHealth, prune_history
-from cargo.object_storage.health.relay import Telemetry
-from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -16,11 +14,10 @@ if typing.TYPE_CHECKING:
 
 __all__ = [
 	"LiveHealth",
-	"Telemetry",
 	"install_garage_metrics_exporters",
 	"prune_history",
+	"queue_cluster_metrics_exporters",
 	"refresh_health",
-	"ship_metrics",
 ]
 
 
@@ -38,35 +35,22 @@ def refresh_health() -> None:
 			frappe.log_error(title=f"Could not read {name} health")
 
 
-def ship_metrics() -> None:
-	"""Relay every live cluster's Garage metrics to datum. Scheduled in `hooks.py`.
-
-	A host whose bench has no datum credentials yet has nothing to ship, which is a state
-	to wait out rather than report every five minutes."""
-	try:
-		get_metrics_info()
-	except RuntimeError:
-		return
-
-	for name in live_clusters():
-		cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
-		try:
-			Telemetry(cluster).ship()
-		except Exception:
-			frappe.log_error(title=f"Could not ship {name} metrics")
-
-
 def install_garage_metrics_exporters() -> None:
 	"""Hand every live cluster's nodes the current Datum token, one job per cluster."""
 	for name in live_clusters():
-		frappe.enqueue(
-			install_cluster_metrics_exporters,
-			cluster=name,
-			queue="long",
-			job_id=f"install-metrics-exporters:{name}",
-			deduplicate=True,
-			enqueue_after_commit=True,
-		)
+		queue_cluster_metrics_exporters(name)
+
+
+def queue_cluster_metrics_exporters(cluster: str) -> None:
+	"""Re-install Vector on one cluster's nodes in the background."""
+	frappe.enqueue(
+		install_cluster_metrics_exporters,
+		cluster=cluster,
+		queue="long",
+		job_id=f"install-metrics-exporters:{cluster}",
+		deduplicate=True,
+		enqueue_after_commit=True,
+	)
 
 
 def install_cluster_metrics_exporters(cluster: str) -> None:
