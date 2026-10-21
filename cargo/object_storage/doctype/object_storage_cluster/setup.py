@@ -11,7 +11,7 @@ import frappe
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
-from cargo.atlas_client import host_port
+from cargo.atlas_client import MIB_PER_GB, host_port
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import run_over_ssh, script
@@ -225,7 +225,10 @@ class Setup(Client):
 
 	def grow_filesystem(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Fill the disk Atlas grew. Until then Garage still sees the old size."""
-		environment = {"DATA_DIR": self.cluster.data_dir}
+		environment = {
+			"DATA_DIR": self.cluster.data_dir,
+			"DISK_MIB": str(machine["disk_size_gb"] * MIB_PER_GB),
+		}
 		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
 
 	def stage_storage_capacities(self) -> list[str]:
