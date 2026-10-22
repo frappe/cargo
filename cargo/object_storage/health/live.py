@@ -230,8 +230,13 @@ def increase_disk_size_if_required():
 	if any(node.status == "Pending" for node in cluster.storage_nodes):
 		return
 
+	# A failed read reports no peers, not even the gateway: never take that as nodes to set up.
+	connected = cluster.garage_setup.get_connected_nodes()
+	if not connected.peers:
+		return
+
 	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
-	if running.intersection(cluster.discover_machines_to_setup()):
+	if running - connected.machines:
 		cluster.setup()
 		return
 

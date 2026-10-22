@@ -17,6 +17,7 @@ from cargo.object_storage.automation.disk_full import (
 	predict_linear,
 )
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
+from cargo.object_storage.doctype.object_storage_cluster.setup import ConnectedNodes, Setup
 from cargo.object_storage.health.live import increase_disk_size_if_required
 from cargo.testing import use_test_settings
 
@@ -350,13 +351,21 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 		self.setup = None
 
 	def run_job(
-		self, samples: list[Sample], grow_error: Exception | None = None, unjoined: list[str] | None = None
+		self,
+		samples: list[Sample],
+		grow_error: Exception | None = None,
+		unjoined: list[str] | None = None,
+		connected: ConnectedNodes | None = None,
 	):
+		if connected is None:
+			joined = {self.gateway, *self.storage} - set(unjoined or [])
+			connected = ConnectedNodes(peers=["gateway@[::1]:3901"], machines=joined)
+
 		with (
 			patch.object(GrowStorageNodeDisks, "get_samples", return_value=samples),
 			patch.object(GrowStorageNodeDisks, "grow", side_effect=grow_error) as grow,
 			patch("cargo.object_storage.automation.disk_full.add_storage_node") as add_node,
-			patch.object(ObjectStorageCluster, "discover_machines_to_setup", return_value=unjoined or []),
+			patch.object(Setup, "get_connected_nodes", return_value=connected),
 			patch.object(ObjectStorageCluster, "setup") as setup,
 		):
 			increase_disk_size_if_required()
@@ -381,6 +390,15 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 
 		grow.assert_not_called()
 		self.setup.assert_not_called()
+
+	def test_an_unreadable_gateway_does_not_trigger_setup(self):
+		grow, add_node = self.run_job(
+			[self.usage(used_gb=85)], connected=ConnectedNodes(peers=[], machines=set())
+		)
+
+		self.setup.assert_not_called()
+		grow.assert_not_called()
+		add_node.assert_not_called()
 
 	def test_a_booted_node_that_has_not_joined_is_set_up(self):
 		grow, _ = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
