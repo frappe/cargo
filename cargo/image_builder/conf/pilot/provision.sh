@@ -217,6 +217,7 @@ as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*
 # for the same reason it reaches the site on the loopback upstream.
 ADMIN_UPSTREAM="http://$(sed -n 's/^bind = "\(.*\)"$/\1/p' "$BENCH_PATH/config/admin-gunicorn.conf.py")"
 [ "$ADMIN_UPSTREAM" != "http://" ]
+echo "Admin upstream is $ADMIN_UPSTREAM" > ~/.bashrc
 
 # Atlas boots a separate guest for five minutes before it captures the warm image. The
 # Central pending screen would intercept nginx during that boot, so warm the Frappe web
@@ -376,3 +377,8 @@ rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
 journalctl --vacuum-size=10M > /dev/null 2>&1 || true
+# Quoted so each login shell resolves its own uid, not root's at build time.
+cat >> /etc/bash.bashrc <<'USER_BUS'
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+USER_BUS
