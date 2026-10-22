@@ -8,8 +8,15 @@ import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.automation.disk_full import GrowStorageNodeDisks, grow_filling_disks, predict_linear
+from cargo.object_storage.automation.disk_full import (
+	DiskAtMaxCapacityError,
+	Extention,
+	GrowStorageNodeDisks,
+	Sample,
+	predict_linear,
+)
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
+from cargo.object_storage.health.live import increase_disk_size_if_required
 from cargo.testing import use_test_settings
 
 HOUR = 3600
@@ -67,119 +74,183 @@ class GrowStorageDisksTestCase(IntegrationTestCase):
 		return machine.name
 
 	def record_extention(self, machine: str, before: int, after: int, hours_ago: int = 0) -> None:
+		"""Versions store changed values as text."""
 		version = frappe.get_doc(
 			{
 				"doctype": "Version",
 				"ref_doctype": "Machine",
 				"docname": machine,
-				"data": json.dumps({"changed": [["disk_size_gb", before, after]]}),
+				"data": json.dumps({"changed": [["disk_size_gb", str(before), str(after)]]}),
 			}
 		).insert(ignore_permissions=True)
 		creation = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-hours_ago)
 		frappe.db.set_value("Version", version.name, "creation", creation, update_modified=False)
 
-	def no_prediction(self, shortfall: int = 0):
-		return patch.object(GrowStorageNodeDisks, "get_predicted_shortfall_gb", return_value=shortfall)
+	def record_growth(self, before: int, after: int, hours_ago: int = 0) -> None:
+		"""Disks grow in lockstep, so every storage machine gets the same version."""
+		for machine in self.storage:
+			self.record_extention(machine, before, after, hours_ago)
+
+	def set_disks(self, disk_gb: int) -> None:
+		for machine in self.storage:
+			frappe.db.set_value("Machine", machine, "disk_size_gb", disk_gb)
+
+	def write_log(self, entries: list[dict]) -> Path:
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		log = Path(directory.name) / "cluster_health.json.log"
+		log.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+		patcher = patch("cargo.object_storage.automation.disk_full.history_file", return_value=log)
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+		return log
+
+	def usage(self, used_gb: int, total_gb: int = 100) -> Sample:
+		return Sample(
+			timestamp=datetime(2026, 10, 22, 10), used_bytes=used_gb * GIB, total_bytes=total_gb * GIB
+		)
 
 
-class IntegrationTestGrowStorageNodeDisks(GrowStorageDisksTestCase):
-	def test_extentions_are_read_from_the_version_history(self):
+def storage_node(machine: str, used_gb: int, total_gb: int = 100) -> dict:
+	return {
+		"role": {"tags": [machine]},
+		"dataPartition": {"total": total_gb * GIB, "available": (total_gb - used_gb) * GIB},
+	}
+
+
+class IntegrationTestLastExtention(GrowStorageDisksTestCase):
+	def test_the_latest_growth_is_read_from_the_version_history(self):
+		self.record_growth(50, 75, hours_ago=5)
+		self.record_growth(75, 100, hours_ago=1)
+
+		last = self.grower.get_last_extention()
+
+		self.assertEqual((last.old, last.new), (75, 100))
+
+	def test_setting_the_first_size_is_not_a_growth(self):
+		self.record_growth(0, 100)
+
+		self.assertIsNone(self.grower.get_last_extention())
+
+	def test_no_history_is_no_extention(self):
+		self.assertIsNone(self.grower.get_last_extention())
+
+	def test_the_smallest_disk_is_the_one_read(self):
 		self.record_extention(self.storage[0], 50, 100)
+		frappe.db.set_value("Machine", self.storage[1], "disk_size_gb", 80)
 
-		extentions = self.grower.get_last_extentions()
+		self.assertIsNone(self.grower.get_last_extention())
 
-		self.assertEqual([(e.machine, e.size_gb) for e in extentions], [(self.storage[0], 50)])
 
-	def test_the_gateway_disk_is_not_a_storage_extention(self):
-		self.record_extention(self.gateway, 10, 20)
+class IntegrationTestSamples(GrowStorageDisksTestCase):
+	def test_no_log_is_no_samples(self):
+		with patch(
+			"cargo.object_storage.automation.disk_full.history_file", return_value=Path("/nonexistent/log")
+		):
+			self.assertEqual(self.grower.get_samples(), [])
 
-		self.assertEqual(self.grower.get_last_extentions(), [])
+	def test_the_fullest_storage_node_is_picked(self):
+		self.write_log(
+			[
+				{
+					"timestamp": "2026-10-22T10:00:00",
+					"cluster": self.cluster.name,
+					"nodes": [
+						storage_node(self.gateway, 90),
+						storage_node(self.storage[0], 20),
+						storage_node(self.storage[1], 40),
+					],
+				},
+				{
+					"timestamp": "2026-10-22T10:01:00",
+					"cluster": "other",
+					"nodes": [storage_node(self.storage[0], 99)],
+				},
+				{
+					"timestamp": "2026-10-22T10:02:00",
+					"cluster": self.cluster.name,
+					"nodes": [storage_node(self.storage[0], 30), storage_node(self.storage[1], 41)],
+				},
+			]
+		)
 
-	def test_a_recent_growth_holds_off_the_next(self):
-		self.record_extention(self.storage[0], 50, 100, hours_ago=2)
-		with self.no_prediction(), self.assertRaisesRegex(frappe.ValidationError, "6 hours"):
+		samples = self.grower.get_samples()
+
+		self.assertEqual([sample.used_bytes // GIB for sample in samples], [40, 41])
+
+
+class IntegrationTestRequiredDiskSize(GrowStorageDisksTestCase):
+	def required(self, used_gb: int = 0) -> int:
+		with patch.object(GrowStorageNodeDisks, "get_samples", return_value=[self.usage(used_gb)]):
+			return self.grower.get_required_disk_size()
+
+	def test_the_first_growth_adds_half(self):
+		self.assertEqual(self.required(), 150)
+
+	def test_the_last_growth_is_doubled(self):
+		self.record_growth(50, 100)
+
+		self.assertEqual(self.required(), 200)
+
+	def test_a_larger_prediction_wins(self):
+		"""200 GiB used needs 250 GiB to keep 20% free."""
+		self.assertEqual(self.required(used_gb=200), 250)
+
+	def test_the_size_never_passes_the_maximum(self):
+		self.assertEqual(self.required(used_gb=1000), 500)
+
+	def test_a_disk_at_the_maximum_stays_at_the_maximum(self):
+		self.set_disks(500)
+
+		self.assertEqual(self.required(), 500)
+
+
+class IntegrationTestGrow(GrowStorageDisksTestCase):
+	def grown_to(self) -> int | None:
+		with (
+			patch.object(GrowStorageNodeDisks, "get_samples", return_value=[self.usage(0)]),
+			patch.object(ObjectStorageCluster, "_grow_storage_disks") as grow,
+		):
 			self.grower.grow()
+
+		return grow.run_as_workflow.call_args.args[0] if grow.run_as_workflow.called else None
+
+	def test_the_first_growth_starts_the_workflow(self):
+		self.assertEqual(self.grown_to(), 150)
 
 	def test_an_older_growth_lets_the_next_through(self):
-		self.record_extention(self.storage[0], 50, 100, hours_ago=7)
-		with self.no_prediction(), patch.object(GrowStorageNodeDisks, "grow_disks") as grow_disks:
-			self.grower.grow()
+		self.record_growth(75, 100, hours_ago=7)
 
-		grow_disks.assert_called_once_with(100)
+		self.assertEqual(self.grown_to(), 150)
 
-	def test_extend_by_is_used_as_given(self):
-		with self.no_prediction(shortfall=300):
-			self.assertEqual(self.grower.get_extention_size(last_extention_size=50, extend_by=30), 30)
+	def test_a_recent_growth_holds_off_the_next(self):
+		self.record_growth(75, 100, hours_ago=2)
 
-	def test_the_last_extention_is_doubled(self):
-		with self.no_prediction():
-			self.assertEqual(self.grower.get_extention_size(last_extention_size=40), 80)
+		with self.assertRaisesRegex(frappe.ValidationError, "grown recently"):
+			self.grown_to()
 
-	def test_the_first_extention_grows_the_disk_by_half(self):
-		with self.no_prediction():
-			self.assertEqual(self.grower.get_extention_size(), 50)
+	def test_a_disk_grown_to_the_maximum_points_at_adding_a_node(self):
+		self.set_disks(500)
+		self.record_growth(400, 500, hours_ago=7)
 
-	def test_a_larger_predicted_shortfall_wins(self):
-		with self.no_prediction(shortfall=120):
-			self.assertEqual(self.grower.get_extention_size(last_extention_size=40), 120)
+		with self.assertRaises(DiskAtMaxCapacityError):
+			self.grown_to()
 
-	def test_no_disk_grows_past_the_maximum(self):
-		with self.no_prediction():
-			self.assertEqual(self.grower.get_extention_size(extend_by=1000), 400)
-
-	def test_a_disk_at_the_maximum_points_at_adding_a_node(self):
-		frappe.db.set_single_value("Cargo Settings", "max_storage_node_disk", 100)
-		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
-		with self.no_prediction(), self.assertRaisesRegex(frappe.ValidationError, "storage node"):
-			self.grower.get_extention_size(extend_by=10)
-
-	def test_no_maximum_is_refused(self):
+	def test_no_maximum_is_refused_before_anything_grows(self):
 		frappe.db.set_single_value("Cargo Settings", "max_storage_node_disk", 0)
 		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
-		with self.no_prediction(), self.assertRaises(frappe.ValidationError):
-			self.grower.get_extention_size(extend_by=10)
 
-	def test_the_shortfall_keeps_the_degraded_free_space_six_hours_out(self):
-		"""90 GiB disk, 10 GiB more used every hour: 120 GiB in 6h, which needs 150 GiB at 20% free."""
-		start = datetime(2026, 10, 21, 10)
-		lines = []
-		for hour, used in enumerate((40, 50, 60)):
-			node = {
-				"role": {"tags": [self.storage[0]]},
-				"dataPartition": {"total": 90 * GIB, "available": (90 - used) * GIB},
-			}
-			lines.append(
-				json.dumps(
-					{
-						"timestamp": (start + timedelta(hours=hour)).isoformat(),
-						"cluster": self.cluster.name,
-						"nodes": [node],
-					}
-				)
-			)
+		with self.assertRaisesRegex(frappe.ValidationError, "Set Max Storage Node Disk") as raised:
+			self.grown_to()
 
-		with tempfile.TemporaryDirectory() as directory:
-			log = Path(directory) / "cluster_health.json.log"
-			log.write_text("\n".join(lines) + "\n")
-			with patch("cargo.object_storage.automation.disk_full.history_file", return_value=log):
-				self.assertEqual(self.grower.get_predicted_shortfall_gb(), 60)
+		self.assertNotIsInstance(raised.exception, DiskAtMaxCapacityError)
 
-	def test_disks_grow_in_lockstep_from_the_largest(self):
-		frappe.db.set_value("Machine", self.storage[1], "disk_size_gb", 120)
-		self.cluster.db_set("status", "Active")
-		with patch.object(ObjectStorageCluster, "_grow_storage_disks") as grow:
-			self.grower.grow_disks(30)
+	def test_a_disk_created_at_the_maximum_points_at_adding_a_node(self):
+		self.set_disks(500)
 
-		grow.run_as_workflow.assert_called_once_with(150)
-
-	def test_nothing_to_grow_points_at_adding_a_node(self):
-		self.cluster.db_set("status", "Active")
-		with self.assertRaisesRegex(frappe.ValidationError, "storage node"):
-			self.grower.grow_disks(0)
-
-	def test_a_cluster_that_is_not_active_is_not_grown(self):
-		with self.assertRaises(frappe.ValidationError):
-			self.grower.grow_disks(10)
+		with self.assertRaises(DiskAtMaxCapacityError):
+			self.grown_to()
 
 
 class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
@@ -247,54 +318,36 @@ class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
 		apply.assert_called_once_with(5)
 
 
-class IntegrationTestGrowFillingDisks(GrowStorageDisksTestCase):
-	"""The scheduled job: only an active cluster projected to fill is grown, and never twice at once."""
+class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
+	"""The scheduled job: grows when the fullest node is under the degraded free space."""
 
-	def setUp(self):
-		super().setUp()
-		self.cluster.db_set({"status": "Active", "activated_on": frappe.utils.now_datetime()})
-		only_this_cluster = patch(
-			"cargo.object_storage.automation.disk_full.live_clusters", return_value=[self.cluster.name]
-		)
-		only_this_cluster.start()
-		self.addCleanup(only_this_cluster.stop)
-
-	def grown(self, filling: bool = True) -> bool:
+	def run_job(self, samples: list[Sample], grow_error: Exception | None = None):
 		with (
-			patch("cargo.object_storage.automation.disk_full.is_disk_filling", return_value=filling),
-			patch.object(GrowStorageNodeDisks, "grow") as grow,
+			patch.object(GrowStorageNodeDisks, "get_samples", return_value=samples),
+			patch.object(GrowStorageNodeDisks, "grow", side_effect=grow_error) as grow,
+			patch("cargo.object_storage.automation.disk_full.add_storage_node") as add_node,
 		):
-			grow_filling_disks()
+			increase_disk_size_if_required()
 
-		return grow.called
+		return grow, add_node
 
-	def test_a_filling_cluster_is_grown(self):
-		self.assertTrue(self.grown())
+	def test_no_samples_yet_does_nothing(self):
+		grow, add_node = self.run_job([])
 
-	def test_a_cluster_with_room_is_left_alone(self):
-		self.assertFalse(self.grown(filling=False))
+		grow.assert_not_called()
+		add_node.assert_not_called()
 
-	def test_a_cluster_that_is_not_active_is_left_alone(self):
-		self.cluster.db_set("status", "Setting Up")
-		self.assertFalse(self.grown())
+	def test_a_disk_with_room_is_left_alone(self):
+		grow, _ = self.run_job([self.usage(used_gb=50)])
 
-	def test_a_recent_growth_is_waited_out(self):
-		self.record_extention(self.storage[0], 50, 100, hours_ago=1)
-		self.assertFalse(self.grown())
+		grow.assert_not_called()
 
-	def test_a_running_workflow_is_waited_out(self):
-		with patch(
-			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.get_running_workflow",
-			return_value="workflow-1",
-		):
-			self.assertFalse(self.grown())
+	def test_a_disk_under_the_degraded_free_space_is_grown(self):
+		grow, _ = self.run_job([self.usage(used_gb=85)])
 
-	def test_a_failed_growth_is_logged_not_raised(self):
-		with (
-			patch("cargo.object_storage.automation.disk_full.is_disk_filling", return_value=True),
-			patch.object(GrowStorageNodeDisks, "grow", side_effect=frappe.ValidationError("at max")),
-			patch("frappe.log_error") as log_error,
-		):
-			grow_filling_disks()
+		grow.assert_called_once()
 
-		log_error.assert_called_once()
+	def test_a_disk_at_the_maximum_adds_a_node(self):
+		_, add_node = self.run_job([self.usage(used_gb=85)], grow_error=DiskAtMaxCapacityError("at max"))
+
+		add_node.assert_called_once()

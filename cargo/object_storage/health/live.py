@@ -221,9 +221,11 @@ def increase_disk_size_if_required():
 	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
 	grow_storage_node_disks = GrowStorageNodeDisks(cluster)
 	fullest_node_samples = grow_storage_node_disks.get_samples()
-	used_ratio = fullest_node_samples[-1].used_bytes / fullest_node_samples[-1].total_bytes
+	if not fullest_node_samples:
+		return
 
-	if used_ratio > cluster_settings.disk_degraded_percent / 100:
+	free_ratio = 1 - fullest_node_samples[-1].used_bytes / fullest_node_samples[-1].total_bytes
+	if free_ratio < cluster_settings.disk_degraded_percent / 100:
 		try:
 			grow_storage_node_disks.grow()
 		except DiskAtMaxCapacityError:

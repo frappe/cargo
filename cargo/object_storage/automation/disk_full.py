@@ -4,7 +4,7 @@ import json
 import math
 import typing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import frappe
 from frappe import _
@@ -49,7 +49,7 @@ def add_storage_node(cluster: ObjectStorageCluster) -> None:
 	"""Add a storage node to the cluster with the same resources as the last node"""
 	last_storage_node: Machine = cluster.storage_nodes[-1]
 	cluster.add_storage_node(
-		last_storage_node.cpu_millicores, last_storage_node.memory_mb, last_storage_node.disk_size_gb
+		last_storage_node.cpu_millicores, last_storage_node.ram_gb, last_storage_node.disk_size_gb
 	)
 	cluster.setup()
 
@@ -78,13 +78,18 @@ class GrowStorageNodeDisks:
 		)
 
 	def grow(self) -> None:
+		if not self.settings.max_storage_node_disk:
+			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
+
 		last_extention = self.get_last_extention()
-		if frappe.utils.now_datetime() - last_extention.timestamp < frappe.utils.timedelta(
+		if last_extention and frappe.utils.now_datetime() - last_extention.timestamp < timedelta(
 			hours=self.settings.storage_disk_min_hours_between_growth
 		):
+			# This also protects us from adding storage nodes too quickly
 			frappe.throw("The cluster's disks were grown recently. Please wait before growing them again.")
 
-		if last_extention.new >= self.settings.max_storage_node_disk:
+		current_gb = min((machine["disk_size_gb"] for machine in self.storage_machines), default=0)
+		if current_gb >= self.settings.max_storage_node_disk:
 			# Already at max capacity therefore handling of this exception should add a node.
 			raise DiskAtMaxCapacityError(
 				_("The cluster's disks are already at {0}. Please add another node.").format(
@@ -93,7 +98,7 @@ class GrowStorageNodeDisks:
 			)
 
 		disk_size_gb = self.get_required_disk_size()
-		self.cluster._grow_storage_disks(disk_size_gb)
+		self.cluster._grow_storage_disks.run_as_workflow(disk_size_gb)
 
 	def get_samples(self) -> list[Sample]:
 		"""Usage readings of the fullest storage node, oldest first, from LiveHealth's log."""
@@ -152,9 +157,6 @@ class GrowStorageNodeDisks:
 		]
 		used_bytes = predict_linear(samples, self.settings.storage_disk_predict_hours * 3600)
 		predicted_gb = math.ceil(used_bytes / (1 - keep_free) / 1024**3)
-
-		if not self.settings.max_storage_node_disk:
-			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
 
 		return min(max(doubled_gb, predicted_gb), self.settings.max_storage_node_disk)
 
