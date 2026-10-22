@@ -214,10 +214,27 @@ def increase_disk_size_if_required():
 		GrowStorageNodeDisks,
 		add_storage_node,
 	)
-
-	cluster: ObjectStorageCluster = frappe.get_doc(
-		"Object Storage Cluster", frappe.get_value("Object Storage Cluster", {})
+	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+		get_running_workflow,
 	)
+
+	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
+	if not cluster_name:
+		return
+
+	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", cluster_name)
+	if get_running_workflow(cluster):
+		return
+
+	# A node added at the max disk size boots first, then joins here on a later run.
+	if any(node.status == "Pending" for node in cluster.storage_nodes):
+		return
+
+	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
+	if running.intersection(cluster.discover_machines_to_setup()):
+		cluster.setup()
+		return
+
 	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
 	grow_storage_node_disks = GrowStorageNodeDisks(cluster)
 	fullest_node_samples = grow_storage_node_disks.get_samples()

@@ -452,11 +452,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.save()
 
 	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
-		"""A failed growth is not retried, and Garage keeps the old capacities until it is resumed."""
+		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed."""
 		if workflow.main_method_name == "_grow_storage_disks":
 			frappe.log_error(
 				f"Storage disk growth failed on {self.name}",
-				message=f"Fix the cause, then run Resume Disk Growth.\n\n{workflow.workflow_traceback}",
+				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{workflow.workflow_traceback}",
 				reference_doctype=workflow.doctype,
 				reference_name=workflow.name,
 			)

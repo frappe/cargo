@@ -10,6 +10,9 @@ import frappe
 from frappe import _
 
 from cargo.client_models import STORAGE
+from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+	ensure_no_running_workflow,
+)
 from cargo.object_storage.health.live import history_file
 
 if typing.TYPE_CHECKING:
@@ -46,12 +49,12 @@ class Extention:
 
 
 def add_storage_node(cluster: ObjectStorageCluster) -> None:
-	"""Add a storage node to the cluster with the same resources as the last node"""
+	"""Add a storage node to the cluster with the same resources as the last node.
+	The scheduled job sets it up once it has booted."""
 	last_storage_node: Machine = cluster.storage_nodes[-1]
 	cluster.add_storage_node(
 		last_storage_node.cpu_millicores, last_storage_node.ram_gb, last_storage_node.disk_size_gb
 	)
-	cluster.setup()
 
 
 class GrowStorageNodeDisks:
@@ -80,6 +83,8 @@ class GrowStorageNodeDisks:
 	def grow(self) -> None:
 		if not self.settings.max_storage_node_disk:
 			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
+
+		ensure_no_running_workflow(self.cluster)
 
 		last_extention = self.get_last_extention()
 		if last_extention and frappe.utils.now_datetime() - last_extention.timestamp < timedelta(
