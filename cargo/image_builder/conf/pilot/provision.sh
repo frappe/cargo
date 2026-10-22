@@ -217,7 +217,6 @@ as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*
 # for the same reason it reaches the site on the loopback upstream.
 ADMIN_UPSTREAM="http://$(sed -n 's/^bind = "\(.*\)"$/\1/p' "$BENCH_PATH/config/admin-gunicorn.conf.py")"
 [ "$ADMIN_UPSTREAM" != "http://" ]
-echo "Admin upstream is $ADMIN_UPSTREAM" > ~/.bashrc
 
 # Atlas boots a separate guest for five minutes before it captures the warm image. The
 # Central pending screen would intercept nginx during that boot, so warm the Frappe web
