@@ -43,7 +43,7 @@ class CargoSettings(Document):
 		region_id: DF.Int
 		require_prebuilt_assets: DF.Check
 		signup_apps: DF.Table[SignupApp]
-		storage_disk_min_hours_between_growth: DF.Int
+		storage_disk_min_hours_between_growth: DF.Float
 		storage_disk_predict_hours: DF.Int
 		storage_node_spread: DF.Literal["Separate hosts", "Off"]
 		storage_node_spread_within: DF.Data | None

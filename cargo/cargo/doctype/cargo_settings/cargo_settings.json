@@ -94,7 +94,7 @@
    "reqd": 1
   },
   {
-   "description": "Webhook secret that central will authenticate cargo with — for events sent from a document.",
+   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
    "fieldname": "central_webhook_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -314,7 +314,7 @@
    "default": "6",
    "description": "Storage disks are not grown again until this many hours after the last growth, so the new size shows in the usage readings first.",
    "fieldname": "storage_disk_min_hours_between_growth",
-   "fieldtype": "Int",
+   "fieldtype": "Float",
    "label": "Hours Between Disk Growths",
    "non_negative": 1,
    "reqd": 1
@@ -324,7 +324,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-22 10:00:00.000000",
+ "modified": "2026-10-22 16:41:08.844833",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
