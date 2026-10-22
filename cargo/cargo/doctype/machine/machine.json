@@ -168,7 +168,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-21 18:00:00.000000",
+ "modified": "2026-10-21 17:15:03.154868",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Machine",
@@ -191,5 +191,6 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
- "title_field": "vm_id"
+ "title_field": "vm_id",
+ "track_changes": 1
 }

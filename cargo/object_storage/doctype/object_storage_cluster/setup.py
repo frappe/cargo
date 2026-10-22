@@ -223,6 +223,33 @@ class Setup(Client):
 
 		return self.assign_roles([role])
 
+	def grow_filesystem(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
+		"""Fill the disk Atlas grew. Until then Garage still sees the old size."""
+		environment = {"DATA_DIR": self.cluster.data_dir}
+		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
+
+	def stage_storage_capacities(self) -> list[str]:
+		"""Stage each storage node's capacity from its machine's disk, where they differ. Returns
+		the node ids staged."""
+		disks = {
+			machine["name"]: machine["disk_size_gb"] * GIGABYTE
+			for machine in self.machines
+			if machine["role"] == STORAGE
+		}
+
+		roles = []
+		for role in self.layout().get("roles") or []:
+			machine = (role.get("tags") or [None])[0]
+			if machine in disks and role.get("capacity") != disks[machine]:
+				roles.append(
+					{"id": role["id"], "zone": role["zone"], "tags": role["tags"], "capacity": disks[machine]}
+				)
+
+		if roles:
+			self.assign_roles(roles)
+
+		return [role["id"] for role in roles]
+
 	def setup_nginx_on_machine(
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:

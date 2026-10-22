@@ -25,6 +25,7 @@ if typing.TYPE_CHECKING:
 	from frappe.integrations.doctype.webhook.webhook import Webhook
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.workflow_engine.doctype.press_workflow.press_workflow import PressWorkflow
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
@@ -450,6 +451,63 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.machines = kept_rows
 		self.save()
 
+	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
+		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed."""
+		if workflow.main_method_name == "_grow_storage_disks":
+			frappe.log_error(
+				f"Storage disk growth failed on {self.name}",
+				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{workflow.workflow_traceback}",
+				reference_doctype=workflow.doctype,
+				reference_name=workflow.name,
+			)
+
+	@flow
+	def _grow_storage_disks(self, disk_gb: int) -> None:
+		self.request_disk_growth(disk_gb)
+		self.wait_for_disk_growth(disk_gb)
+		self.grow_storage_filesystems()
+		self.apply_storage_capacities()
+
+	@task(queue="short")
+	def request_disk_growth(self, disk_gb: int) -> None:
+		"""Ask Atlas for the larger disk on every storage node still short of it."""
+		for machine in self.storage_nodes:
+			if machine.status == "Running" and machine.disk_size_gb < disk_gb:
+				machine.grow_disk(disk_gb)
+
+	@task(queue="short")
+	def wait_for_disk_growth(self, disk_gb: int) -> None:
+		"""Atlas grows a disk after it answers. Read each node now rather than wait for the sync."""
+		from cargo.atlas_client import AtlasClient
+
+		client = AtlasClient.from_settings()
+		short = []
+		for machine in self.storage_nodes:
+			if machine.status != "Running":
+				continue
+			machine.sync(client)
+			if machine.disk_size_gb < disk_gb:
+				short.append(machine.name)
+
+		if short:
+			self.defer_current_task(
+				_("Atlas has not grown the disks of {0} to {1} GB yet.").format(", ".join(short), disk_gb)
+			)
+
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
+	def grow_storage_filesystems(self) -> None:
+		garage = self.garage_setup
+		for machine in garage.machines:
+			if machine["role"] == STORAGE:
+				garage.grow_filesystem(machine)
+
+	@task(queue="short")
+	def apply_storage_capacities(self) -> None:
+		"""Garage weighs a node by the capacity in its layout, which still names the old disk."""
+		garage = self.garage_setup
+		if garage.stage_storage_capacities():
+			garage.apply_layout(garage.layout_version() + 1)
+
 	def sync_machines(self) -> None:
 		"""What this cluster's machines changing status means for it. `sync_all_machines`
 		calls this once one changes. A stopped node is not dead: the health refresh reports it."""
@@ -613,9 +671,8 @@ def ensure_enough_storage_nodes_stay(
 		)
 
 
-def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
-	"""A setup run or a drain owns the cluster's layout until it ends."""
-	running_workflow = frappe.db.exists(
+def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
+	return frappe.db.exists(
 		"Press Workflow",
 		{
 			"linked_doctype": cluster.doctype,
@@ -623,7 +680,11 @@ def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
 			"status": ("in", ["Queued", "Running"]),
 		},
 	)
-	if running_workflow:
+
+
+def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
+	"""A setup run or a drain owns the cluster's layout until it ends."""
+	if running_workflow := get_running_workflow(cluster):
 		frappe.throw(_("Workflow {0} is still running on this cluster.").format(running_workflow))
 
 

@@ -37,7 +37,13 @@
   "placement_tab",
   "storage_node_placement_section",
   "storage_node_spread",
-  "storage_node_spread_within"
+  "storage_node_spread_within",
+  "actions_tab",
+  "storage_section",
+  "max_storage_node_disk",
+  "storage_disk_predict_hours",
+  "first_storage_disk_growth_percent",
+  "storage_disk_min_hours_between_growth"
  ],
  "fields": [
   {
@@ -88,7 +94,7 @@
    "reqd": 1
   },
   {
-   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
+   "description": "Webhook secret that central will authenticate cargo with — for events sent from a document.",
    "fieldname": "central_webhook_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -270,13 +276,55 @@
    "fieldname": "storage_node_spread_within",
    "fieldtype": "Data",
    "label": "Spread Within"
+  },
+  {
+   "fieldname": "actions_tab",
+   "fieldtype": "Tab Break",
+   "label": "Actions"
+  },
+  {
+   "fieldname": "storage_section",
+   "fieldtype": "Section Break",
+   "label": "Storage"
+  },
+  {
+   "description": "Maximum a storage node of the garage cluster can set after this limit is hit on the storage node we will prefer adding a storage node.",
+   "fieldname": "max_storage_node_disk",
+   "fieldtype": "Int",
+   "label": "Max Storage Node Disk"
+  },
+  {
+   "default": "6",
+   "description": "How far ahead the fullest storage node's usage is projected when sizing a disk growth.",
+   "fieldname": "storage_disk_predict_hours",
+   "fieldtype": "Int",
+   "label": "Predict Disk Usage Hours",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "50",
+   "description": "The first disk growth, as a percent of the current disk. Each later growth doubles the last one.",
+   "fieldname": "first_storage_disk_growth_percent",
+   "fieldtype": "Percent",
+   "label": "First Disk Growth",
+   "reqd": 1
+  },
+  {
+   "default": "6",
+   "description": "Storage disks are not grown again until this many hours after the last growth, so the new size shows in the usage readings first.",
+   "fieldname": "storage_disk_min_hours_between_growth",
+   "fieldtype": "Int",
+   "label": "Hours Between Disk Growths",
+   "non_negative": 1,
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-19 10:56:15.425640",
+ "modified": "2026-10-22 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

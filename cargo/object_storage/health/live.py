@@ -206,3 +206,49 @@ def prune_history() -> None:
 			scratch.replace(path)
 	except Exception:
 		frappe.log_error(title="Could not prune cluster health log")
+
+
+def increase_disk_size_if_required():
+	from cargo.object_storage.automation.disk_full import (
+		DiskAtMaxCapacityError,
+		GrowStorageNodeDisks,
+		add_storage_node,
+	)
+	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+		get_running_workflow,
+	)
+
+	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
+	if not cluster_name:
+		return
+
+	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", cluster_name)
+	if get_running_workflow(cluster):
+		return
+
+	# A node added at the max disk size boots first, then joins here on a later run.
+	if any(node.status == "Pending" for node in cluster.storage_nodes):
+		return
+
+	# A failed read reports no peers, not even the gateway: never take that as nodes to set up.
+	connected = cluster.garage_setup.get_connected_nodes()
+	if not connected.peers:
+		return
+
+	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
+	if running - connected.machines:
+		cluster.setup()
+		return
+
+	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
+	grow_storage_node_disks = GrowStorageNodeDisks(cluster)
+	fullest_node_samples = grow_storage_node_disks.get_samples()
+	if not fullest_node_samples:
+		return
+
+	free_ratio = 1 - fullest_node_samples[-1].used_bytes / fullest_node_samples[-1].total_bytes
+	if free_ratio < cluster_settings.disk_degraded_percent / 100:
+		try:
+			grow_storage_node_disks.grow()
+		except DiskAtMaxCapacityError:
+			add_storage_node(cluster)
