@@ -8,6 +8,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage.automation.disk_full import GrowStorageNodeDisks
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.health import live as live_module
 from cargo.object_storage.health.live import (
@@ -17,6 +18,7 @@ from cargo.object_storage.health.live import (
 	UNKNOWN,
 	LiveHealth,
 	history_file,
+	is_disk_filling,
 	prune_history,
 )
 from cargo.testing import use_test_settings
@@ -295,6 +297,21 @@ class IntegrationTestHealthHistory(IntegrationTestCase):
 			self.record()
 
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "health"), HEALTHY)
+
+	def test_a_healthy_cluster_projected_short_is_filling(self):
+		self.cluster.health = HEALTHY
+		with patch.object(GrowStorageNodeDisks, "get_predicted_shortfall_gb", return_value=5):
+			self.assertTrue(is_disk_filling(self.cluster))
+
+	def test_a_healthy_cluster_with_room_ahead_is_not_filling(self):
+		self.cluster.health = HEALTHY
+		with patch.object(GrowStorageNodeDisks, "get_predicted_shortfall_gb", return_value=0):
+			self.assertFalse(is_disk_filling(self.cluster))
+
+	def test_a_degraded_cluster_is_past_filling(self):
+		self.cluster.health = DEGRADED
+		with patch.object(GrowStorageNodeDisks, "get_predicted_shortfall_gb", return_value=5):
+			self.assertFalse(is_disk_filling(self.cluster))
 
 
 class IntegrationTestHealthSettings(IntegrationTestCase):

@@ -671,9 +671,8 @@ def ensure_enough_storage_nodes_stay(
 		)
 
 
-def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
-	"""A setup run or a drain owns the cluster's layout until it ends."""
-	running_workflow = frappe.db.exists(
+def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
+	return frappe.db.exists(
 		"Press Workflow",
 		{
 			"linked_doctype": cluster.doctype,
@@ -681,7 +680,11 @@ def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
 			"status": ("in", ["Queued", "Running"]),
 		},
 	)
-	if running_workflow:
+
+
+def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
+	"""A setup run or a drain owns the cluster's layout until it ends."""
+	if running_workflow := get_running_workflow(cluster):
 		frappe.throw(_("Workflow {0} is still running on this cluster.").format(running_workflow))
 
 

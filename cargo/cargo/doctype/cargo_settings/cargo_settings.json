@@ -42,7 +42,8 @@
   "storage_section",
   "max_storage_node_disk",
   "storage_disk_predict_hours",
-  "first_storage_disk_growth_percent"
+  "first_storage_disk_growth_percent",
+  "storage_disk_min_hours_between_growth"
  ],
  "fields": [
   {
@@ -308,13 +309,22 @@
    "fieldtype": "Percent",
    "label": "First Disk Growth",
    "reqd": 1
+  },
+  {
+   "default": "6",
+   "description": "Storage disks are not grown again until this many hours after the last growth, so the new size shows in the usage readings first.",
+   "fieldname": "storage_disk_min_hours_between_growth",
+   "fieldtype": "Int",
+   "label": "Hours Between Disk Growths",
+   "non_negative": 1,
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-21 19:00:00.000000",
+ "modified": "2026-10-22 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

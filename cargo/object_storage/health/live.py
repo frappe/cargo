@@ -206,3 +206,25 @@ def prune_history() -> None:
 			scratch.replace(path)
 	except Exception:
 		frappe.log_error(title="Could not prune cluster health log")
+
+
+def increase_disk_size_if_required():
+	from cargo.object_storage.automation.disk_full import (
+		DiskAtMaxCapacityError,
+		GrowStorageNodeDisks,
+		add_storage_node,
+	)
+
+	cluster: ObjectStorageCluster = frappe.get_doc(
+		"Object Storage Cluster", frappe.get_value("Object Storage Cluster", {})
+	)
+	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
+	grow_storage_node_disks = GrowStorageNodeDisks(cluster)
+	fullest_node_samples = grow_storage_node_disks.get_samples()
+	used_ratio = fullest_node_samples[-1].used_bytes / fullest_node_samples[-1].total_bytes
+
+	if used_ratio > cluster_settings.disk_degraded_percent / 100:
+		try:
+			grow_storage_node_disks.grow()
+		except DiskAtMaxCapacityError:
+			add_storage_node(cluster)

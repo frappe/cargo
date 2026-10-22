@@ -14,6 +14,7 @@ from cargo.object_storage.health.live import history_file
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
+	from cargo.cargo.doctype.machine.machine import Machine
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
@@ -22,21 +23,35 @@ if typing.TYPE_CHECKING:
 	)
 
 
-class AddStorageNode: ...
+class DiskAtMaxCapacityError(frappe.ValidationError):
+	"""A node's disk is full enough that it should be grown before it fills completely."""
+
+
+@dataclass(frozen=True)
+class Sample:
+	"""A single reading of a node's storage usage."""
+
+	timestamp: datetime
+	used_bytes: int
+	total_bytes: int
 
 
 @dataclass(frozen=True)
 class Extention:
-	"""One disk growth, read from the Machine's version history."""
+	"""A single change to a node machine's capacity."""
 
-	machine: str
-	on: datetime
-	from_gb: int
-	to_gb: int
+	timestamp: datetime
+	old: int
+	new: int
 
-	@property
-	def size_gb(self) -> int:
-		return self.to_gb - self.from_gb
+
+def add_storage_node(cluster: ObjectStorageCluster) -> None:
+	"""Add a storage node to the cluster with the same resources as the last node"""
+	last_storage_node: Machine = cluster.storage_nodes[-1]
+	cluster.add_storage_node(
+		last_storage_node.cpu_millicores, last_storage_node.memory_mb, last_storage_node.disk_size_gb
+	)
+	cluster.setup()
 
 
 class GrowStorageNodeDisks:
@@ -62,115 +77,116 @@ class GrowStorageNodeDisks:
 			fields=["name", "disk_size_gb"],
 		)
 
-	@property
-	def disk_size_gb(self) -> int:
-		return max((machine["disk_size_gb"] for machine in self.storage_machines), default=0)
+	def grow(self) -> None:
+		last_extention = self.get_last_extention()
+		if frappe.utils.now_datetime() - last_extention.timestamp < frappe.utils.timedelta(
+			hours=self.settings.storage_disk_min_hours_between_growth
+		):
+			frappe.throw("The cluster's disks were grown recently. Please wait before growing them again.")
 
-	def grow(self, extend_by: int | None = None) -> str:
-		extentions = self.get_last_extentions()
-		last_extention_size = extentions[0].size_gb if extentions else None
-		return self.grow_disks(self.get_extention_size(last_extention_size, extend_by))
-
-	def get_last_extentions(self) -> list[Extention]:
-		"""Disk growths of this cluster's storage machines, newest first."""
-		machines = [machine["name"] for machine in self.storage_machines]
-		if not machines:
-			return []
-
-		versions = frappe.get_all(
-			"Version",
-			filters={"ref_doctype": "Machine", "docname": ("in", machines)},
-			fields=["docname", "creation", "data"],
-			order_by="creation desc",
-		)
-
-		extentions = []
-		for version in versions:
-			for field, before, after in json.loads(version.data).get("changed") or []:
-				if field == "disk_size_gb" and (after or 0) > (before or 0):
-					extentions.append(Extention(version.docname, version.creation, before, after))
-
-		return extentions
-
-	def get_extention_size(self, last_extention_size: int | None = None, extend_by: int | None = None) -> int:
-		"""`extend_by`, else the larger of double the last growth and the predicted shortfall, capped at Max Storage Node Disk."""
-		current = self.disk_size_gb
-		if extend_by:
-			size = int(extend_by)
-		else:
-			doubled = (
-				2 * last_extention_size
-				if last_extention_size
-				else math.ceil(current * self.settings.first_storage_disk_growth_percent / 100)
+		if last_extention.new >= self.settings.max_storage_node_disk:
+			# Already at max capacity therefore handling of this exception should add a node.
+			raise DiskAtMaxCapacityError(
+				_("The cluster's disks are already at {0}. Please add another node.").format(
+					self.settings.max_storage_node_disk
+				)
 			)
-			size = max(doubled, self.get_predicted_shortfall_gb())
 
-		capped_growth = max(0, min(size, self.max_disk_size_gb - current))
-		if capped_growth == 0:
-			frappe.throw(_("Storage disks are at Max Storage Node Disk. Add a storage node instead."))
+		disk_size_gb = self.get_required_disk_size()
+		self.cluster._grow_storage_disks(disk_size_gb)
 
-		return capped_growth
-
-	@property
-	def max_disk_size_gb(self) -> int:
-		if not self.settings.max_storage_node_disk:
-			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
-
-		return self.settings.max_storage_node_disk
-
-	def get_predicted_shortfall_gb(self) -> int:
-		"""GB the fullest node lacks, Predict Disk Usage Hours ahead, to keep the degraded percent free."""
-		settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
-		keep_free = settings.disk_degraded_percent / 100
-
-		shortfall = 0
-		for samples in self.get_usage_samples().values():
-			total = samples[-1][2]
-			needed = predict_linear(samples, self.settings.storage_disk_predict_hours * 3600) / (
-				1 - keep_free
-			)
-			shortfall = max(shortfall, math.ceil((needed - total) / 1024**3))
-
-		return shortfall
-
-	def get_usage_samples(self) -> dict[str, list[tuple[float, int, int]]]:
-		"""(seconds, used bytes, total bytes) per storage machine, oldest first, from LiveHealth's log."""
+	def get_samples(self) -> list[Sample]:
+		"""Usage readings of the fullest storage node, oldest first, from LiveHealth's log."""
 		path = history_file()
 		if not path.exists():
-			return {}
+			return []
 
 		machines = {machine["name"] for machine in self.storage_machines}
-		samples: dict[str, list[tuple[float, int, int]]] = {}
+		samples_by_machine: dict[str, list[Sample]] = {}
 		for line in path.read_text().splitlines():
 			entry = json.loads(line)
 			if entry.get("cluster") != self.cluster.name:
 				continue
 
-			seconds = datetime.fromisoformat(entry["timestamp"]).timestamp()
 			for node in entry.get("nodes") or []:
 				tags = (node.get("role") or {}).get("tags") or []
 				partition = node.get("dataPartition") or {}
 				if not tags or tags[0] not in machines or not partition.get("total"):
 					continue
 
-				used = partition["total"] - partition["available"]
-				samples.setdefault(tags[0], []).append((seconds, used, partition["total"]))
+				sample = Sample(
+					timestamp=datetime.fromisoformat(entry["timestamp"]),
+					used_bytes=partition["total"] - partition["available"],
+					total_bytes=partition["total"],
+				)
+				samples_by_machine.setdefault(tags[0], []).append(sample)
 
-		return samples
+		if not samples_by_machine:
+			return []
 
-	def grow_disks(self, size: int) -> str:
-		"""Start the workflow taking every storage disk to the largest one plus `size` GB."""
-		from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
-			ensure_no_running_workflow,
+		# Fullest by its latest reading, as a share of its own disk.
+		return max(
+			samples_by_machine.values(),
+			key=lambda samples: samples[-1].used_bytes / samples[-1].total_bytes,
 		)
 
-		if size <= 0:
-			frappe.throw(_("Storage disks are at Max Storage Node Disk. Add a storage node instead."))
-		if self.cluster.status != "Active":
-			frappe.throw(_("Only an active cluster's disks are grown."))
-		ensure_no_running_workflow(self.cluster)
+	def get_required_disk_size(self) -> int:
+		"""Disk size in GB: double the last growth, or what the fullest node needs Predict Disk
+		Usage Hours ahead to keep the degraded free space, whichever is larger."""
+		current_gb = max((machine["disk_size_gb"] for machine in self.storage_machines), default=0)
 
-		return self.cluster._grow_storage_disks.run_as_workflow(self.disk_size_gb + size)
+		last_extention = self.get_last_extention()
+		if last_extention:
+			doubled_gb = current_gb + 2 * (last_extention.new - last_extention.old)
+		else:
+			doubled_gb = current_gb + math.ceil(
+				current_gb * self.settings.first_storage_disk_growth_percent / 100
+			)
+
+		health_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
+		keep_free = health_settings.disk_degraded_percent / 100
+		# Already gets the fullest node, so the prediction is for that one.
+		samples = [
+			(sample.timestamp.timestamp(), sample.used_bytes, sample.total_bytes)
+			for sample in self.get_samples()
+		]
+		used_bytes = predict_linear(samples, self.settings.storage_disk_predict_hours * 3600)
+		predicted_gb = math.ceil(used_bytes / (1 - keep_free) / 1024**3)
+
+		if not self.settings.max_storage_node_disk:
+			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
+
+		return min(max(doubled_gb, predicted_gb), self.settings.max_storage_node_disk)
+
+	def get_last_extention(self) -> Extention | None:
+		"""The latest disk growth of the storage machine with the smallest disk."""
+		machines = self.storage_machines
+		if not machines:
+			return None
+
+		smallest = min(machines, key=lambda machine: machine["disk_size_gb"])
+		# Newest first: the latest version may change other fields, so walk back to a disk change.
+		versions = frappe.get_all(
+			"Version",
+			filters={
+				"ref_doctype": "Machine",
+				"docname": smallest["name"],
+				"data": ("like", "%disk_size_gb%"),
+			},
+			fields=["data", "creation"],
+			order_by="creation desc",
+		)
+		for version in versions:
+			for field, old, new in json.loads(version["data"]).get("changed") or []:
+				if field != "disk_size_gb":
+					continue
+
+				# Versions store values as text. A growth only: setting the size first is not one.
+				old, new = int(old or 0), int(new or 0)
+				if old and new > old:
+					return Extention(timestamp=version["creation"], old=old, new=new)
+
+		return None
 
 
 def predict_linear(samples: list[tuple[float, int, int]], seconds_ahead: float) -> float:
