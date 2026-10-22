@@ -376,3 +376,9 @@ rm -rf "/home/$BENCH_USER/.cache" "/home/$BENCH_USER/.npm"
 apt-get clean
 rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
 journalctl --vacuum-size=10M > /dev/null 2>&1 || true
+# Lets `su - frappe` reach its user services. Quoted so the uid resolves at login, not as root here.
+cat >> "/home/$BENCH_USER/.bashrc" <<'USER_BUS'
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+USER_BUS
+chown "$BENCH_USER:" "/home/$BENCH_USER/.bashrc"
