@@ -181,6 +181,17 @@ class IntegrationTestSamples(GrowStorageDisksTestCase):
 
 		self.assertEqual([sample.used_bytes // GIB for sample in samples], [40, 41])
 
+	def test_a_torn_line_is_skipped(self):
+		entry = {
+			"timestamp": "2026-10-22T10:00:00",
+			"cluster": self.cluster.name,
+			"nodes": [storage_node(self.storage[0], 40)],
+		}
+		log = self.write_log([entry])
+		log.write_text("\0\0\0" + json.dumps(entry)[:50] + "\n" + log.read_text())
+
+		self.assertEqual([sample.used_bytes // GIB for sample in self.grower.get_samples()], [40])
+
 
 class IntegrationTestRequiredDiskSize(GrowStorageDisksTestCase):
 	def required(self, used_gb: int = 0) -> int:

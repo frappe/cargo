@@ -197,15 +197,21 @@ def prune_history() -> None:
 	try:
 		with filelock(HISTORY_LOCK, is_global=True, timeout=30):
 			# Appended in order, so everything expired is at the front.
-			kept = list(
-				dropwhile(lambda line: json.loads(line)["timestamp"] < cutoff, path.read_text().splitlines())
-			)
+			kept = list(dropwhile(lambda line: is_expired(line, cutoff), path.read_text().splitlines()))
 			# Written whole and renamed over, so a crash leaves the old log rather than a torn line.
 			scratch = path.with_suffix(".tmp")
 			scratch.write_text("\n".join(kept) + "\n" if kept else "")
 			scratch.replace(path)
 	except Exception:
 		frappe.log_error(title="Could not prune cluster health log")
+
+
+def is_expired(line: str, cutoff: str) -> bool:
+	"""A line torn by a crash mid-write counts as expired, so it cannot pin the log forever."""
+	try:
+		return json.loads(line)["timestamp"] < cutoff
+	except (json.JSONDecodeError, KeyError):
+		return True
 
 
 def increase_disk_size_if_required():

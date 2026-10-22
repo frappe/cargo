@@ -276,6 +276,16 @@ class IntegrationTestHealthHistory(IntegrationTestCase):
 		self.record()
 		self.assertEqual(len(self.lines()), 1)
 
+	def test_pruning_drops_a_torn_line_instead_of_stopping(self):
+		self.record()
+		self.age(0, hours=frappe.get_cached_doc(SETTINGS).history_hours + 1)
+		self.record()
+		self.path.write_text('\0\0\0{"timestamp\n' + self.path.read_text())
+
+		prune_history()
+
+		self.assertEqual(len(self.lines()), 1)
+
 	def test_pruning_a_log_that_does_not_exist_is_a_no_op(self):
 		self.path.unlink(missing_ok=True)
 

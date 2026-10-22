@@ -114,7 +114,12 @@ class GrowStorageNodeDisks:
 		machines = {machine["name"] for machine in self.storage_machines}
 		samples_by_machine: dict[str, list[Sample]] = {}
 		for line in path.read_text().splitlines():
-			entry = json.loads(line)
+			try:
+				entry = json.loads(line)
+			except json.JSONDecodeError:
+				# A line torn by a crash mid-write; the rest of the log is still good.
+				continue
+
 			if entry.get("cluster") != self.cluster.name:
 				continue
 
