@@ -229,7 +229,7 @@ fi
 
 # This hands the host to Central and writes the hostname aliases. Site runs it again for
 # the site alias, which Base had no site to write. It rewrites nginx itself.
-as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern 'site-*.$WILDCARD_DOMAIN'"
+as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern '*.$WILDCARD_DOMAIN'"
 
 # The admin API answers on its own Gunicorn bind. The prewarm reaches it there, past nginx,
 # for the same reason it reaches the site on the loopback upstream.
