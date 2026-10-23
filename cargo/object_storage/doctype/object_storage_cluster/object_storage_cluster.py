@@ -565,18 +565,25 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
-	"""If less than required amount of machines are ready to setup, throw."""
+	"""Throw unless every machine is Running and storage nodes cover the replication factor."""
 	ensure_no_other_active_cluster(cluster)
 	ensure_no_running_workflow(cluster)
 
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
-	num_running_storage_nodes = len([node for node in cluster.storage_nodes if node.status == "Running"])
-	if not num_running_storage_nodes >= cluster.replication_factor:
+	running_storage_nodes = [node for node in cluster.storage_nodes if node.status == "Running"]
+	if len(running_storage_nodes) != len(cluster.storage_nodes):
 		frappe.throw(
-			_("Not enough running storage nodes to setup the cluster. Required: {0}, running: {1}").format(
-				cluster.replication_factor, num_running_storage_nodes
+			_("Only {0} of {1} storage nodes are running. All must be running to set up.").format(
+				len(running_storage_nodes), len(cluster.storage_nodes)
+			)
+		)
+
+	if len(running_storage_nodes) < cluster.replication_factor:
+		frappe.throw(
+			_("This cluster has {0} storage nodes, but its replication factor needs {1}.").format(
+				len(running_storage_nodes), cluster.replication_factor
 			)
 		)
 
