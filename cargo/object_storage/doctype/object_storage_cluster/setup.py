@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import typing
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
@@ -227,6 +227,30 @@ class Setup(Client):
 		"""Fill the disk Atlas grew. Until then Garage still sees the old size."""
 		environment = {"DATA_DIR": self.cluster.data_dir}
 		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
+
+	def get_metadata_snapshots(self, machine: MachineRow) -> list[str]:
+		"""The snapshots a node holds, oldest first. Garage names each by its UTC time."""
+		snapshots_dir = shlex.quote(f"{self.cluster.metadata_dir}/snapshots")
+		return sorted(self.run(machine, f"ls -1 {snapshots_dir} 2>/dev/null || true").split())
+
+	def stop_garage(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
+		return self.run(machine, "systemctl stop garage", on_output)
+
+	def restore_metadata(
+		self, machine: MachineRow, snapshot: str, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Swap a snapshot in for the node's database. The live one is kept beside it."""
+		environment = {
+			"GARAGE_BINARY": self.cluster.garage_binary,
+			"METADATA_DIR": self.cluster.metadata_dir,
+			"SNAPSHOT": snapshot,
+		}
+		return self.run(machine, script(*CONF, "restore_metadata.sh", environment=environment), on_output)
+
+	def repair_tables(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
+		"""Have the node fetch every table entry its peers hold newer than its own. Garage runs
+		the repair in the background, so this returns once it has started."""
+		return self.run(machine, f"{shlex.quote(self.cluster.garage_binary)} repair --yes tables", on_output)
 
 	def stage_storage_capacities(self) -> list[str]:
 		"""Stage each storage node's capacity from its machine's disk, where they differ. Returns

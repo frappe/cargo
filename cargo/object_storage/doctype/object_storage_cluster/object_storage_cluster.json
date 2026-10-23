@@ -24,6 +24,7 @@
   "column_break_garage",
   "metadata_dir",
   "data_dir",
+  "last_metadata_snapshot_at",
   "section_break_ports",
   "s3_port",
   "rpc_port",
@@ -173,6 +174,13 @@
    "reqd": 1
   },
   {
+   "description": "When Cargo last asked every node to snapshot its metadata database. Each node keeps its two newest under snapshots/ in the metadata directory.",
+   "fieldname": "last_metadata_snapshot_at",
+   "fieldtype": "Datetime",
+   "label": "Last Metadata Snapshot",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "description": "Garage's defaults. Every machine binds all five.",
    "fieldname": "section_break_ports",
@@ -288,7 +296,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-19 14:00:00.000000",
+ "modified": "2026-10-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
