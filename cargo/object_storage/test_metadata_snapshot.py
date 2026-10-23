@@ -140,6 +140,27 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[0])
 
+	def test_a_gateway_is_restored_on_what_a_storage_node_sees(self):
+		"""The gateway may be the node that is down, so it cannot vouch for its peers."""
+		frappe.db.set_value("Machine", self.storage[0], "address", "10.0.0.2")
+		asked = []
+
+		def healthy_nodes(garage):
+			asked.append(garage.url)
+			return set(self.storage) if "10.0.0.2" in garage.url else set()
+
+		with (
+			self.held([SNAPSHOT]),
+			patch.object(Setup, "healthy_nodes", autospec=True, side_effect=healthy_nodes),
+			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
+		):
+			frappe.get_doc("Object Storage Cluster", self.cluster.name).restore_metadata_snapshot(
+				SNAPSHOT, self.gateway
+			)
+
+		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.gateway])
+		self.assertEqual(asked, ["http://10.0.0.2:3903"])
+
 	def test_the_whole_cluster_needs_every_machine_running(self):
 		frappe.db.set_value("Machine", self.storage[1], "status", "Stopped")
 

@@ -28,14 +28,17 @@ class Client:
 
 	timeout: float = 30
 
-	def __init__(self, cluster: ObjectStorageCluster) -> None:
+	def __init__(self, cluster: ObjectStorageCluster, address: str | None = None) -> None:
+		"""`address` asks that one node instead of the gateway."""
 		self.cluster = cluster
+		self.address = address
 
 	@cached_property
 	def url(self) -> str:
 		"""Every node serves the same API, so the gateway answers for the cluster. Over the
 		mesh: the admin API is never put behind the public proxy."""
-		return f"http://{host_port(self.cluster.gateway_address, self.cluster.admin_port)}"
+		address = self.address or self.cluster.gateway_address
+		return f"http://{host_port(address, self.cluster.admin_port)}"
 
 	@cached_property
 	def headers(self) -> dict[str, str]:

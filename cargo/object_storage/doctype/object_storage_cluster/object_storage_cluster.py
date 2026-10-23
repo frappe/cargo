@@ -732,7 +732,15 @@ def ensure_peers_serve(cluster: ObjectStorageCluster, machine: str) -> None:
 	if frappe.db.get_value("Machine", machine, "status") != "Running":
 		frappe.throw(_("{0} is not running.").format(machine))
 
-	joined = cluster.garage_setup.healthy_nodes()
+	garage = cluster.garage_setup
+	# A gateway being restored may be the very thing that is down, so a storage node answers.
+	if cluster.gateway_node and cluster.gateway_node.name == machine:
+		witness = next((node for node in cluster.storage_nodes if node.status == "Running"), None)
+		if not witness:
+			frappe.throw(_("No running storage node can say whether the others serve."))
+		garage = Setup(cluster, address=witness.address)
+
+	joined = garage.healthy_nodes()
 	down = [node.name for node in cluster.storage_nodes if node.name != machine and node.name not in joined]
 	if down:
 		frappe.throw(
