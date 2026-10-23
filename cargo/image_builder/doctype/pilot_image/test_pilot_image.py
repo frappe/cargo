@@ -102,7 +102,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with (
 			patch(f"{CONTROLLER}.get_frappe_release", return_value="16.35.0"),
 			patch(f"{CONTROLLER}.get_release_at", side_effect=release),
-			patch(f"{APPS}.get_latest_stable_release", side_effect=release),
+			patch(f"{APPS}.get_latest_compatible_release", side_effect=release),
 		):
 			image.pin_releases()
 
@@ -744,12 +744,12 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		require_prebuilt_assets: bool = True,
 		site: PilotImage | None = None,
 	) -> list[str]:
-		"""Start Apps images, where `releases` maps an app to its newest stable commit, or to None
-		when it has no stable release, and the apps in `without_assets` published no assets."""
+		"""Start Apps images, where `releases` maps an app to its newest compatible commit, or to None
+		when it has no compatible release, and the apps in `without_assets` published no assets."""
 		releases = releases or {}
 		build = site.build_apps_images if site else start_apps_images
 
-		def newest_stable(app: str, frappe_version: str) -> AppRelease | None:
+		def newest_compatible(app: str, frappe_version: str) -> AppRelease | None:
 			commit = releases.get(app, f"{app}-commit")
 			return commit and AppRelease(
 				app, "1.0.0", f"https://github.com/frappe/{app}", commit, "version-16", REQUIRES.get(app, ())
@@ -758,8 +758,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
 		frappe.db.set_single_value("Cargo Settings", "require_prebuilt_assets", require_prebuilt_assets)
 		with (
-			patch(f"{CONTROLLER}.get_latest_stable_release", side_effect=newest_stable),
-			patch(f"{APPS}.get_latest_stable_release", side_effect=newest_stable),
+			patch(f"{CONTROLLER}.get_latest_compatible_release", side_effect=newest_compatible),
+			patch(f"{APPS}.get_latest_compatible_release", side_effect=newest_compatible),
 			patch(f"{CONTROLLER}.do_assets_exist", side_effect=lambda app: app.name not in without_assets),
 			patch.object(PilotImage, "after_insert"),
 			patch.object(frappe.db, "commit"),
@@ -786,7 +786,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[("erpnext", "erpnext-commit", NEW_COMMIT), ("helpdesk", "helpdesk-commit", NEW_COMMIT)],
 		)
 
-	def test_an_app_without_a_stable_release_gets_no_image(self):
+	def test_an_app_without_a_compatible_release_gets_no_image(self):
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 
@@ -827,7 +827,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			["erpnext", "helpdesk"],
 		)
 
-	def test_an_app_whose_requirement_has_no_stable_release_gets_no_image(self):
+	def test_an_app_whose_requirement_has_no_compatible_release_gets_no_image(self):
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 

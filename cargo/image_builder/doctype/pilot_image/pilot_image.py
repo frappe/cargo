@@ -15,7 +15,7 @@ from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
 	do_assets_exist,
 	get_install_order,
-	get_latest_stable_release,
+	get_latest_compatible_release,
 	get_release_at,
 	get_signup_apps,
 )
@@ -555,7 +555,7 @@ def start_site_images() -> list[str]:
 
 
 def skip_app_release(release: AppRelease, frappe_version: str) -> bool:
-	"""Whether the release gets no Apps image: a requirement has no stable release, or Cargo
+	"""Whether the release gets no Apps image: a requirement has no compatible release, or Cargo
 	Settings require prebuilt assets and an app it installs has none."""
 	if not frappe.db.get_single_value("Cargo Settings", "require_prebuilt_assets"):
 		return False
@@ -563,14 +563,14 @@ def skip_app_release(release: AppRelease, frappe_version: str) -> bool:
 	try:
 		install_order = get_install_order(release, frappe_version)
 	except frappe.ValidationError:
-		# A requirement has no stable release yet, so the app cannot be installed.
+		# A requirement has no compatible release yet, so the app cannot be installed.
 		return True
 
 	return not all(do_assets_exist(app) for app in install_order)
 
 
 def start_apps_images() -> list[str]:
-	"""Start an Apps image for each signup app whose newest stable release has none, on the
+	"""Start an Apps image for each signup app whose newest compatible release has none, on the
 	newest Completed Site image of each Frappe branch. A newer Site image alone starts nothing:
 	the app's next release builds on it. Returns the images started."""
 	if not is_tracking_releases():
@@ -585,11 +585,11 @@ def start_apps_images() -> list[str]:
 
 
 def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> list[str]:
-	"""Start an Apps image of each signup app's newest stable release on `site_image`. Unless
+	"""Start an Apps image of each signup app's newest compatible release on `site_image`. Unless
 	`force` is set, a release that has an image on any Site image is skipped."""
 	started = []
 	for signup_app in get_signup_apps():
-		release = get_latest_stable_release(signup_app, site_image.frappe_version)
+		release = get_latest_compatible_release(signup_app, site_image.frappe_version)
 		if not release:
 			continue
 
