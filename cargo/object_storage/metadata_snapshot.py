@@ -23,6 +23,10 @@ def take_metadata_snapshots() -> None:
 		return
 
 	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
+
+	if not cluster_name:
+		return
+
 	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", cluster_name)
 	if not is_snapshot_due(cluster.last_metadata_snapshot_at, interval_hours, now_datetime()):
 		return
