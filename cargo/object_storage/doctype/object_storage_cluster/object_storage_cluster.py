@@ -69,6 +69,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		garage_version: DF.Data
 		health: DF.Literal["Unknown", "Healthy", "Degraded", "Critical"]
 		health_reason: DF.Data | None
+		last_metadata_snapshot_at: DF.Datetime | None
 		machines: DF.Table[ObjectStorageNode]
 		metadata_dir: DF.Data
 		metrics_scrape_seconds: DF.Int
@@ -451,12 +452,70 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.machines = kept_rows
 		self.save()
 
+	@frappe.whitelist()
+	def restore_metadata_snapshot(self, snapshot: str, machine: str | None = None) -> None:
+		"""Roll one machine's metadata, or every machine's, back to a snapshot Garage took. One
+		machine catches up from its peers; the whole cluster loses everything written since."""
+		machines = can_restore_metadata(self, snapshot, machine)
+		self._restore_metadata.run_as_workflow(snapshot, machines)
+
+	@flow
+	def _restore_metadata(self, snapshot: str, machines: list[str]) -> None:
+		# Every machine stops before any comes back: a restored node would otherwise take the
+		# newer entries straight back from a peer still running on them.
+		self.stop_garage_on_machines(machines)
+		self.swap_in_metadata_snapshot(snapshot, machines)
+		self.repair_metadata_tables(machines)
+
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
+	def stop_garage_on_machines(self, machines: list[str]) -> None:
+		with OutputLog(self, "setup_log", append=True) as log:
+			garage = self.garage_setup
+			for name in machines:
+				log.write(f"\n=== stopping Garage on {name} ===\n")
+				garage.stop_garage(garage.machine(name), on_output=log.write)
+
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
+	def swap_in_metadata_snapshot(self, snapshot: str, machines: list[str]) -> None:
+		with OutputLog(self, "setup_log", append=True) as log:
+			garage = self.garage_setup
+			for name in machines:
+				log.write(f"\n=== restoring {name} to snapshot {snapshot} ===\n")
+				garage.restore_metadata(garage.machine(name), snapshot, on_output=log.write)
+
+	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
+	def repair_metadata_tables(self, machines: list[str]) -> None:
+		"""Only once every node is back: a node that restarts serves before its peers reconnect,
+		and a repair started then has nothing to sync from."""
+		garage = self.garage_setup
+		running = set(garage.get_running_node_ids())
+		if any(node_id not in running for node_id, _ in garage.get_layout_nodes()):
+			self.defer_current_task(_("Waiting for every node to reconnect before repairing tables."))
+			return
+
+		with OutputLog(self, "setup_log", append=True) as log:
+			for name in machines:
+				log.write(f"\n=== repairing tables on {name} ===\n")
+				garage.repair_tables(garage.machine(name), on_output=log.write)
+
 	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
-		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed."""
+		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed.
+		A failed restore stops where it failed, with every swapped database kept beside it."""
 		if workflow.main_method_name == "_grow_storage_disks":
 			frappe.log_error(
 				f"Storage disk growth failed on {self.name}",
 				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{workflow.workflow_traceback}",
+				reference_doctype=workflow.doctype,
+				reference_name=workflow.name,
+			)
+
+		if workflow.main_method_name == "_restore_metadata":
+			frappe.log_error(
+				f"Metadata restore failed on {self.name}",
+				message=(
+					"A machine whose database was swapped keeps the old one as db.lmdb.bak-<time> in "
+					f"its metadata directory. See the Setup Log.\n\n{workflow.workflow_traceback}"
+				),
 				reference_doctype=workflow.doctype,
 				reference_name=workflow.name,
 			)
@@ -620,6 +679,75 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 		return list(machines)
 
 	return joined_machines
+
+
+def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: str | None) -> list[str]:
+	"""Throws unless the snapshot may be restored. Returns the machines it is restored on: the
+	one named, or every machine of the cluster."""
+	frappe.only_for("System Manager")
+
+	if not cluster.is_live:
+		frappe.throw(_("Only a cluster that has served has metadata to restore."))
+
+	ensure_no_running_workflow(cluster)
+
+	if machine:
+		ensure_machines_belong(cluster, [machine])
+		ensure_peers_serve(cluster, machine)
+		machines = [machine]
+	else:
+		ensure_every_machine_runs(cluster)
+		machines = [node.name for node in cluster.all_nodes]
+
+	ensure_snapshot_on_machines(cluster, snapshot, machines)
+	return machines
+
+
+def ensure_every_machine_runs(cluster: ObjectStorageCluster) -> None:
+	stopped = [node.name for node in cluster.all_nodes if node.status != "Running"]
+	if stopped:
+		frappe.throw(
+			_("Every machine must be running to restore the whole cluster. Not running: {0}").format(
+				", ".join(stopped)
+			)
+		)
+
+
+def ensure_snapshot_on_machines(cluster: ObjectStorageCluster, snapshot: str, machines: list[str]) -> None:
+	"""The name must be one the node lists under snapshots/, so it cannot point anywhere else."""
+	garage = cluster.garage_setup
+	missing = []
+	for name in machines:
+		snapshots = garage.get_metadata_snapshots(garage.machine(name))
+		if snapshot not in snapshots:
+			missing.append(f"{name} has {', '.join(snapshots) or 'none'}")
+
+	if missing:
+		frappe.throw(_("Snapshot {0} is not on every machine: {1}").format(snapshot, "; ".join(missing)))
+
+
+def ensure_peers_serve(cluster: ObjectStorageCluster, machine: str) -> None:
+	"""The node is down while its database is swapped, and catches up from its peers after, so
+	every other storage node must be serving."""
+	if frappe.db.get_value("Machine", machine, "status") != "Running":
+		frappe.throw(_("{0} is not running.").format(machine))
+
+	garage = cluster.garage_setup
+	# A gateway being restored may be the very thing that is down, so a storage node answers.
+	if cluster.gateway_node and cluster.gateway_node.name == machine:
+		witness = next((node for node in cluster.storage_nodes if node.status == "Running"), None)
+		if not witness:
+			frappe.throw(_("No running storage node can say whether the others serve."))
+		garage = Setup(cluster, address=witness.address)
+
+	joined = garage.healthy_nodes()
+	down = [node.name for node in cluster.storage_nodes if node.name != machine and node.name not in joined]
+	if down:
+		frappe.throw(
+			_("Restoring {0} needs every other storage node serving. Not serving: {1}").format(
+				machine, ", ".join(down)
+			)
+		)
 
 
 def ensure_machines_belong(cluster: ObjectStorageCluster, machines: list[str]) -> None:

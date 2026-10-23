@@ -37,6 +37,7 @@ class CargoSettings(Document):
 		jwks_url: DF.Data
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
+		metadata_snapshot_interval_hours: DF.Float
 		proxy_token: DF.Password
 		proxy_url: DF.Data
 		region: DF.Data

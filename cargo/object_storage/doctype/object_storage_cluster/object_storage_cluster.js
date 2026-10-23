@@ -113,6 +113,95 @@ function add_cluster_buttons(frm) {
 	if (frm.doc.status === "Draft") return;
 
 	add_release_button(frm);
+	if (frm.doc.activated_on) add_restore_metadata_button(frm);
+}
+
+const WHOLE_CLUSTER = "Whole cluster";
+const ONE_MACHINE = "One machine";
+
+// Manual and rare: the snapshot is typed in, and the dialog asks for the name of whatever
+// is rolled back before it does anything.
+function add_restore_metadata_button(frm) {
+	frm.add_custom_button(
+		__("Restore Metadata"),
+		() => show_restore_metadata_dialog(frm),
+		__("Dangerous Actions")
+	);
+}
+
+function show_restore_metadata_dialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Restore Metadata Snapshot"),
+		fields: [
+			{
+				fieldname: "scope",
+				fieldtype: "Select",
+				label: __("Restore"),
+				options: [ONE_MACHINE, WHOLE_CLUSTER].join("\n"),
+				default: ONE_MACHINE,
+				reqd: 1,
+			},
+			{
+				fieldtype: "HTML",
+				depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
+				options: `<p class="text-muted">${__(
+					"The machine stops, takes the snapshot as its database, starts, and catches up from the other nodes. Every other storage node must be serving."
+				)}</p>`,
+			},
+			{
+				fieldtype: "HTML",
+				depends_on: `eval:doc.scope === "${WHOLE_CLUSTER}"`,
+				options: `<p class="text-danger">${__(
+					"Every machine stops and goes back to the snapshot. Objects, buckets and keys written after it are lost, objects deleted after it come back without their data, and Cargo's bucket records may no longer match Garage. S3 is down until every machine is back."
+				)}</p>`,
+			},
+			{
+				fieldname: "machine",
+				fieldtype: "Select",
+				label: __("Machine"),
+				options: (frm.doc.machines || []).map((row) => row.machine).join("\n"),
+				depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
+				mandatory_depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
+			},
+			{
+				fieldname: "snapshot",
+				fieldtype: "Data",
+				label: __("Snapshot"),
+				description: __(
+					"Its name under snapshots/ in the metadata directory, such as 2026-10-23T10:00:00Z."
+				),
+				reqd: 1,
+			},
+			{
+				fieldname: "confirmation",
+				fieldtype: "Data",
+				label: __("Type the machine name, or the cluster name for the whole cluster"),
+				reqd: 1,
+			},
+		],
+		primary_action_label: __("Restore"),
+		primary_action: (values) => {
+			const whole = values.scope === WHOLE_CLUSTER;
+			if (values.confirmation !== (whole ? frm.doc.name : values.machine)) {
+				frappe.msgprint(__("The name typed does not match what is being restored."));
+				return;
+			}
+
+			dialog.hide();
+			frm.call("restore_metadata_snapshot", {
+				snapshot: values.snapshot.trim(),
+				machine: whole ? null : values.machine,
+			}).then(() => {
+				frappe.show_alert({
+					message: __("Restoring. Follow the Setup Log."),
+					indicator: "orange",
+				});
+				frm.reload_doc();
+			});
+		},
+	});
+	dialog.get_primary_btn().removeClass("btn-primary").addClass("btn-danger");
+	dialog.show();
 }
 
 // Fetched only when asked for, never with the form: it can rewrite the layout and every

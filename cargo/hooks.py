@@ -291,6 +291,9 @@ scheduler_events = {
 		"*/2 * * * *": [
 			"cargo.object_storage.health.live.increase_disk_size_if_required",
 		],
+		"*/10 * * * *": [
+			"cargo.object_storage.metadata_snapshot.take_metadata_snapshots",
+		],
 		"0 */2 * * *": [
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_base_images",
 		],
