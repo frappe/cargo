@@ -72,18 +72,14 @@ def is_compatible(release: dict, frappe_version: Version) -> bool:
 		return False
 
 
-def get_latest_stable_release(app: str, frappe_version: str) -> AppRelease | None:
-	"""The newest stable release of `app` that runs on `frappe_version`, if it has one."""
+def get_latest_compatible_release(app: str, frappe_version: str) -> AppRelease | None:
+	"""The newest release of `app` that runs on `frappe_version`, if it has one."""
 	version = Version(frappe_version)
-	stable = [
-		release
-		for release in get_registry_releases(app)
-		if release.get("channel") != "nightly" and is_compatible(release, version)
-	]
-	if not stable:
+	compatible = [release for release in get_registry_releases(app) if is_compatible(release, version)]
+	if not compatible:
 		return None
 
-	return to_app_release(app, max(stable, key=lambda release: Version(release["version"])))
+	return to_app_release(app, max(compatible, key=lambda release: Version(release["version"])))
 
 
 def get_release_at(app: str, commit: str) -> AppRelease:
@@ -107,13 +103,13 @@ def get_signup_apps() -> list[str]:
 
 def get_install_order(release: AppRelease, frappe_version: str) -> list[AppRelease]:
 	"""`release` and every app it requires, each after what it requires. A requirement takes
-	its newest stable release."""
+	its newest compatible release."""
 	install_order = []
 	for requirement in release.requires:
-		requirement_release = get_latest_stable_release(requirement, frappe_version)
+		requirement_release = get_latest_compatible_release(requirement, frappe_version)
 		if not requirement_release:
 			frappe.throw(
-				_("{0} requires {1}, which has no stable release for Frappe {2}.").format(
+				_("{0} requires {1}, which has no compatible release for Frappe {2}.").format(
 					release.name, requirement, frappe_version
 				)
 			)
