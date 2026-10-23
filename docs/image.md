@@ -90,7 +90,9 @@ An alias maps the VM hostname that Atlas assigns onto a local target, so a fresh
 | Type | Pattern | Target |
 |---|---|---|
 | `admin` | `admin-vm-*.<wildcard-domain>` | `admin.local`, the bench admin domain |
-| `site` | `site-*.<wildcard-domain>` | the site the image was baked with |
+| `site` | `*.<wildcard-domain>` | the site the image was baked with |
+
+The site alias matches every name in the zone, so a name the customer chose serves as soon as Central routes it to the VM, before the site is renamed. The admin alias has more literal text, so Pilot puts it first and it takes precedence. The edge proxy routes a name to the VM only when Central holds a route for it, so the VM does not answer names of other customers.
 
 Neither alias redirects, because the edge proxy terminates TLS and these names never resolve to the machine itself.
 
