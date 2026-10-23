@@ -73,6 +73,8 @@ Cargo holds the private key only while the machine is being baked, and drops it 
 
 Atlas serves the authorized key from instance metadata on every authentication attempt, so no key is written to the disk and the snapshot carries none.
 
+Every build installs a udev rule that grows the root file system while the guest runs. cloud-init grows it only at boot, but a warm start and a live disk resize grow the disk of a running guest. When the kernel reports a new size for `/dev/vda`, the rule starts `pilot-grow-file-system@vda.service`, which runs `resize2fs`. An image built on an earlier Base image gets the rule too.
+
 ## Auto bootstrapping
 
 The image is baked in the Central awaiting-bootstrap state: `central.enabled` is true and `central.bootstrapped` is false.
@@ -124,4 +126,4 @@ Cargo snapshots with `cache_image` and `memory_snapshot`. Atlas accepts both fro
 
 Before it captures that template, Atlas boots a temporary guest for about five minutes. The image's `pilot-prewarm.service` uses that period to load Frappe in the web worker. It calls the loopback upstream rather than nginx because a newly baked image is awaiting Central bootstrap and nginx serves the pending screen in that state.
 
-Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count, memory, and disk all match. `BUILD_CPU_MILLICORES`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/doctype/pilot_image/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same shape.
+Atlas takes the warm template shape from the machine being snapshotted, and restores a warm image only when the vCPU count and memory match and the disk is at least as large. `BUILD_CPU_MILLICORES`, `BUILD_MEMORY_MIB`, and `BUILD_DISK_MIB` in `cargo/image_builder/doctype/pilot_image/builder.py` are therefore the shape a baked image boots at, not only the shape it bakes on. Central must ask for the same vCPU count and memory, and a disk at least as large.
