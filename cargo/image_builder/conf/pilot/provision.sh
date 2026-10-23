@@ -24,6 +24,8 @@ PREWARM_MARKER="/var/lib/pilot/prewarm-pending"
 PROVIDER_SCRIPT="/usr/bin/bench-domain-provider"
 MEMORY_SCRIPT="/usr/local/lib/pilot/vm-memory.sh"
 MEMORY_UNIT="/etc/systemd/system/pilot-vm-memory.service"
+GROW_UNIT="/etc/systemd/system/pilot-grow-file-system@.service"
+GROW_RULE="/etc/udev/rules.d/90-pilot-grow-file-system.rules"
 VM_SWAP_FILE="/var/lib/pilot/swap"
 
 BENCH_USER="${BENCH_USER:-frappe}"
@@ -167,6 +169,22 @@ fi
 
 # A Base build from Ubuntu starts the VM swap above; every other build starts it at boot. Each build needs it on a 1 GB machine.
 swapon --show=NAME --noheadings | grep -qx "$VM_SWAP_FILE"
+
+# cloud-init grows the root file system only at boot. A warm start or a live resize grows the
+# disk of a running guest, so grow the file system when the kernel reports the new size. Every
+# build writes this, so an image built on an earlier Base image has it too.
+cat > "$GROW_UNIT" <<GROW_UNIT
+[Unit]
+Description=Grow the file system on /dev/%i to fill its disk
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/resize2fs /dev/%i
+GROW_UNIT
+
+cat > "$GROW_RULE" <<GROW_RULE
+ACTION=="change", SUBSYSTEM=="block", KERNEL=="vda", ENV{RESIZE}=="1", RUN+="/usr/bin/systemctl --no-block start pilot-grow-file-system@%k.service"
+GROW_RULE
 
 if [ "$IMAGE_TYPE" = Site ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
