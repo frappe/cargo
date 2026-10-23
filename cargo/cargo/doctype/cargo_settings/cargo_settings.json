@@ -43,7 +43,9 @@
   "max_storage_node_disk",
   "storage_disk_predict_hours",
   "first_storage_disk_growth_percent",
-  "storage_disk_min_hours_between_growth"
+  "storage_disk_min_hours_between_growth",
+  "metadata_snapshot_section",
+  "metadata_snapshot_interval_hours"
  ],
  "fields": [
   {
@@ -318,13 +320,26 @@
    "label": "Hours Between Disk Growths",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "metadata_snapshot_section",
+   "fieldtype": "Section Break",
+   "label": "Metadata Snapshots"
+  },
+  {
+   "default": "6",
+   "description": "How often every node of a live cluster snapshots its metadata database. Garage keeps the two newest snapshots per node, so a rollback reaches back about twice this. 0 stops snapshots.",
+   "fieldname": "metadata_snapshot_interval_hours",
+   "fieldtype": "Float",
+   "label": "Snapshot Interval (Hours)",
+   "non_negative": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-22 16:41:08.844833",
+ "modified": "2026-10-23 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

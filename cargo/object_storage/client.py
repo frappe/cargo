@@ -94,6 +94,11 @@ class Client:
 			"ClusterLayoutSkipDeadNodes", "POST", json={"version": version, "allowMissingData": False}
 		)
 
+	def create_metadata_snapshot(self) -> dict[str, Any]:
+		"""Every node copies its metadata database under `snapshots/`, keeping its two newest.
+		Nodes that could not are under `error`, keyed by node id."""
+		return self.call("CreateMetadataSnapshot", "POST", params={"node": "*"})
+
 	def connect_nodes(self, identifiers: list[str]) -> list[dict[str, Any]]:
 		"""Peer the nodes now, without restarting them. Gossip spreads from whoever answers."""
 		connected = self.call("ConnectClusterNodes", "POST", json=identifiers)
