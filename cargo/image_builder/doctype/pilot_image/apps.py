@@ -26,12 +26,15 @@ def get_registry_path() -> Path:
 	return Path(frappe.utils.get_bench_path()).parent.parent / "system" / "registry-cache"
 
 
-def do_assets_exist(release: AppRelease) -> bool:
-	"""Whether the app's CI published prebuilt assets for the release, where Pilot downloads them."""
-	tag = f"assets-{release.branch.replace('/', '-')}"
-	url = f"{release.repo.removesuffix('.git')}/releases/download/{tag}/{release.name}-{release.commit}.tar.gz.sha256"
+def get_assets_url(repo: str, app: str, branch: str, commit: str) -> str:
+	"""The checksum Pilot reads first when it downloads an app's prebuilt assets."""
+	tag = f"assets-{branch.replace('/', '-')}"
+	return f"{repo.removesuffix('.git')}/releases/download/{tag}/{app}-{commit}.tar.gz.sha256"
 
-	# start_apps_images asks every minute until the assets are published, so keep each answer a while.
+
+def is_published(url: str) -> bool:
+	"""Whether a GitHub release file exists."""
+	# The image starters ask on every run until the file is published, so keep each answer a while.
 	cache_key = f"cargo:prebuilt-assets:{url}"
 	exists = frappe.cache.get_value(cache_key)
 	if exists is None:

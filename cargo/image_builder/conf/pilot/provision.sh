@@ -186,6 +186,26 @@ cat > "$GROW_RULE" <<GROW_RULE
 ACTION=="change", SUBSYSTEM=="block", KERNEL=="vda", ENV{RESIZE}=="1", RUN+="/usr/bin/systemctl --no-block start pilot-grow-file-system@%k.service"
 GROW_RULE
 
+# A guest booted from a snapshot can keep the socket file before MariaDB listens on it again.
+# `ping` exits 0 once the server answers, even without credentials.
+wait_for_database() {
+	local socket="/home/$BENCH_USER/pilot/databases/mariadb/run/mysqld.sock"
+	for attempt in $(seq 1 "$PROBE_ATTEMPTS"); do
+		if as_bench_user "mariadb-admin --socket='$socket' ping" > /dev/null 2>&1; then
+			return 0
+		fi
+		echo "MariaDB is not answering on $socket yet (attempt $attempt of $PROBE_ATTEMPTS)"
+		sleep "$PROBE_DELAY"
+	done
+
+	echo "MariaDB never answered on $socket" >&2
+	return 1
+}
+
+if [ "$IMAGE_TYPE" != Base ]; then
+	wait_for_database
+fi
+
 if [ "$IMAGE_TYPE" = Site ]; then
 	as_bench_user "pilot --yes -b '$BENCH' new-site '$SITE' --admin-password '$ADMIN_PASSWORD'"
 fi

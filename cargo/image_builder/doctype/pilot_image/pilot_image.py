@@ -13,11 +13,12 @@ from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import (
-	do_assets_exist,
+	get_assets_url,
 	get_install_order,
 	get_latest_compatible_release,
 	get_release_at,
 	get_signup_apps,
+	is_published,
 )
 from cargo.image_builder.doctype.pilot_image.builder import (
 	PING_TIMEOUT,
@@ -27,6 +28,8 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	get_build_spec,
 )
 from cargo.image_builder.doctype.pilot_image.releases import (
+	FRAPPE_REPO,
+	PILOT_TARBALL_URL,
 	get_frappe_head_commit,
 	get_frappe_release,
 	get_latest_pilot_release,
@@ -37,6 +40,8 @@ from cargo.workflow_engine.doctype.press_workflow.workflow_builder import Workfl
 from cargo.workflow_engine.utils import deadlock_retry
 
 if typing.TYPE_CHECKING:
+	from collections.abc import Iterable
+
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 	from cargo.image_builder.doctype.pilot_image.apps import AppRelease
 
@@ -524,10 +529,25 @@ def start_base_images(force: bool = False) -> list[str]:
 			"frappe_commit": get_frappe_head_commit(frappe_branch),
 			"image_type": "Base",
 		}
+		if not has_prebuilt_assets(image):
+			continue
 		if name := start_image(image):
 			started.append(name)
 
 	return started
+
+
+def has_prebuilt_assets(image: dict[str, str], install_order: Iterable[AppRelease] = ()) -> bool:
+	"""Check weather all the pre-built assets are ready for everything that's about to be built."""
+	if image["image_type"] == "Base":
+		urls = [
+			PILOT_TARBALL_URL.format(version=image["pilot_version"]),
+			get_assets_url(FRAPPE_REPO, "frappe", image["frappe_branch"], image["frappe_commit"]),
+		]
+	else:
+		urls = [get_assets_url(app.repo, app.name, app.branch, app.commit) for app in install_order]
+
+	return all(is_published(url) for url in urls)
 
 
 def start_site_images() -> list[str]:
@@ -552,21 +572,6 @@ def start_site_images() -> list[str]:
 			started.append(name)
 
 	return started
-
-
-def skip_app_release(release: AppRelease, frappe_version: str) -> bool:
-	"""Whether the release gets no Apps image: a requirement has no compatible release, or Cargo
-	Settings require prebuilt assets and an app it installs has none."""
-	if not frappe.db.get_single_value("Cargo Settings", "require_prebuilt_assets"):
-		return False
-
-	try:
-		install_order = get_install_order(release, frappe_version)
-	except frappe.ValidationError:
-		# A requirement has no compatible release yet, so the app cannot be installed.
-		return True
-
-	return not all(do_assets_exist(app) for app in install_order)
 
 
 def start_apps_images() -> list[str]:
@@ -604,7 +609,10 @@ def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> 
 		):
 			continue
 
-		if skip_app_release(release, site_image.frappe_version):
+		try:
+			install_order = get_install_order(release, site_image.frappe_version)
+		except frappe.ValidationError:
+			# A requirement has no compatible release yet, so the app cannot be installed.
 			continue
 
 		image = {
@@ -615,6 +623,8 @@ def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> 
 			"signup_app": signup_app,
 			"app_commit": release.commit,
 		}
+		if not has_prebuilt_assets(image, install_order):
+			continue
 		if name := start_image(image):
 			started.append(name)
 
