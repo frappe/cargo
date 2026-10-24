@@ -8,9 +8,10 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.atlas_client import AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.image_builder.doctype.pilot_image.apps import AppRelease, do_assets_exist
+from cargo.image_builder.doctype.pilot_image.apps import AppRelease, get_assets_url, is_published
 from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	PilotImage,
+	has_prebuilt_assets,
 	retire_older_images,
 	retry_failed_images,
 	start_apps_images,
@@ -588,12 +589,18 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		heads: dict[str, str] | None = None,
 		tracking: int = 1,
 		from_settings: bool = False,
+		unpublished: tuple[str, ...] = (),
 	) -> list[str]:
-		"""Start builds of `pilot_version` on each branch's head commit, without renting machines."""
+		"""Start builds of `pilot_version` on each branch's head commit, without renting machines.
+		A release file whose URL holds an `unpublished` part is missing."""
 		heads = heads or {}
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", tracking)
 		with (
 			patch(f"{CONTROLLER}.get_latest_pilot_release", return_value=pilot_version),
+			patch(
+				f"{CONTROLLER}.is_published",
+				side_effect=lambda url: not any(part in url for part in unpublished),
+			),
 			patch(
 				f"{CONTROLLER}.get_frappe_head_commit", side_effect=lambda branch: heads.get(branch, COMMIT)
 			),
@@ -672,6 +679,43 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		self.assertEqual(self.built_on(started), [("Base", "version-16", NEW_COMMIT)])
 
+	def test_a_base_image_waits_for_the_pilot_release_to_ship_its_admin_assets(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		self.assertEqual(self.start_latest_releases(version, unpublished=(f"{version}/pilot.tar.gz",)), [])
+		self.assertFalse(frappe.db.exists("Pilot Image", {"pilot_version": version}))
+
+	def test_a_base_image_waits_for_the_prebuilt_assets_of_its_frappe_commit(self):
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+
+		started = self.start_latest_releases(
+			version, {"develop": NEW_COMMIT}, unpublished=(f"frappe-{NEW_COMMIT}.tar.gz.sha256",)
+		)
+
+		self.assertEqual(self.built_on(started), [("Base", "version-16", COMMIT)])
+
+	def test_base_assets_are_looked_up_on_the_pilot_release_and_the_frappe_branch(self):
+		# Fresh names, so no answer cached by an earlier run stands in for the request.
+		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
+		commit = frappe.generate_hash(length=40)
+		image = {
+			"pilot_version": version,
+			"frappe_branch": "version-16",
+			"frappe_commit": commit,
+			"image_type": "Base",
+		}
+
+		with patch(f"{APPS}.requests.head", return_value=MagicMock(is_redirect=True)) as head:
+			self.assertTrue(has_prebuilt_assets(image))
+
+		self.assertEqual(
+			[call.args[0] for call in head.call_args_list],
+			[
+				f"https://github.com/frappe/pilot/releases/download/{version}/pilot.tar.gz",
+				f"https://github.com/frappe/frappe/releases/download/assets-version-16/frappe-{commit}.tar.gz.sha256",
+			],
+		)
+
 	def test_a_build_that_already_has_a_base_image_is_not_started_again(self):
 		"""Retrying a failed one is the retry job's work."""
 		version = f"v9.9.9-{frappe.generate_hash(length=6)}"
@@ -741,7 +785,6 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self,
 		releases: dict[str, str | None] | None = None,
 		without_assets: tuple[str, ...] = (),
-		require_prebuilt_assets: bool = True,
 		site: PilotImage | None = None,
 	) -> list[str]:
 		"""Start Apps images, where `releases` maps an app to its newest compatible commit, or to None
@@ -756,11 +799,13 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			)
 
 		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
-		frappe.db.set_single_value("Cargo Settings", "require_prebuilt_assets", require_prebuilt_assets)
 		with (
 			patch(f"{CONTROLLER}.get_latest_compatible_release", side_effect=newest_compatible),
 			patch(f"{APPS}.get_latest_compatible_release", side_effect=newest_compatible),
-			patch(f"{CONTROLLER}.do_assets_exist", side_effect=lambda app: app.name not in without_assets),
+			patch(
+				f"{CONTROLLER}.is_published",
+				side_effect=lambda url: not any(f"/{app}-" in url for app in without_assets),
+			),
 			patch.object(PilotImage, "after_insert"),
 			patch.object(frappe.db, "commit"),
 			patch.object(frappe.db, "rollback"),
@@ -816,17 +861,6 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
 		)
 
-	def test_an_app_without_prebuilt_assets_gets_an_image_when_they_are_not_required(self):
-		set_signup_apps(("erpnext", "helpdesk"))
-		self.completed_site()
-
-		started = self.start_apps(without_assets=("helpdesk",), require_prebuilt_assets=False)
-
-		self.assertEqual(
-			sorted(frappe.db.get_value("Pilot Image", name, "signup_app") for name in started),
-			["erpnext", "helpdesk"],
-		)
-
 	def test_an_app_whose_requirement_has_no_compatible_release_gets_no_image(self):
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
@@ -843,22 +877,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			"crm", "1.0.0", "https://github.com/frappe/crm.git", commit, "version-16/hotfix", ()
 		)
 
-		with patch(f"{APPS}.requests.head", return_value=MagicMock(is_redirect=False)) as head:
-			self.assertFalse(do_assets_exist(hotfix))
-
 		self.assertEqual(
-			head.call_args.args[0],
+			get_assets_url(hotfix.repo, hotfix.name, hotfix.branch, hotfix.commit),
 			f"https://github.com/frappe/crm/releases/download/assets-version-16-hotfix/crm-{commit}.tar.gz.sha256",
 		)
 
-	def test_github_is_asked_once_about_the_assets_of_a_release(self):
-		release = AppRelease(
-			"crm", "1.0.0", "https://github.com/frappe/crm.git", frappe.generate_hash(length=40), "main", ()
-		)
+	def test_github_is_asked_once_about_a_release_file(self):
+		url = f"https://github.com/frappe/crm/releases/download/assets-main/crm-{frappe.generate_hash(length=40)}.tar.gz.sha256"
 
 		with patch(f"{APPS}.requests.head", return_value=MagicMock(is_redirect=True)) as head:
-			self.assertTrue(do_assets_exist(release))
-			self.assertTrue(do_assets_exist(release))
+			self.assertTrue(is_published(url))
+			self.assertTrue(is_published(url))
 
 		head.assert_called_once()
 

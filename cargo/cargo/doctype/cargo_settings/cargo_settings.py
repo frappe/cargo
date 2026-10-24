@@ -42,7 +42,6 @@ class CargoSettings(Document):
 		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
-		require_prebuilt_assets: DF.Check
 		signup_apps: DF.Table[SignupApp]
 		storage_disk_min_hours_between_growth: DF.Float
 		storage_disk_predict_hours: DF.Int

@@ -4,6 +4,8 @@ import frappe
 import requests
 
 RELEASES_URL = "https://api.github.com/repos/frappe/pilot/releases"
+PILOT_TARBALL_URL = "https://github.com/frappe/pilot/releases/download/{version}/pilot.tar.gz"
+FRAPPE_REPO = "https://github.com/frappe/frappe"
 FRAPPE_COMMIT_URL = "https://api.github.com/repos/frappe/frappe/commits/{branch}"
 FRAPPE_SOURCE_URL = "https://raw.githubusercontent.com/frappe/frappe/{ref}/frappe/__init__.py"
 FRAPPE_VERSION = re.compile(r'^__version__ = "([^"]+)"', re.MULTILINE)
