@@ -150,6 +150,28 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		client.create_snapshot.assert_not_called()
 		self.assertFalse(frappe.db.get_value("Pilot Image", image.name, "snapshot_id"))
 
+	def test_bare_site_images_skip_caching_and_memory_preparation(self):
+		for image_type, is_warm_image in (("Base", True), ("Site", False), ("Apps", True)):
+			with self.subTest(image_type=image_type):
+				image = self.image(image_type=image_type)
+				with patch("cargo.atlas_client.AtlasClient.from_settings") as atlas:
+					client = atlas.return_value
+					client.get_vm.return_value = {"current_state": "stopped"}
+					client.create_snapshot.return_value = f"img-{image_type}"
+					image.take_snapshot()
+
+				client.create_snapshot.assert_called_once_with(
+					image.build_machine.vm_id,
+					image.name,
+					image_type="system",
+					cache_image=is_warm_image,
+					memory_snapshot=is_warm_image,
+					tags=image.get_atlas_tags(),
+				)
+				self.assertEqual(
+					frappe.db.get_value("Pilot Image", image.name, "snapshot_id"), f"img-{image_type}"
+				)
+
 	def workflow(self, image: PilotImage, status: str) -> str:
 		"""A build workflow linked to the image, without running it."""
 		workflow = frappe.get_doc(
