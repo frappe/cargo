@@ -34,6 +34,7 @@ BENCH_GID="${BENCH_GID:-1000}"
 VM_SWAP_SIZE="${VM_SWAP_SIZE:-1G}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
+IDLE_RESTART_SECONDS="${IDLE_RESTART_SECONDS:-900}"
 # One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
@@ -219,6 +220,11 @@ if [ "$IMAGE_TYPE" = Apps ]; then
 	done <<< "$REQUIRED_APPS"
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
 fi
+
+# Atlas captures the warm image five minutes after boot. A lite mode idle restart at that time
+# would capture a cold web process, so the idle restart waits longer than the capture.
+as_bench_user "sed -i 's/^restart_idle_seconds = .*/restart_idle_seconds = $IDLE_RESTART_SECONDS/' '$BENCH_PATH/bench.toml'"
+as_bench_user "grep -q '^restart_idle_seconds = $IDLE_RESTART_SECONDS\$' '$BENCH_PATH/bench.toml'"
 
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
 as_bench_user "pilot --yes -b '$BENCH' setup production"
@@ -410,3 +416,6 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 USER_BUS
 chown "$BENCH_USER:" "/home/$BENCH_USER/.bashrc"
+
+# Atlas snapshots this disk while the guest runs. Flush writes such as the units above first.
+sync

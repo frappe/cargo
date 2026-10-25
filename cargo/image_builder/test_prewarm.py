@@ -105,3 +105,18 @@ class TestPrewarm(unittest.TestCase):
 		self.assertEqual(self.run_prewarm().returncode, 0)
 		self.assertEqual(self.run_prewarm().returncode, 0)
 		self.assertEqual(self.logouts, 1)
+
+
+class TestProvisionScript(unittest.TestCase):
+	def setUp(self):
+		self.source = (Path(__file__).parent / "conf/pilot/provision.sh").read_text()
+
+	def test_flushes_the_disk_before_the_snapshot(self):
+		self.assertEqual(self.source.rstrip().splitlines()[-1], "sync")
+
+	def test_idle_restart_waits_past_the_warm_capture(self):
+		self.assertIn('IDLE_RESTART_SECONDS="${IDLE_RESTART_SECONDS:-900}"', self.source)
+		self.assertLess(
+			self.source.index("restart_idle_seconds = $IDLE_RESTART_SECONDS"),
+			self.source.index("setup production"),
+		)
