@@ -1,11 +1,16 @@
 import subprocess
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import frappe
 
+from cargo.atlas_client import RUNNING_STATE, STOPPED_STATE, AtlasClient, AtlasError
 from cargo.client_models import BUILDER, NodeSpec
 from cargo.ssh import SshError, run_over_ssh, script
+
+if TYPE_CHECKING:
+	from cargo.cargo.doctype.machine.machine import Machine
 
 PROVISION_SCRIPT = ("image_builder", "conf", "pilot", "provision.sh")
 PROVISION_TIMEOUT = 3600
@@ -17,6 +22,8 @@ SSH_READY_TIMEOUT = 180
 SSH_READY_INTERVAL = 5
 SSH_PROBE_TIMEOUT = 15
 FLUSH_TIMEOUT = 300
+STOP_TIMEOUT = 300
+STOP_INTERVAL = 5
 
 
 def get_build_spec() -> NodeSpec:
@@ -95,6 +102,27 @@ class Builder:
 		)
 
 	def flush_build_machine(self, address: str, private_key: str) -> None:
-		"""Write the page cache out. Atlas photographs a paused disk, and pausing flushes
-		nothing, so unwritten files land in the image empty."""
+		"""Flush buffered filesystem writes before shutdown."""
 		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
+
+	def stop_build_machine(self, machine: "Machine") -> None:
+		"""Flush and stop the builder before its disk is captured."""
+		client = AtlasClient.from_settings()
+		state = client.get_vm(machine.vm_id).get("current_state")
+		if state != STOPPED_STATE:
+			if state != RUNNING_STATE:
+				raise AtlasError(f"Cannot prepare the build machine for capture while Atlas reports {state}.")
+			self.flush_build_machine(machine.address, machine.get_password("ssh_private_key"))
+		client.set_power_state(machine.vm_id, "stop")
+		deadline = time.monotonic() + STOP_TIMEOUT
+		while True:
+			state = client.get_vm(machine.vm_id).get("current_state")
+			if state == STOPPED_STATE:
+				return
+			if state != RUNNING_STATE:
+				raise AtlasError(f"Build machine did not stop: Atlas reports {state}.")
+			if time.monotonic() >= deadline:
+				raise AtlasError(
+					f"Build machine did not stop within {STOP_TIMEOUT} seconds. No image was captured."
+				)
+			time.sleep(STOP_INTERVAL)

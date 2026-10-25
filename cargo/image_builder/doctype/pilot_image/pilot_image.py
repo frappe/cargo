@@ -290,9 +290,9 @@ class PilotImage(WorkflowBuilder):
 
 	@task(queue="long", timeout=3600)
 	def take_snapshot(self) -> None:
-		"""Ask Atlas to photograph the build machine as it is now."""
+		"""Stop the build machine, then ask Atlas to capture its disk."""
 		machine = self.build_machine
-		Builder().flush_build_machine(machine.address, machine.get_password("ssh_private_key"))
+		Builder().stop_build_machine(machine)
 
 		self.snapshot_id = machine.snapshot(self.name, self.get_atlas_tags())
 		self.status = "Snapshotting"
@@ -398,8 +398,7 @@ class PilotImage(WorkflowBuilder):
 		self.delete_atlas_image()
 
 	def on_workflow_success(self, workflow) -> None:
-		"""The workflow engine has finished this image. The machine is still running, but the
-		image is built and its snapshot is available."""
+		"""Record the completed image and release its stopped build machine."""
 		self.status = "Completed"
 		self.error = None
 		self.save()

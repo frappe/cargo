@@ -12,6 +12,12 @@ bench get-app $URL_OF_THIS_REPO --branch develop
 bench install-app cargo
 ```
 
+### Pilot image capture
+
+Cargo flushes the build machine's disk, requests an Atlas stop, and waits up to five minutes for Atlas to report `stopped` before taking the image. A flush error, stop error, or stop timeout fails the build without requesting an image. A retried capture can use an already-stopped builder without SSH. Atlas may force the stop if guest shutdown times out; the stopped state alone does not prove a clean database shutdown.
+
+The image still requests caching and warm preparation. Atlas boots the published disk image on each host and prepares its memory snapshot there.
+
 ### Contributing
 
 This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
