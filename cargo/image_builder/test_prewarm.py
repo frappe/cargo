@@ -118,5 +118,5 @@ class TestProvisionScript(unittest.TestCase):
 		self.assertIn('IDLE_RESTART_SECONDS="${IDLE_RESTART_SECONDS:-900}"', self.source)
 		self.assertLess(
 			self.source.index("restart_idle_seconds = $IDLE_RESTART_SECONDS"),
-			self.source.index("setup production"),
+			self.source.index("pilot --yes -b '$BENCH' setup production"),
 		)
