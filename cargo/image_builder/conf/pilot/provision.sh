@@ -34,6 +34,7 @@ BENCH_GID="${BENCH_GID:-1000}"
 VM_SWAP_SIZE="${VM_SWAP_SIZE:-1G}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
+IDLE_RESTART_SECONDS="${IDLE_RESTART_SECONDS:-900}"
 # One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
@@ -220,6 +221,11 @@ if [ "$IMAGE_TYPE" = Apps ]; then
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
 fi
 
+# Atlas captures the warm image five minutes after boot. A lite mode idle restart at that time
+# would capture a cold web process, so the idle restart waits longer than the capture.
+as_bench_user "sed -i 's/^restart_idle_seconds = .*/restart_idle_seconds = $IDLE_RESTART_SECONDS/' '$BENCH_PATH/bench.toml'"
+as_bench_user "grep -q '^restart_idle_seconds = $IDLE_RESTART_SECONDS\$' '$BENCH_PATH/bench.toml'"
+
 # No TLS: the edge proxy terminates it, and these hostnames never resolve to this machine.
 as_bench_user "pilot --yes -b '$BENCH' setup production"
 # as_bench_user "pilot --yes -b '$BENCH' build --force"
@@ -279,13 +285,6 @@ if [ ! -e "\$marker" ]; then
 	exit 0
 fi
 
-# The password never reaches disk, and a siteless image never reads it.
-password="\$(head -c 24 /dev/urandom | base64 | tr -d '\\n')aA1#"
-
-set_temporary_password() {
-	su - "\$bench_user" -c "pilot --site '\$site' set-password Administrator '\$password'"
-}
-
 request() {
 	local path="\$1"
 	local expected="\$2"
@@ -307,19 +306,26 @@ request() {
 }
 
 login_and_warm_desk() {
-	local body cookies status result
+	local body cookies status result token path csrf
 	body="\$(mktemp)"
 	cookies="\$(mktemp)"
 	result=1
-	status="\$(curl -sS -m 10 -o "\$body" -c "\$cookies" -w '%{http_code}' -X POST \\
-		-H 'Content-Type: application/json' -H 'Accept: application/json' -H "Host: \$site" \\
-		--data "{\\"usr\\":\\"Administrator\\",\\"pwd\\":\\"\$password\\"}" \\
-		"\$upstream/api/method/login" || true)"
-	if [ "\$status" = "200" ] && grep -q 'Logged In' "\$body"; then
-		status="\$(curl -sS -m 10 -o "\$body" -b "\$cookies" -w '%{http_code}' -H "Host: \$site" "\$upstream/desk" || true)"
-		[ "\$status" = "200" ] && result=0
+	token="\$(su - "\$bench_user" -c "pilot -b '\$bench' admin issue-site-token '\$site' --ttl 60" | tail -n 1)"
+	if [ -n "\$token" ]; then
+		status="\$(curl -sS -m 40 -o "\$body" -w '%{http_code}' -X POST \\
+			-H "Authorization: Bearer \$token" "\$admin/api/v1/sites/\$site/login" || true)"
+		if [ "\$status" = "201" ]; then
+			path="\$(python3 -c 'import json,sys; from urllib.parse import urlsplit; u=urlsplit(json.load(sys.stdin)["url"]); print(u.path + "?" + u.query)' < "\$body")" || path=""
+			if [ -n "\$path" ]; then
+				status="\$(curl -sS -m 20 -o "\$body" -c "\$cookies" -w '%{http_code}' -H "Host: \$site" "\$upstream\$path" || true)"
+				[ "\$status" = "200" ] && result=0
+			fi
+		fi
 	fi
-	curl -sS -m 10 -o /dev/null -b "\$cookies" -X POST -H "Host: \$site" "\$upstream/api/method/logout" || true
+	csrf="\$(sed -n 's/.*frappe.csrf_token = "\\([^" ]*\\)".*/\\1/p' "\$body" | head -n 1)"
+	status="\$(curl -sS -m 10 -o /dev/null -b "\$cookies" -w '%{http_code}' -X POST \\
+		-H "Host: \$site" -H "X-Frappe-CSRF-Token: \$csrf" "\$upstream/api/method/logout" || true)"
+	[ "\$status" = "200" ] || result=1
 	rm -f "\$body" "\$cookies"
 	return "\$result"
 }
@@ -350,22 +356,10 @@ warm_site() {
 	request "/api/method/ping" pong && request / ok && request /login ok && login_and_warm_desk
 }
 
-password_is_set=false
 for _ in \$(seq 1 "\$attempts"); do
-	if [ "\$image_type" != Base ] && [ "\$password_is_set" = false ]; then
-		if ! set_temporary_password; then
-			sleep "\$delay"
-			continue
-		fi
-		password_is_set=true
-	fi
-
-	# The marker makes this a one-time action: Atlas captures its removal with the warm
-	# guest, so resumed tenants do not reset Administrator on boot.
-	rm -f "\$marker"
-	sync
-
 	if warm_site && warm_admin; then
+		rm -f "\$marker"
+		sync
 		logger -t pilot-prewarm "Frappe is warm"
 		exit 0
 	fi
@@ -373,7 +367,7 @@ for _ in \$(seq 1 "\$attempts"); do
 done
 
 logger -t pilot-prewarm "Frappe did not warm before the deadline"
-exit 0
+exit 1
 PREWARM_SCRIPT
 chmod 755 "$PREWARM_SCRIPT"
 install -d -m 755 "$(dirname "$PREWARM_MARKER")"
@@ -389,6 +383,8 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=$PREWARM_SCRIPT
 TimeoutStartSec=4min
+Restart=on-failure
+RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 
@@ -420,3 +416,6 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 USER_BUS
 chown "$BENCH_USER:" "/home/$BENCH_USER/.bashrc"
+
+# Atlas snapshots this disk while the guest runs. Flush writes such as the units above first.
+sync
