@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.atlas_client import AtlasNotFound
+from cargo.atlas_client import AtlasError, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.pilot_image.apps import AppRelease, get_assets_url, is_published
 from cargo.image_builder.doctype.pilot_image.pilot_image import (
@@ -112,6 +112,43 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def completed(self, image: PilotImage, snapshot_id: str) -> PilotImage:
 		image.db_set({"status": "Completed", "snapshot_id": snapshot_id})
 		return image
+
+	def test_snapshot_is_requested_only_after_the_builder_stops(self):
+		image = self.image()
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh"),
+			patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"),
+		):
+			client = atlas.return_value
+			client.get_vm.side_effect = [
+				{"current_state": state} for state in ("running", "running", "stopped")
+			]
+
+			def capture(*args, **kwargs):
+				self.assertEqual(client.get_vm.call_count, 3)
+				return "img-stopped-builder"
+
+			client.create_snapshot.side_effect = capture
+			image.take_snapshot()
+
+		image.reload()
+		self.assertEqual(image.snapshot_id, "img-stopped-builder")
+		self.assertEqual(image.status, "Snapshotting")
+
+	def test_stop_failure_leaves_the_image_uncaptured(self):
+		image = self.image()
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh"),
+		):
+			client = atlas.return_value
+			client.get_vm.return_value = {"current_state": "running"}
+			client.set_power_state.side_effect = AtlasError("region unavailable")
+			with self.assertRaisesRegex(AtlasError, "region unavailable"):
+				image.take_snapshot()
+		client.create_snapshot.assert_not_called()
+		self.assertFalse(frappe.db.get_value("Pilot Image", image.name, "snapshot_id"))
 
 	def workflow(self, image: PilotImage, status: str) -> str:
 		"""A build workflow linked to the image, without running it."""

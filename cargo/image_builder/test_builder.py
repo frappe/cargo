@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from cargo.atlas_client import AtlasError
 from cargo.image_builder.doctype.pilot_image.builder import Builder
 from cargo.ssh import SshError
 
@@ -88,3 +89,63 @@ class IntegrationTestBuilder(IntegrationTestCase):
 			self.builder.flush_build_machine("fdaa:1::1d", "key")
 
 		self.assertEqual(run.call_args.args[1], "sync")
+
+	def test_stop_waits_for_atlas_after_flushing(self):
+		machine = Mock(vm_id="vm-builder", address="fdaa:1::1d")
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch.object(Builder, "flush_build_machine") as flush,
+			patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep") as sleep,
+		):
+			client = atlas.return_value
+			client.get_vm.side_effect = [
+				{"current_state": state} for state in ("running", "running", "stopped")
+			]
+			client.set_power_state.side_effect = lambda *_: self.assertTrue(flush.called)
+			self.builder.stop_build_machine(machine)
+
+		client.set_power_state.assert_called_once_with("vm-builder", "stop")
+		self.assertEqual(client.get_vm.call_count, 3)
+		sleep.assert_called_once()
+
+	def test_stopped_builder_does_not_need_ssh_on_retry(self):
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch.object(Builder, "flush_build_machine") as flush,
+		):
+			atlas.return_value.get_vm.return_value = {"current_state": "stopped"}
+			self.builder.stop_build_machine(Mock(vm_id="vm-builder"))
+		flush.assert_not_called()
+
+	def test_failed_flush_does_not_request_stop(self):
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch.object(Builder, "flush_build_machine", side_effect=SshError("flush failed")),
+		):
+			atlas.return_value.get_vm.return_value = {"current_state": "running"}
+			with self.assertRaisesRegex(SshError, "flush failed"):
+				self.builder.stop_build_machine(Mock())
+		atlas.return_value.set_power_state.assert_not_called()
+
+	def test_stop_timeout_fails_capture_preparation(self):
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch.object(Builder, "flush_build_machine"),
+			patch("cargo.image_builder.doctype.pilot_image.builder.time.monotonic", side_effect=[0, 301]),
+		):
+			atlas.return_value.get_vm.return_value = {"current_state": "running"}
+			with self.assertRaisesRegex(AtlasError, "did not stop within"):
+				self.builder.stop_build_machine(Mock())
+
+	def test_failed_or_unknown_machine_state_is_not_captured(self):
+		for state in ("failed", "paused", None):
+			with self.subTest(state=state), patch("cargo.atlas_client.AtlasClient.from_settings") as atlas:
+				atlas.return_value.get_vm.side_effect = [
+					{"current_state": "running"},
+					{"current_state": state},
+				]
+				with (
+					patch.object(Builder, "flush_build_machine"),
+					self.assertRaisesRegex(AtlasError, "did not stop"),
+				):
+					self.builder.stop_build_machine(Mock())
