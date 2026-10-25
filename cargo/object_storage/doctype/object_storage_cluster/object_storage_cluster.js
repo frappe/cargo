@@ -116,9 +116,6 @@ function add_cluster_buttons(frm) {
 	if (frm.doc.activated_on) add_restore_metadata_button(frm);
 }
 
-const WHOLE_CLUSTER = "Whole cluster";
-const ONE_MACHINE = "One machine";
-
 // Manual and rare: the snapshot is typed in, and the dialog asks for the name of whatever
 // is rolled back before it does anything.
 function add_restore_metadata_button(frm) {
@@ -130,38 +127,32 @@ function add_restore_metadata_button(frm) {
 }
 
 function show_restore_metadata_dialog(frm) {
+	const cluster = frm.doc.name;
+	const machines = (frm.doc.machines || []).map((row) => row.machine);
 	const dialog = new frappe.ui.Dialog({
 		title: __("Restore Metadata Snapshot"),
 		fields: [
 			{
-				fieldname: "scope",
+				fieldname: "target",
 				fieldtype: "Select",
-				label: __("Restore"),
-				options: [ONE_MACHINE, WHOLE_CLUSTER].join("\n"),
-				default: ONE_MACHINE,
+				label: __("Machine"),
+				options: ["", ...machines, cluster].join("\n"),
+				description: __("Pick the cluster name to restore every machine."),
 				reqd: 1,
 			},
 			{
 				fieldtype: "HTML",
-				depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
+				depends_on: (doc) => doc.target && doc.target !== cluster,
 				options: `<p class="text-muted">${__(
 					"The machine stops, takes the snapshot as its database, starts, and catches up from the other nodes. Every other storage node must be serving."
 				)}</p>`,
 			},
 			{
 				fieldtype: "HTML",
-				depends_on: `eval:doc.scope === "${WHOLE_CLUSTER}"`,
+				depends_on: (doc) => doc.target === cluster,
 				options: `<p class="text-danger">${__(
-					"Every machine stops and goes back to the snapshot. Objects, buckets and keys written after it are lost, objects deleted after it come back without their data, and Cargo's bucket records may no longer match Garage. S3 is down until every machine is back."
+					"This stops the whole cluster, restores every machine back to this snapshot, and then restarts it. Objects, buckets and keys written after it are lost, objects deleted after it come back without their data, and Cargo's bucket records may no longer match Garage. S3 is down until every machine is back."
 				)}</p>`,
-			},
-			{
-				fieldname: "machine",
-				fieldtype: "Select",
-				label: __("Machine"),
-				options: (frm.doc.machines || []).map((row) => row.machine).join("\n"),
-				depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
-				mandatory_depends_on: `eval:doc.scope === "${ONE_MACHINE}"`,
 			},
 			{
 				fieldname: "snapshot",
@@ -175,14 +166,14 @@ function show_restore_metadata_dialog(frm) {
 			{
 				fieldname: "confirmation",
 				fieldtype: "Data",
-				label: __("Type the machine name, or the cluster name for the whole cluster"),
+				label: __("Type the name selected above to confirm"),
 				reqd: 1,
 			},
 		],
 		primary_action_label: __("Restore"),
 		primary_action: (values) => {
-			const whole = values.scope === WHOLE_CLUSTER;
-			if (values.confirmation !== (whole ? frm.doc.name : values.machine)) {
+			const whole = values.target === cluster;
+			if (values.confirmation !== values.target) {
 				frappe.msgprint(__("The name typed does not match what is being restored."));
 				return;
 			}
@@ -190,7 +181,7 @@ function show_restore_metadata_dialog(frm) {
 			dialog.hide();
 			frm.call("restore_metadata_snapshot", {
 				snapshot: values.snapshot.trim(),
-				machine: whole ? null : values.machine,
+				machine: whole ? null : values.target,
 			}).then(() => {
 				frappe.show_alert({
 					message: __("Restoring. Follow the Setup Log."),
