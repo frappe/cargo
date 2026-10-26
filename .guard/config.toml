@@ -1,0 +1,30 @@
+ignore_patterns = ["tools/fake_atlas/**", "tools/fake_proxy/**"]
+instructions = """
+Cargo is a Frappe app that provisions and configures the machines behind Frappe Cloud's shared services. Resolve framework behaviour against frappe/frappe rather than guessing: whitelisted methods, DocType controllers and hooks, autoname and naming series, get_password and Password-field encryption, frappe.enqueue and background jobs, and validate_auth in frappe/auth.py all have exact semantics there.
+
+Cargo only talks to three first-party systems, all owned by the same team and deployed together: frappe/pilot (provisions the host Cargo itself runs on), frappe/central (the control plane that issues Cargo's tokens and the secrets a deployment runs on) and frappe/atlas (supplies virtual machines). Treat these as trusted infrastructure, not third-party or user-controlled input. Reaching them over HTTPS, installing pilot from its published release, and acting on their responses is the intended design, not a supply-chain weakness -- a compromise of frappe/pilot or frappe/central already owns everything Cargo could protect, so it is outside the threat model of a Cargo change.
+
+The boundaries worth reviewing are the ones Cargo actually defends: the machines it SSHes into and the configuration it renders onto them; the tokens it holds and which upstream each one opens; anything reachable from a whitelisted endpoint; and whether a failed step leaves a deployment or Central in a state a retry cannot repair.
+"""
+
+[context]
+repos = ["frappe/frappe", "frappe/pilot", "frappe/central", "frappe/atlas"]
+
+[[rules]]
+id = "trusted-upstreams"
+rule = "frappe/pilot, frappe/central and frappe/atlas are first-party and trusted. Do not raise findings that assume one of them is hostile, that a pinned release tag may be moved by an attacker, or that a first-party installer needs checksum verification before it runs."
+severity = "low"
+
+[[rules]]
+id = "trusted-callers"
+rule = "Every whitelisted endpoint is reachable only by an authenticated first-party caller -- Central, presenting a token Central itself signed and scoped -- and those callers build their arguments in code rather than passing anything a user typed. A value only a trusted caller can send, in a shape only its own bug could produce, is not an attack surface. If a malformed request would raise an unhandled error instead of a clean 4xx, say so once as a robustness nit, not a vulnerability."
+severity = "low"
+
+[[rules]]
+id = "no-migration-patches"
+rule = "Cargo is not in production and has no installations to migrate, so a schema change needs no patch. Removing or renaming a DocType field, changing a Select's options, or adding a child table is complete without a cargo/patches entry and without backfilling existing rows. Do not ask for migration patches, data backfills, or backward compatibility with an older field layout."
+severity = "low"
+
+[auto_approve]
+enabled = true
+risk_ceiling = "low"
