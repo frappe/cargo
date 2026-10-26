@@ -6,7 +6,8 @@ import tempfile
 import threading
 import time
 import typing
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import frappe
@@ -160,6 +161,46 @@ def run_over_ssh(
 	on_output: Callable[[str], None] | None = None,
 ) -> str:
 	"""Pipe a script to ``bash -s`` and return what it printed, line by line as it arrives."""
+	with private_key_file(address, key) as path:
+		return stream(
+			["ssh", "-i", path, *OPTIONS, f"{user}@{address}", "bash -s"], address, timeout, on_output, script
+		)
+
+
+def rsync_over_ssh(
+	address: str,
+	source: Path,
+	destination: str,
+	key: str | None,
+	timeout: int = SSH_TIMEOUT,
+	on_output: Callable[[str], None] | None = None,
+) -> str:
+	"""Copy `source` to `destination` as root: a folder's contents into the destination folder,
+	or a file to the destination path. Existing folders keep their permissions and new files keep
+	only their executable bit, so `/etc` is never loosened."""
+	with private_key_file(address, key) as path:
+		command = [
+			"rsync",
+			"--recursive",
+			"--links",
+			"--times",
+			"--omit-dir-times",
+			"--executability",
+			"--owner",
+			"--group",
+			"--chown=root:root",
+			"--mkpath",
+			"--rsh",
+			shlex.join(["ssh", "-i", path, *OPTIONS]),
+			f"{source}/" if source.is_dir() else str(source),
+			f"root@[{address}]:{destination}",
+		]
+		return stream(command, address, timeout, on_output)
+
+
+@contextmanager
+def private_key_file(address: str, key: str | None) -> Generator[str]:
+	"""Write the key to a file only its owner can read, for as long as ssh needs it."""
 	if not key:
 		frappe.throw(_("No SSH private key, so {0} cannot be reached.").format(address))
 
@@ -167,9 +208,22 @@ def run_over_ssh(
 		key_file.write(key if key.endswith("\n") else f"{key}\n")
 		path = key_file.name
 	os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+	try:
+		yield path
+	finally:
+		os.unlink(path)
 
+
+def stream(
+	command: list[str],
+	address: str,
+	timeout: int,
+	on_output: Callable[[str], None] | None,
+	stdin: str = "",
+) -> str:
+	"""Run the command and return what it printed, line by line as it arrives."""
 	process = subprocess.Popen(
-		["ssh", "-i", path, *OPTIONS, f"{user}@{address}", "bash -s"],
+		command,
 		stdin=subprocess.PIPE,
 		stdout=subprocess.PIPE,
 		stderr=subprocess.STDOUT,
@@ -182,7 +236,7 @@ def run_over_ssh(
 	lines: list[str] = []
 
 	try:
-		process.stdin.write(script)
+		process.stdin.write(stdin)
 		process.stdin.close()
 		for line in process.stdout:
 			lines.append(line)
@@ -191,7 +245,6 @@ def run_over_ssh(
 		process.wait()
 	finally:
 		watchdog.cancel()
-		os.unlink(path)
 
 	output = "".join(lines)
 	if process.returncode != 0:
