@@ -105,14 +105,16 @@ class Builder:
 		"""Flush buffered filesystem writes before shutdown."""
 		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
 
-	def stop_build_machine(self, machine: "Machine") -> None:
-		"""Flush and stop the builder before its disk is captured."""
+	def stop_build_machine(self, machine: "Machine", flush: bool = True) -> None:
+		"""Flush and stop the builder before its disk is captured. Pass `flush=False` when the
+		build already synced and SSH may no longer work."""
 		client = AtlasClient.from_settings()
 		state = client.get_vm(machine.vm_id).get("current_state")
 		if state != STOPPED_STATE:
 			if state != RUNNING_STATE:
 				raise AtlasError(f"Cannot prepare the build machine for capture while Atlas reports {state}.")
-			self.flush_build_machine(machine.address, machine.get_password("ssh_private_key"))
+			if flush:
+				self.flush_build_machine(machine.address, machine.get_password("ssh_private_key"))
 		client.set_power_state(machine.vm_id, "stop")
 		deadline = time.monotonic() + STOP_TIMEOUT
 		while True:

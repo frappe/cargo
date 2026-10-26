@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-10-26 16:04:47.070125",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "metadata_section",
+  "application",
+  "path",
+  "build_section",
+  "status",
+  "machine",
+  "snapshot_id",
+  "built_at",
+  "error",
+  "build_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "metadata_section",
+   "fieldtype": "Section Break",
+   "label": "Metadata"
+  },
+  {
+   "description": "Application for this image.\nEg. OpenClaw, Django, WordPress",
+   "fieldname": "application",
+   "fieldtype": "Data",
+   "label": "Application"
+  },
+  {
+   "description": "Where is this fetched from, can be unix file path or repository link",
+   "fieldname": "path",
+   "fieldtype": "Data",
+   "label": "Path"
+  },
+  {
+   "fieldname": "build_section",
+   "fieldtype": "Section Break",
+   "label": "Build"
+  },
+  {
+   "default": "Provisioning",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
+   "read_only": 1
+  },
+  {
+   "description": "The machine this image is baked on. It holds the VM id, its keypair and its state.",
+   "fieldname": "machine",
+   "fieldtype": "Link",
+   "label": "Build Machine",
+   "options": "Machine",
+   "read_only": 1
+  },
+  {
+   "description": "The Atlas image this build took.",
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Snapshot ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "built_at",
+   "fieldtype": "Datetime",
+   "label": "Built At",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.status=='Failed'",
+   "description": "Why the last build failed.",
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error",
+   "max_height": "16rem",
+   "read_only": 1
+  },
+  {
+   "description": "Everything the build scripts printed, as they printed it.",
+   "fieldname": "build_log",
+   "fieldtype": "Code",
+   "label": "Build Log",
+   "max_height": "24rem",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-26 23:59:00.000000",
+ "modified_by": "Administrator",
+ "module": "Image Builder",
+ "name": "One Click Image",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
