@@ -182,22 +182,17 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		"""Run the scripts present in application/scripts on the build machine in order"""
 		# The scripts share one budget, so SSH times out cleanly before the task is killed.
 		deadline = time.monotonic() + PROVISION_TIMEOUT
-		scripts_path = self.application_base_path / self.application / "scripts"
-		for script in sorted(scripts_path.glob("*.sh")):
-			with OutputLog(self, "build_log") as log:
-				log.write(f"==> Running {script.name}\n")
-				self.run_on_build_machine(
-					script.read_text(), log, timeout=max(1, int(deadline - time.monotonic()))
-				)
-
-		# Finally we run the common build script
-		scripts_path = self.application_base_path / "common" / "scripts"
-		for script in sorted(scripts_path.glob("*.sh")):
-			with OutputLog(self, "build_log") as log:
-				log.write(f"==> Running Common {script.name}\n")
-				self.run_on_build_machine(
-					script.read_text(), log, timeout=max(1, int(deadline - time.monotonic()))
-				)
+		scripts_path = (
+			self.application_base_path / self.application / "scripts",
+			self.application_base_path / "common" / "scripts",
+		)
+		for script_path in scripts_path:
+			for script in sorted(script_path.glob("*.sh")):
+				with OutputLog(self, "build_log") as log:
+					log.write(f"==> Running {script.name}\n")
+					self.run_on_build_machine(
+						script.read_text(), log, timeout=max(1, int(deadline - time.monotonic()))
+					)
 
 	def run_on_build_machine(self, script: str, log: OutputLog, timeout: int = PROVISION_TIMEOUT) -> None:
 		machine = self.build_machine
