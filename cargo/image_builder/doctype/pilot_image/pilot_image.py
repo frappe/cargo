@@ -294,7 +294,10 @@ class PilotImage(WorkflowBuilder):
 		machine = self.build_machine
 		Builder().stop_build_machine(machine)
 
-		self.snapshot_id = machine.snapshot(self.name, self.get_atlas_tags())
+		is_warm_image = self.image_type != "Site"
+		self.snapshot_id = machine.snapshot(
+			self.name, self.get_atlas_tags(), cache_image=is_warm_image, memory_snapshot=is_warm_image
+		)
 		self.status = "Snapshotting"
 		self.save()
 
