@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import time
 from functools import cached_property
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import frappe
 import yaml
@@ -155,7 +155,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 						frappe.throw(
 							frappe._("{0} is not a file or folder inside {1}.").format(source, folder_path)
 						)
-					if not file["destination"].startswith("/"):
+					if not PurePath(file["destination"]).is_absolute():
 						frappe.throw(
 							frappe._("Destination {0} must be an absolute path.").format(file["destination"])
 						)
@@ -163,10 +163,9 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 					log.write(f"{file['source']} -> {file['destination']}\n")
 					target = Path(staging) / file["destination"].lstrip("/")
 					target.parent.mkdir(parents=True, exist_ok=True)
-					if source.is_dir():
-						shutil.copytree(source, target, dirs_exist_ok=True)
-					else:
-						shutil.copy2(source, target)
+					shutil.copytree(source, target, dirs_exist_ok=True) if source.is_dir() else shutil.copy2(
+						source, target
+					)
 
 				rsync_over_ssh(
 					machine.address,
