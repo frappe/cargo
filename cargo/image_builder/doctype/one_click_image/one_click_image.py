@@ -51,7 +51,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
 	# end: auto-generated types
 
-	def validate(self):
+	def before_insert(self):
 		"""Most of these validations must be triggered from GitHub actions directly
 		before the pull request is merged for this one click image, will write automation for that."""
 		OneClickApplicationValidator(self.application, self.application_base_path).validate()
@@ -133,7 +133,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 			f"apt-get install -y --no-install-recommends {shlex.join(packages)}\n"
 		)
 
-		with OutputLog(self, "build_log") as log:
+		with OutputLog(self, "build_log", append=True) as log:
 			log.write("==> apt packages\n")
 			self.run_on_build_machine(script, log)
 
@@ -146,7 +146,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 			configuration = self.common_config if folder == COMMON else self.application_config
 
 			# Since rsync is copying the contents of the folder and not the folder itself / works.
-			with OutputLog(self, "build_log") as log, tempfile.TemporaryDirectory() as staging:
+			with OutputLog(self, "build_log", append=True) as log, tempfile.TemporaryDirectory() as staging:
 				log.write(f"==> {folder} files\n")
 				for file in configuration["build"]["files"]:
 					source = (folder_path / file["source"]).resolve()
