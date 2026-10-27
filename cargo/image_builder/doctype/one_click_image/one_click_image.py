@@ -49,7 +49,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		machine: DF.Link | None
 		os_version: DF.Data | None
 		snapshot_id: DF.Data | None
-		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
+		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
 	# end: auto-generated types
 
 	def before_insert(self):
@@ -205,6 +205,12 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 	def wait_for_snapshot(self) -> None:
 		"""Wait for Atlas to make the image."""
 		super().wait_for_snapshot()
+
+	@frappe.whitelist()
+	def retire(self) -> None:
+		"""Retire this image from the form, so Central stops offering it."""
+		self.check_permission("write")
+		super().retire()
 
 	def run_on_build_machine(self, script: str, log: OutputLog, timeout: int = PROVISION_TIMEOUT) -> None:
 		machine = self.build_machine

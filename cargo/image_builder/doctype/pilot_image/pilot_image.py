@@ -324,16 +324,6 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 			),
 		}
 
-	def retire(self) -> None:
-		"""Delete this image's Atlas image and mark it Retired. Throws while Atlas keeps it,
-		leaving the image as it was for a later run."""
-		if self.status not in ("Completed", "Failed"):
-			frappe.throw(_("Only a finished build can be retired."))
-
-		self.delete_atlas_image()
-		self.status = "Retired"
-		self.save()
-
 
 def get_frappe_branches() -> list[str]:
 	"""The Frappe branches listed in Cargo Settings."""

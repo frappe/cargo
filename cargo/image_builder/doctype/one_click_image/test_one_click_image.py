@@ -231,3 +231,25 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		self.assertEqual(snapshot.call_args.args[1]["os_version"], "24.04")
 		self.assertEqual(image.snapshot_id, "img-wordpress")
 		self.assertEqual(image.status, "Snapshotting")
+
+	def test_retiring_deletes_the_atlas_image(self):
+		self.application()
+		image = self.image(status="Completed")
+
+		with patch.object(OneClickImage, "delete_atlas_image") as delete_atlas_image:
+			image.retire()
+
+		delete_atlas_image.assert_called_once()
+		self.assertEqual(frappe.db.get_value(image.doctype, image.name, "status"), "Retired")
+
+	def test_a_build_in_progress_cannot_be_retired(self):
+		self.application()
+		image = self.image(status="Building")
+
+		with (
+			patch.object(OneClickImage, "delete_atlas_image") as delete_atlas_image,
+			self.assertRaises(frappe.ValidationError),
+		):
+			image.retire()
+
+		delete_atlas_image.assert_not_called()

@@ -43,7 +43,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed\nRetired",
    "read_only": 1
   },
   {
@@ -109,7 +109,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-27 14:22:08.968035",
+ "modified": "2026-10-27 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",
