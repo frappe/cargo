@@ -84,8 +84,19 @@
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
- "links": [],
- "modified": "2026-10-27 10:00:00.000000",
+ "links": [
+  {
+   "group": "Build Machine",
+   "link_doctype": "Machine",
+   "link_fieldname": "reference_name"
+  },
+  {
+   "group": "Workflows",
+   "link_doctype": "Press Workflow",
+   "link_fieldname": "linked_docname"
+  }
+ ],
+ "modified": "2026-10-27 13:30:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",
