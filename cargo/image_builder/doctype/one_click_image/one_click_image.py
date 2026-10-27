@@ -46,7 +46,6 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		built_at: DF.Datetime | None
 		error: DF.LongText | None
 		machine: DF.Link | None
-		path: DF.Data | None
 		snapshot_id: DF.Data | None
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
 	# end: auto-generated types
@@ -187,11 +186,21 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		)
 		for script_path in scripts_path:
 			for script in sorted(script_path.glob("*.sh")):
-				with OutputLog(self, "build_log") as log:
+				with OutputLog(self, "build_log", append=True) as log:
 					log.write(f"==> Running {script.name}\n")
 					self.run_on_build_machine(
 						script.read_text(), log, timeout=max(1, int(deadline - time.monotonic()))
 					)
+
+	@task(queue="long", timeout=3600)
+	def take_snapshot(self) -> None:
+		"""Stop the build machine, then ask Atlas to capture its disk."""
+		super().take_snapshot()
+
+	@task(queue="short")
+	def wait_for_snapshot(self) -> None:
+		"""Wait for Atlas to make the image."""
+		super().wait_for_snapshot()
 
 	def run_on_build_machine(self, script: str, log: OutputLog, timeout: int = PROVISION_TIMEOUT) -> None:
 		machine = self.build_machine

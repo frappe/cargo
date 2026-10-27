@@ -5,13 +5,15 @@ from frappe.utils import now_datetime
 from cargo.atlas_client import AtlasClient, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.image_builder.doctype.pilot_image.builder import Builder, get_build_spec
-from cargo.workflow_engine.doctype.press_workflow.decorators import task
 
 
 class BuildMachineOwner:
 	"""An image doctype that rents one build machine, builds on it and snapshots it. It needs
 	`status`, `error`, `machine`, `snapshot_id` and `built_at` fields, plus `get_boot_image()`,
-	`get_atlas_tags()`, `is_warm_image` and a `create_image()` that runs its workflow."""
+	`get_atlas_tags()`, `is_warm_image` and a `create_image()` that runs its workflow.
+
+	`take_snapshot` and `wait_for_snapshot` are plain here: the workflow only tracks tasks a
+	class declares itself, so each image declares them as `@task` and calls `super()`."""
 
 	is_warm_image = False
 	has_ssh_after_build = True
@@ -50,7 +52,6 @@ class BuildMachineOwner:
 		# Any thing other than Dead and Running is a transient state, wait for it.
 		return
 
-	@task(queue="long", timeout=3600)
 	def take_snapshot(self) -> None:
 		"""Stop the build machine, then ask Atlas to capture its disk."""
 		machine = self.build_machine
@@ -65,7 +66,6 @@ class BuildMachineOwner:
 		self.status = "Snapshotting"
 		self.save()
 
-	@task(queue="short")
 	def wait_for_snapshot(self) -> None:
 		"""Wait for Atlas to make the image. A deferred task is run again about once a minute."""
 		atlas_image = AtlasClient.from_settings().get_snapshot(self.snapshot_id)

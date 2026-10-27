@@ -14,6 +14,7 @@ from cargo.image_builder.doctype.one_click_image.one_click_image import OneClick
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
 from cargo.ssh import SshError
 from cargo.testing import use_test_settings
+from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.one_click_image.one_click_image"
 
@@ -118,6 +119,13 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 
 		lookup.assert_called_once_with("Ubuntu", "24.04", True)
 		self.assertEqual(atlas.return_value.find_system_image.call_args.args[0]["minimal"], "true")
+
+	def test_every_build_step_is_tracked(self):
+		flow = frappe.new_doc("One Click Image")._create_image._wrapped
+		self.assertEqual(
+			[name for name, _ in called_methods_in_order(OneClickImage, flow)],
+			["install_packages", "copy_files", "run_build_scripts", "take_snapshot", "wait_for_snapshot"],
+		)
 
 	def test_a_running_machine_starts_the_build(self):
 		self.application()

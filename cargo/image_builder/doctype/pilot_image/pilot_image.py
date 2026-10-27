@@ -7,9 +7,8 @@ import frappe
 from frappe import _
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Min
-from frappe.utils import now_datetime
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, base_image_id
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, base_image_id
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.pilot_image.apps import (
@@ -229,6 +228,16 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		self.run_provision_script()
 		self.take_snapshot()
 		self.wait_for_snapshot()
+
+	@task(queue="long", timeout=3600)
+	def take_snapshot(self) -> None:
+		"""Stop the build machine, then ask Atlas to capture its disk."""
+		super().take_snapshot()
+
+	@task(queue="short")
+	def wait_for_snapshot(self) -> None:
+		"""Wait for Atlas to make the image."""
+		super().wait_for_snapshot()
 
 	@task(queue="short")
 	@deadlock_retry(times=3)
