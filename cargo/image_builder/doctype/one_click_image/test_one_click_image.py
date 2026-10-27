@@ -17,6 +17,9 @@ from cargo.testing import use_test_settings
 from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.one_click_image.one_click_image"
+TEMPLATE_HEADER = (
+	"description: A test app.\nbase_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\n"
+)
 
 
 class IntegrationTestOneClickImage(IntegrationTestCase):
@@ -46,9 +49,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 			(path / folder).mkdir(parents=True)
 		for script in scripts:
 			(path / "scripts" / script).write_text(f"echo {script}\n")
-		(path / "config" / "template.yaml").write_text(
-			"base_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\nbuild:\n  files: []\n"
-		)
+		(path / "config" / "template.yaml").write_text(f"{TEMPLATE_HEADER}build:\n  files: []\n")
 		return path
 
 	def image(self, name: str = "wordpress", status: str = "Provisioning") -> OneClickImage:
@@ -120,6 +121,15 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		lookup.assert_called_once_with("Ubuntu", "24.04", True)
 		self.assertEqual(atlas.return_value.find_system_image.call_args.args[0]["minimal"], "true")
 
+	def test_the_template_description_and_os_version_are_saved(self):
+		self.application()
+		image = self.image()
+
+		self.assertEqual(
+			frappe.db.get_value(image.doctype, image.name, ["information", "os_version"]),
+			("A test app.", "24.04"),
+		)
+
 	def test_every_build_step_is_tracked(self):
 		flow = frappe.new_doc("One Click Image")._create_image._wrapped
 		self.assertEqual(
@@ -160,7 +170,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		(path / "src" / "plugins").mkdir()
 		(path / "src" / "plugins" / "cache.php").write_text("")
 		(path / "config" / "template.yaml").write_text(
-			"build:\n  files:\n"
+			f"{TEMPLATE_HEADER}build:\n  files:\n"
 			"    - source: src/wp-config.php\n      destination: /var/www/wp-config.php\n"
 			"    - source: src/plugins\n      destination: /var/www/plugins\n"
 		)
@@ -181,7 +191,9 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		)
 
 	def test_a_template_source_outside_its_folder_is_rejected(self):
-		(self.application() / "config" / "template.yaml").write_text("build:\n  files: []\n")
+		(self.application() / "config" / "template.yaml").write_text(
+			f"{TEMPLATE_HEADER}build:\n  files: []\n"
+		)
 		(self.base_path / "common" / "config" / "template.yaml").write_text(
 			"build:\n  files:\n    - source: ../wordpress/config\n      destination: /etc\n"
 		)

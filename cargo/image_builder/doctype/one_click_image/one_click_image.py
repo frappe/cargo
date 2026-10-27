@@ -45,7 +45,9 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		build_log: DF.Code | None
 		built_at: DF.Datetime | None
 		error: DF.LongText | None
+		information: DF.SmallText | None
 		machine: DF.Link | None
+		os_version: DF.Data | None
 		snapshot_id: DF.Data | None
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed"]
 	# end: auto-generated types
@@ -54,6 +56,8 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		"""Most of these validations must be triggered from GitHub actions directly
 		before the pull request is merged for this one click image, will write automation for that."""
 		OneClickApplicationValidator(self.application, self.application_base_path).validate()
+		self.os_version = self.application_config["base_image"]["os_version"]
+		self.information = self.application_config["description"]
 
 	def after_insert(self):
 		"""Start the build process for the one click image, rent a machine for the build."""

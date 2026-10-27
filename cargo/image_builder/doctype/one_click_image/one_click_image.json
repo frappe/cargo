@@ -2,12 +2,15 @@
  "actions": [],
  "allow_bulk_edit": 1,
  "allow_rename": 1,
+ "autoname": "OCI-.####",
  "creation": "2026-10-26 16:04:47.070125",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "metadata_section",
   "application",
+  "information",
+  "os_version",
   "build_section",
   "status",
   "machine",
@@ -80,6 +83,16 @@
    "label": "Build Log",
    "max_height": "24rem",
    "read_only": 1
+  },
+  {
+   "fieldname": "information",
+   "fieldtype": "Small Text",
+   "label": "Information"
+  },
+  {
+   "fieldname": "os_version",
+   "fieldtype": "Data",
+   "label": "OS Version"
   }
  ],
  "grid_page_length": 50,
@@ -96,10 +109,11 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-27 13:30:00.000000",
+ "modified": "2026-10-27 14:22:08.968035",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
