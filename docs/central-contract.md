@@ -154,7 +154,7 @@ bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's 
 
 ### Planned: abuse protection
 
-The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`, and Cargo adds an optional `abuse_signals` list to its `storage` report. Read [abuse logs](abuse-logs.md).
+The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. Central reads the log bucket with a read key, and reads per-VM abuse metrics on the Datum Server as the read-only ClickHouse user `central`. An operator copies both credentials into the Region's Cargo connection in Central. No call carries them. If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`, and Cargo adds an optional `abuse_signals` list to its `storage` report. Read [abuse logs and metrics](abuse-logs.md).
 
 ## Who holds which key
 
