@@ -18,6 +18,16 @@ Cargo flushes the build machine's disk, requests an Atlas stop, and waits up to 
 
 Base and Apps images request caching and warm preparation. Atlas boots the published disk image on each host and prepares its memory snapshot there. Bare Site images, with no signup app preinstalled, request neither caching nor memory snapshots. They remain available as disk images for building Apps images.
 
+### Docs
+
+- [Object storage](docs/object-storage.md)
+- [Cluster health](docs/health.md)
+- [Images](docs/image.md)
+- [Bootstrapping](docs/bootstrapping.md)
+- [What Cargo needs from Atlas](docs/atlas-contract.md)
+- [What Cargo and Central say to each other](docs/central-contract.md)
+- [Abuse logs](docs/abuse-logs.md) (planned)
+
 ### Contributing
 
 This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:

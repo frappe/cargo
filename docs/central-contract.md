@@ -152,6 +152,10 @@ the bucket.
 Takes `access_key`. Deletes that key and returns `name`, `region` and `access_key`. The
 bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's last key.
 
+### Planned: abuse protection
+
+The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`, and Cargo adds an optional `abuse_signals` list to its `storage` report. Read [abuse logs](abuse-logs.md).
+
 ## Who holds which key
 
 Cargo keeps the powerful token. Central never sees one.
