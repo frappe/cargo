@@ -4,7 +4,7 @@ Status: planned. Cargo does not implement this yet.
 
 ## Purpose
 
-Each region keeps its NAT log, SNI log and proxy access log for 180 days. [Watcher](watcher.md) reads them to match traffic against abuse feeds, and to find which VM used an address at a given time. Cargo keeps them in one log bucket on the regional Garage cluster ([object storage](object-storage.md)).
+Each region keeps its flow log, SNI log, NAT port range log and proxy access log for 180 days. [Watcher](watcher.md) reads them to match traffic against abuse feeds, and to find which VM used a shared address and port at a given time. Cargo keeps them in one log bucket on the regional Garage cluster ([object storage](object-storage.md)).
 
 Each region also keeps per-VM abuse metrics for 30 days on its Datum Server. Watcher reads them to detect abuse.
 
@@ -12,7 +12,7 @@ If Cargo offers public buckets, Cargo also suspends a public bucket on request f
 
 Other documents:
 
-- Log formats: [Atlas NAT log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-log) and [Atlas SNI log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#sni-log).
+- Log formats: [Atlas flow log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#flow-log), [Atlas SNI log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#sni-log) and [Atlas NAT port ranges](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-port-ranges).
 - Uploads from Metal hosts and proxy nodes: [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
 - Per-VM counters: [Atlas counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters) and [Atlas telemetry](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#telemetry).
 - Detection, feeds and findings: [Watcher](watcher.md).
@@ -31,6 +31,14 @@ The log bucket belongs to tenant `0`. It is infrastructure, not a customer bucke
 | Quota | `max_size_gib`, set by an operator for 180 days of logs and a margin |
 | Location | The region. Cargo never copies an object out of the region. |
 
+Storage: the flow log is the largest log. The [Atlas flow log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#flow-log) gives the estimates. The estimates count flow-minutes: a flow that lasts 60 minutes gives 60 rows.
+
+- A normal VM: about 50,000 flow-minutes a day, about 1 MB a day.
+- The 58 current VMs: about 10 GB for 180 days.
+- One VM at its cap of 10,000 flow entries all day: about 290 MB a day.
+
+The operator sets `max_size_gib` from the flow estimates. After the first hosts run in [Phase 1](#deploy-order), the operator adds the measured sizes of the `sni`, `nat-ranges` and `proxy-access` logs.
+
 Cargo makes the bucket, its owner key, the Watcher read key and its lifecycle rules on a scheduled run when the cluster is Active. The run is idempotent: it makes only what is missing.
 
 Rules for bucket calls on the configured log bucket name:
@@ -43,10 +51,10 @@ Rules for bucket calls on the configured log bucket name:
 
 | Writer | Log | Gets the endpoint and key from |
 |---|---|---|
-| Metal host | NAT log, SNI log | Atlas, in the metald host config. Each host has its own write key. |
+| Metal host | Flow log, SNI log, NAT port range log | Atlas, in the metald host config. Each host has its own write key. |
 | HTTP proxy node | Proxy access log | Atlas, in the proxy node config. Each node has its own write key. |
 
-Each writer compresses each closed 5-minute window with zstd and uploads it as one object. The writer deletes its local file only after a confirmed upload. The Atlas documents above specify the writer behavior and the content of each object.
+Each writer compresses each closed 5-minute window with zstd and uploads it as one object. The NAT port range log has rows only when Metal assigns or frees a range, and once a day when Metal writes the full table. A window with no row has no `nat-ranges` object. The writer deletes its local file only after a confirmed upload. The Atlas documents above specify the writer behavior and the content of each object.
 
 ## Object layout
 
@@ -56,13 +64,16 @@ Each writer compresses each closed 5-minute window with zstd and uploads it as o
 
 | Part | Value |
 |---|---|
-| `<log>` | `nat`, `sni` or `proxy-access` |
+| `<log>` | `flow`, `sni`, `nat-ranges` or `proxy-access` |
 | `<writer>` | The Metal host name or the proxy node name |
 | `<YYYY-MM-DD>/<HH>-<MM>` | The start of the 5-minute window, in UTC. `<MM>` is `00`, `05`, `10` and so on to `55`. |
 
-Example: `sni/metal-bom-3/2026-11-02/14-05.zst` holds the SNI log of `metal-bom-3` from 14:05 to 14:10 UTC.
+Examples:
 
-Each writer makes one object for each log every 5 minutes, which is 288 objects each day.
+- `flow/metal-bom-3/2026-11-02/14-05.zst` holds the flow log of `metal-bom-3` from 14:05 to 14:10 UTC.
+- `nat-ranges/metal-bom-3/2026-11-02/14-05.zst` holds the NAT port ranges that `metal-bom-3` assigned or freed from 14:05 to 14:10 UTC.
+
+Each writer makes one object every 5 minutes for each of the logs `flow`, `sni` and `proxy-access`, which is 288 objects each day. A Metal host makes a `nat-ranges` object only for a window with rows, and at least one each day.
 
 The key is the same for each attempt at one window. A retried upload replaces the object and does not make a second copy.
 
@@ -72,16 +83,17 @@ Garage supports only the `Expiration` and `AbortIncompleteMultipartUpload` actio
 
 | Rule ID | `Filter` `Prefix` | `Expiration` `Days` | `AbortIncompleteMultipartUpload` `DaysAfterInitiation` |
 |---|---|---|---|
-| `nat` | `nat/` | 180 | 1 |
+| `flow` | `flow/` | 180 | 1 |
 | `sni` | `sni/` | 180 | 1 |
+| `nat-ranges` | `nat-ranges/` | 180 | 1 |
 | `proxy-access` | `proxy-access/` | 180 | 1 |
 
 ```xml
 <LifecycleConfiguration>
   <Rule>
-    <ID>nat</ID>
+    <ID>flow</ID>
     <Status>Enabled</Status>
-    <Filter><Prefix>nat/</Prefix></Filter>
+    <Filter><Prefix>flow/</Prefix></Filter>
     <Expiration><Days>180</Days></Expiration>
     <AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>
   </Rule>
@@ -125,14 +137,14 @@ To rotate the read key, Cargo makes the new key, Watcher uses it from its next r
 
 Watcher reads the bucket with the read key:
 
-- Feed matching: Watcher reads each new NAT and SNI object once, and matches it against its abuse feeds. See [Watcher feeds](watcher.md#feeds).
-- Attribution: for an abuse report, Central calls `attribute_address`, and Watcher finds the VM that used a shared address at the reported time. See [Watcher attribution](watcher.md#attribution).
+- Feed matching: Watcher reads each new flow and SNI object once, and matches it against its abuse feeds. See [Watcher feeds](watcher.md#feeds).
+- Attribution: for an abuse report, Central calls `attribute_address`, and Cargo finds the VM that used a shared address and port at the reported time, from the `nat-ranges` log. See [Watcher attribution](watcher.md#attribution).
 
 Central has no read key. It gets log data only as the `evidence` of a finding and the answer of `attribute_address`.
 
 For an investigation that Watcher cannot answer, an operator adds a temporary `read` key on the Cargo desk. The operator removes the key when the investigation ends.
 
-SNI rows can be personal data. Readers do not copy whole objects out of the bucket to Datum, Central or a laptop. A finding holds no payloads. See [Watcher findings](watcher.md#findings).
+Flow rows hold remote addresses, and SNI rows hold server names. Both can be personal data. Readers do not copy whole objects out of the bucket to Datum, Central or a laptop. A finding holds no payloads. See [Watcher findings](watcher.md#findings).
 
 ## Failure behavior
 
@@ -187,7 +199,7 @@ Dependencies in [Datum](https://github.com/frappe/datum). Cargo cannot do these 
 3. A change to `000_acl.sql` that makes the `watcher` user with its grant, and a `--watcher-user-password` argument on `datum-migrate`.
 4. A password rotation. `000_acl.sql` uses `CREATE USER IF NOT EXISTS`, so a new password on the Datum Server does not change an existing user. Until Datum sets the password on each run, a rotation needs an operator to run `ALTER USER` on the Datum host.
 
-The Datum release with items 1 to 3 (the per-VM table, the ingest routing and the `watcher` user in the ACL) must ship before Metal exports the series. If not, the series go to `datum.samples`, with no TTL. See [Central deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order).
+The Datum release with items 1 to 3 (the per-VM table, the ingest routing and the `watcher` user in the ACL) must ship before Metal exports the series. If not, the series go to `datum.samples`, with no TTL. See [Central Phase 1](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-1-flow-log-and-counters).
 
 ## Public buckets
 
@@ -210,4 +222,20 @@ Watcher sends its findings, a public bucket match included, in the `abuse` repor
 
 ## Deploy order
 
-Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). Cargo is step 1: the log bucket with its owner key and read key, the `permission` parameter of `add_credentials`, the `abuse:attribute` scope check on `attribute_address`, the per-VM table with its TTL, and the `watcher` read user. Watcher is the last step, with every Abuse Threshold in Shadow.
+Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). It has three phases. Each phase below gives the Cargo items, in order.
+
+[Phase 1: Flow log and counters](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-1-flow-log-and-counters). Data collection, and one data plane change: the NAT port ranges. No detection and no action on VMs.
+
+1. The Datum release ships first: the per-VM table with its 30-day TTL, the routing of `vm_abuse_*` series to it, and the `watcher` read user. Cargo ships the `watcher_user_password` field of the Datum Server with it. See [per-VM metrics](#per-vm-metrics).
+2. Cargo ships the log bucket, its owner key, its read key and its [lifecycle rules](#lifecycle-rules), and the `permission` argument of [`add_credentials`](central-contract.md#add_credentials). Atlas needs both before it provisions write keys.
+3. Last step: after the AUP and the privacy policy state the collection, an operator turns on these Atlas Settings checks, in this order: `is_abuse_metrics_enabled`, `is_nat_port_range_enabled` and `is_abuse_logs_enabled`. Atlas Settings apply to every host in the region. After each switch, the operator checks host CPU, NAT errors and object sizes before the next switch. Then the operator checks the object sizes against the [storage estimates](#log-bucket).
+
+[Phase 2: Findings and restrictions](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-2-findings-and-restrictions). Central acts on sample findings, abuse reports and operators. Watcher does not run yet.
+
+1. Cargo ships `attribute_address` with the `abuse:attribute` scope check. It reads the `nat-ranges` log. It does not need Watcher detection. See [Watcher attribution](watcher.md#attribution).
+2. Cargo ships `tools/fake_watcher` (planned), next to `tools/fake_atlas` and `tools/fake_proxy`, after the Central step of Phase 2. It is test scaffolding. It posts only to a Central that has the `abuse` report branch. It posts signed `abuse` reports with sample findings, from fixture files, to a Central test or staging site. It never posts to production. See [Watcher findings](watcher.md#findings).
+
+[Phase 3: Watcher](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-3-watcher).
+
+1. Cargo ships Watcher, Abuse Threshold and Abuse Feed, with every Abuse Threshold in Shadow.
+2. [Calibration](watcher.md#calibration) against the Phase 1 data. Then each finding code goes to Active, one at a time.

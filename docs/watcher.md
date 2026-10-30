@@ -24,7 +24,7 @@ Central ──commands──▶ Atlas ──▶ Metal
 Other documents:
 
 - Log bucket, keys and the per-VM table: [abuse logs and metrics](abuse-logs.md).
-- Counters, port classes and log formats: [Atlas counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters), [Atlas port classes](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#port-classes), [Atlas NAT log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-log) and [Atlas SNI log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#sni-log).
+- Counters, port classes and log formats: [Atlas counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters), [Atlas port classes](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#port-classes), [Atlas flow log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#flow-log), [Atlas SNI log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#sni-log) and [Atlas NAT port ranges](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-port-ranges).
 - Profiles, exceptions, signals, cases and the deploy order: [Central abuse spec](https://github.com/frappe/central/blob/develop/spec/ABUSE.md).
 
 ## Inputs
@@ -32,7 +32,7 @@ Other documents:
 | Input | Read with | Use |
 |---|---|---|
 | Per-VM `vm_abuse_*` table in Datum | The read-only ClickHouse user `watcher`. See [per-VM metrics](abuse-logs.md#per-vm-metrics). | Volume rules, and the dedicated public addresses of each VM (`vm_abuse_public_address`) for address checks |
-| NAT log, SNI log and proxy access log in the log bucket | The read key. See [keys](abuse-logs.md#keys) and [object layout](abuse-logs.md#object-layout). | Feed matches, hostname checks, address checks, attribution |
+| Flow log, SNI log, `nat-ranges` log and proxy access log in the log bucket | The read key. See [keys](abuse-logs.md#keys) and [object layout](abuse-logs.md#object-layout). | Feed matches from the flow log and the SNI log, hostname checks from the proxy access log, the shared host addresses for address checks and attribution from the `nat-ranges` log |
 | Blocklists and shared abuse databases | Each [Abuse Feed](#feeds) | Feed matches |
 
 Watcher reads only metrics and log rows. It never reads the content of VM traffic.
@@ -58,7 +58,7 @@ Watcher uses these series:
 | `vm_abuse_smtp_blocked_total` | Port 25 attempts that `smtp_outbound` blocked. Metal blocks port 25 only for a VM whose network has `is_port_25_blocked`. |
 | `vm_abuse_stratum_flows_total` | New flows with a stratum match in the first payload bytes |
 | `vm_abuse_amplification_bytes_total` | Public UDP bytes of the `amplification` class. Labels `direction` and `port`. `transmit` counts bytes from an amplification source port. `receive` counts bytes to an amplification destination port. |
-| `vm_abuse_public_address` | Gauge, value 1: one public IPv4 or IPv6 address that the VM has for itself. Label `address`. The shared host MASQUERADE address is not in this series. Watcher uses it for [address checks](#feeds). |
+| `vm_abuse_public_address` | Gauge, value 1: one public IPv4 or IPv6 address that the VM has for itself. Label `address`. Watcher uses it for [address checks](#feeds). The shared host address is not in this series. It is in the `nat-ranges` log. |
 
 Watcher computes rates from counter differences. A counter that goes down is a metald restart. Watcher treats it as a gap, not as a rate.
 
@@ -84,10 +84,10 @@ A finding code uses the GuardDuty style `<threat>:<resource>/<name>`. A finding 
 | `Smtp:VM/BlockedPort25` | Fewer than 500 blocked port 25 attempts, to fewer than 50 destinations | Datum |
 | `Spam:VM/Smtp` | Many port 25 attempts, a submission spray, or a public address on a DNSBL or in SNDS | Datum, feed |
 | `Reflector:VM/<protocol>` | Amplification ratio, or a Shadowserver report | Datum, feed |
-| `CryptoCurrency:VM/PoolConnection` | Pool address from the feed in the NAT log, or a stratum match | NAT log, Datum |
+| `CryptoCurrency:VM/PoolConnection` | Pool address from the feed in the flow log, or a stratum match | Flow log, Datum |
 | `CryptoCurrency:VM/PoolName` | Pool name in the SNI log | SNI log |
-| `Backdoor:VM/C2Activity` | Flows to Spamhaus DROP or abuse.ch Feodo addresses | NAT log |
-| `Proxy:VM/Tor` | Connections to Tor relays from the public consensus | NAT log |
+| `Backdoor:VM/C2Activity` | Flows to Spamhaus DROP or abuse.ch Feodo addresses | Flow log |
+| `Proxy:VM/Tor` | Connections to Tor relays from the public consensus | Flow log |
 | `Phishing:Site/Reported` | A hostname from the proxy access log on Safe Browsing, OpenPhish or URLhaus | Proxy access log, feed |
 | `Phishing:Bucket/Reported` | A public bucket hostname on a phishing feed | Bucket, feed |
 | `DoS:VM/InboundFlood` | Received pps or bps on a VM above the threshold | Datum |
@@ -113,7 +113,7 @@ Every window is 1 min or longer.
 | 10 min | Brute force, SMTP, mining stratum |
 | 1 h | Slow scan, C2 |
 
-Reaction time is the window, plus up to 30 s until the next sample, plus up to 1 min until the next scheduler run. For the flood and scan rules, with 1 min and 2 min windows, this is about 3 min (2.5 min to 3.5 min) from the start of abuse to a restriction. No automatic limit exists before that. A VM can flood or scan for these minutes. This is an accepted trade-off: Atlas keeps no detection state, and Watcher finds all abuse.
+Reaction time is the window, plus up to 30 s until the next sample, plus up to 1 min until the next scheduler run. From Phase 3, when the thresholds are Active, for the flood and scan rules, with 1 min and 2 min windows, this is about 3 min (2.5 min to 3.5 min) from the start of abuse to a restriction. No automatic limit exists before that. A VM can flood or scan for these minutes. This is an accepted trade-off: Atlas keeps no detection state, and Watcher finds all abuse.
 
 ## Thresholds
 
@@ -157,15 +157,15 @@ SMTP:
 | Port 25 misconfiguration | 1 to 499 blocked attempts in 10 min, to fewer than 50 destinations | `Smtp:VM/BlockedPort25`, Low | `vm_abuse_smtp_blocked_total`, `vm_abuse_destinations{port_class="smtp",window="10m"}` |
 | Port 25 spam | 500 or more blocked attempts in 10 min, or 50 or more destinations | `Spam:VM/Smtp`, Medium | `vm_abuse_smtp_blocked_total`, `vm_abuse_destinations{port_class="smtp",window="10m"}` |
 | Submission spray | The `submission` class to 20 or more addresses, or 300 or more new flows to one address, in 10 min | `Spam:VM/Smtp`, Medium | `vm_abuse_destinations{port_class="submission",window="10m"}`, `vm_abuse_flows_per_destination_max{port_class="submission"}` |
-| DNSBL listing | A listing of a public source address in the NAT log, or of a dedicated public address of a VM | `Spam:VM/Smtp` from the feed. See [Feeds](#feeds). | DNSBL feeds, NAT log, `vm_abuse_public_address` |
+| DNSBL listing | A listing of a shared host address from the `nat-ranges` log, or of a dedicated public address of a VM | `Spam:VM/Smtp` from the feed. See [Feeds](#feeds). | DNSBL feeds, `nat-ranges` log, `vm_abuse_public_address` |
 
 Other rules:
 
 | Rule | Trigger | Reads |
 |---|---|---|
-| Mining pool, feed | 1 match of a pool address in the NAT log, or of a pool name in the SNI log | NAT log, SNI log |
+| Mining pool, feed | 1 match of a pool address in the flow log, or of a pool name in the SNI log | Flow log, SNI log |
 | Mining pool, stratum | 1 or more stratum flows in 10 min | `vm_abuse_stratum_flows_total` |
-| C2 | 1 flow to abuse.ch Feodo, or 3 flows in 1 h to Spamhaus DROP | NAT log |
+| C2 | 1 flow to abuse.ch Feodo, or 3 flows in 1 h to Spamhaus DROP | Flow log |
 | Inbound flood | Above 20k pps or 1 Gbit/s received for 2 min. `DoS:VM/InboundFlood`. Central decides the protection. | `vm_abuse_receive_packets_total`, `vm_abuse_receive_bytes_total` |
 
 The HTTP proxy has static limits for each client address and site: `limit_req` 100 requests a second with a burst of 500, and `limit_conn` 200. Watcher does not change them.
@@ -186,27 +186,34 @@ An [Abuse Feed](#abuse-feed) holds one external list. Watcher fetches each enabl
 
 Watcher matches feeds in these ways:
 
-- Logs. Each writer uploads one object for each log every 5 min. Watcher reads each new NAT and SNI object once, and matches the destination addresses and server names against the feeds. Objects are visible only after their upload, so the newest 5 min are not visible yet. See [object layout](abuse-logs.md#object-layout).
+- Logs. Each Metal host uploads one `flow` object and one `sni` object every 5 min. Watcher reads each new flow and SNI object once. It matches the remote addresses of outbound flow rows and the server names of SNI rows against the feeds. Inbound flow rows have no remote address. Objects are visible only after their upload, so the newest 5 min are not visible yet. See [object layout](abuse-logs.md#object-layout).
 - Hostname checks. Watcher checks the distinct hostnames in the proxy access log (sites and custom domains) against the phishing feeds, when a hostname first shows in the log and every day after. A match is `Phishing:Site/Reported`.
 - Public buckets. Watcher checks the hostname of each public bucket against the phishing feeds, when the bucket becomes public and every day after. A match is `Phishing:Bucket/Reported`. This check applies only if Cargo offers public buckets. See [public buckets](abuse-logs.md#public-buckets).
-- Address checks. Every hour, Watcher checks two sets of addresses against the DNSBLs, Microsoft SNDS and Shadowserver: the dedicated public addresses of each VM in `vm_abuse_public_address`, and the distinct public source addresses in the NAT log.
+- Address checks. Every hour, Watcher checks two sets of addresses against the DNSBLs, Microsoft SNDS and Shadowserver: the dedicated public addresses of each VM in `vm_abuse_public_address`, and the shared host addresses in the `nat-ranges` log.
 
-C2 and Tor feed matches read only the NAT log, so they cover only VMs behind shared NAT. A VM with a dedicated public address does not go through the host MASQUERADE, so its flows are not in the NAT log. For these VMs, Watcher finds mining from the SNI log and the stratum counter, and spam from the address checks of the dedicated addresses. See [Atlas NAT log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-log).
+The flow log covers every VM, with shared NAT or a dedicated public address, because Metal records it at the VM tap. It holds public traffic only. Each row names the VM. See [Atlas flow log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#flow-log).
+
+Limit: Metal creates at most 10,000 flow entries for each VM, so it writes at most 10,000 flow rows for each VM in each minute. At the cap, Metal creates no entry for a new flow of that VM. A feed match can miss such a flow. The cap of one VM does not push out the entries of other VMs.
+
+For each VM at the cap in a minute, Metal writes one summary row. The summary row has direction `overflow` and no addresses or ports, so Watcher does not match it against the feeds. Its `Dropped` field holds the count of new flows with no entry in the minute. `vm_abuse_flow_rows_dropped_total` also counts them.
 
 Watcher sends a match to Central as a finding. It does not suspend a site, a bucket or a VM. Central owns the case and the decision.
 
 A finding from a feed with `is_trusted` has `is_trusted_source`. See [Abuse Feed](#abuse-feed).
 
-A dedicated address belongs to one VM. A finding for a dedicated address has `address` and `virtual_machine`. A public address in the NAT log is shared by the VMs behind the host. A finding for a shared NAT address has `address` only. Central decides what to do with each finding.
+A feed match from the flow log has `virtual_machine`. A dedicated address belongs to one VM. A finding for a dedicated address has `address` and `virtual_machine`. A shared host address is shared by the VMs on the host. A finding for a shared host address has `address` only. Central decides what to do with each finding.
 
 ## Log integrity
 
 A Garage write key can replace or delete any object in the log bucket. See [keys](abuse-logs.md#keys). Watcher checks that the log objects stay as the writers uploaded them.
 
-- Each writer uploads one object for each of its logs every 5 min. A Metal host writes `nat` and `sni`. A proxy node writes `proxy-access`. See [object layout](abuse-logs.md#object-layout).
+- A Metal host writes `flow`, `sni` and `nat-ranges`. A proxy node writes `proxy-access`. See [object layout](abuse-logs.md#object-layout).
+- Expected cadence: one object every 5 min for `flow`, `sni` and `proxy-access`. Metal writes `nat-ranges` when a range changes, and the full table once a day, so the expected cadence of `nat-ranges` is daily.
 - Watcher records the ETag of each log object when it reads it. Watcher keeps this record in the cache for 7 days.
 - A writer is expected from its first object until it has had no object for 24 h.
-- An object is missing when its window ended more than 15 min ago and the bucket has no object for it. Watcher does not report missing objects while the log bucket does not answer.
+- A `flow`, `sni` or `proxy-access` object is missing when its window ended more than 15 min ago and the bucket has no object for it.
+- The `nat-ranges` log of a Metal host is missing when the host has no `nat-ranges` object in the last 24 h and 15 min.
+- Watcher does not report missing objects while the log bucket does not answer.
 - Every hour, Watcher lists the objects of the last 7 days again. An object with a different ETag is changed. An object that Watcher recorded and the list does not show is deleted.
 - If the cache is empty, Watcher records the ETags again and reports no change for those objects.
 
@@ -230,7 +237,7 @@ Each missing, changed or deleted object gives a finding:
 The AUP forbids mining on every server. CPU use alone is never evidence. Watcher finds mining from:
 
 - `vm_abuse_stratum_flows_total`. Metal reads only the first payload bytes of new flows to non-standard ports for this match.
-- Matches of pool addresses in the NAT log, and of pool names in the SNI log, against the mining pool feed.
+- Matches of pool addresses in the flow log, and of pool names in the SNI log, against the mining pool feed.
 
 Central decides the outcome for each team.
 
@@ -324,7 +331,7 @@ Each field of `evidence` is optional:
 
 ## Attribution
 
-Central attributes a shared NAT address in an abuse report with a Cargo call:
+Central attributes a shared host address in an abuse report with a Cargo call:
 
 ```
 POST {cargo_url}/api/method/cargo.watcher.api.attribute_address
@@ -339,24 +346,39 @@ X-Cargo-Access-Token: <a Central token for atlas-cargo:<region-id> with scope ab
 | `port` | The public source port in the report |
 | `time` | The time in the report, in UTC |
 
-Watcher reads the NAT log objects around `time`, and finds the row where the outside address and port match and the flow was open at `time`.
+Cargo reads the `nat-ranges` log of the Metal host that has `address`: the last full table before `time`, and the change rows from that table up to `time`. It finds the range on `address` that holds `port` at `time`, and returns the VM of that range. The flow entry cap does not affect attribution.
+
+To find the Metal host that has `address`, Cargo reads the latest full table of every Metal host in the region. A region has few hosts. Cargo can keep the address-to-host result in the cache for 1 h.
+
+Metal writes `nat-ranges` rows as follows:
+
+- `assigned` when Metal sets up the VM network on the host: VM create, VM start and migration in.
+- `freed` when Metal removes the VM network from the host: VM delete, VM stop and migration out.
+- A migrated VM gets a new range on its new host.
+
+The flow log holds the guest address and the guest port, before NAT. The public port of a report is only in the `nat-ranges` log. Cargo cannot join flow rows to a report by port. Thus attribution uses the `nat-ranges` log only.
 
 ```json
 {"virtual_machine": "vm-0a1b2c3d4e"}
 ```
 
-- `virtual_machine` is the Atlas VM ID, or `null` when no row matches.
-- Watcher refuses a `time` newer than the last uploaded window or older than 180 days, because the log does not hold it. Central can ask again later for a new time.
+- `virtual_machine` is the Atlas VM ID, or `null` when no range matches.
+- Cargo refuses a `time` newer than the last uploaded window of that host, because the log does not hold it yet. Central can ask again later for a new time.
+- Cargo refuses a `time` older than 179 days. The log keeps 180 days, and the full table before `time` can be up to 1 day older than `time`.
 - The call uses the same token checks as the bucket calls. See [Central calling Cargo](central-contract.md#central-calling-cargo).
 - Then Cargo accepts the call only when Central signed the token (`iss` is `central`) and its `scope` is `abuse:attribute`. A token from Atlas, or a token with another scope, gets `403`.
 - Central mints the token in the same way as its `atlas-cargo:<region-id>` token for bucket calls, with the scope `abuse:attribute`.
 - The answer holds no other log row.
 
-A dedicated address does not go through the NAT log. Central attributes it from its own public IP history.
+A dedicated address belongs to one VM and is not in the `nat-ranges` log. A VM with a dedicated public IPv4 address gets no NAT slot and no `nat-ranges` rows. Central attributes a dedicated address from its own Public IP history.
+
+IPv6 does not use the shared IPv4 address or a range. Central attributes an IPv6 address from its Public IP history. In the flow log, the `Local address` of an IPv6 row is the address of the VM.
+
+`attribute_address` ships in Phase 2, before Watcher detection. See [deploy order](abuse-logs.md#deploy-order).
 
 ## Calibration
 
-1. Baseline. Until per-VM metrics are in Datum, an operator runs the Atlas script [atlas-abuse-baseline.py](https://github.com/frappe/atlas/blob/develop/scripts/atlas-abuse-baseline.py) on every Metal host from 2 to 7 November 2026, so that the samples include the October month end. Agents do not run it. Its data includes mesh traffic and counts a SYN-ACK as a SYN, so it gives upper bounds only.
+1. Baseline. Phase 1 collects the per-VM metrics and the flow log before Watcher ships. See [deploy order](abuse-logs.md#deploy-order). Until per-VM metrics are in Datum, an operator runs the Atlas script [atlas-abuse-baseline.py](https://github.com/frappe/atlas/blob/develop/scripts/atlas-abuse-baseline.py) on every Metal host from 2 to 7 November 2026, so that the samples include the October month end. Agents do not run it. Its data includes mesh traffic and counts a SYN-ACK as a SYN, so it gives upper bounds only.
 2. Shadow. Every Abuse Threshold `mode` is Shadow for at least 4 weeks, with a month end. Findings have `is_shadow`. Central takes no action on them.
 3. Red team in staging, from a test tenant. Each row must give a finding in time:
 

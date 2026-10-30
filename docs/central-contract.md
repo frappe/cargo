@@ -175,7 +175,7 @@ The regional log bucket name is a Cargo setting, with no default. Every bucket c
 [Watcher](watcher.md), a planned Cargo module, detects abuse in the region. It reads the log bucket with the read key, and the per-VM abuse metrics as the read-only ClickHouse user `watcher`. Both credentials stay in Cargo. Central holds no abuse credential of Cargo.
 
 - Cargo to Central: after every run, also with no new finding, Watcher sends a report with `service` = `abuse`, a `checked_until` object and a `findings` list. It posts to `central_webhook_url` and signs with `central_webhook_secret`, as the cluster webhook does. It sends nothing while `central_webhook_enabled` is off. The report has no `status` and no `service_endpoint`. Read [Watcher findings](watcher.md#findings).
-- Central to Cargo: `attribute_address` returns the VM that used a shared NAT address at a given time. It is an exception to the rule that every call takes `name` and `region`: it takes `address`, `port` and `time`, and it is in `cargo.watcher.api`. It needs a Central token with the scope `abuse:attribute`. Read [Watcher attribution](watcher.md#attribution).
+- Central to Cargo: `attribute_address` returns the VM that used a shared host address and port at a given time. Cargo finds it in the `nat-ranges` log. It is an exception to the rule that every call takes `name` and `region`: it takes `address`, `port` and `time`, and it is in `cargo.watcher.api`. Cargo refuses a `time` older than 179 days. It needs a Central token with the scope `abuse:attribute`. Read [Watcher attribution](watcher.md#attribution).
 - If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`. Read [public buckets](abuse-logs.md#public-buckets).
 
 ## Who holds which key

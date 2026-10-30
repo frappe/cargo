@@ -26,7 +26,7 @@ Base and Apps images request caching and warm preparation. Atlas boots the publi
 - [Bootstrapping](docs/bootstrapping.md)
 - [What Cargo needs from Atlas](docs/atlas-contract.md)
 - [What Cargo and Central say to each other](docs/central-contract.md)
-- [Abuse logs and metrics](docs/abuse-logs.md) (planned): the log bucket and its keys, per-VM abuse metrics, and the `watcher` read user
+- [Abuse logs and metrics](docs/abuse-logs.md) (planned): the log bucket for the flow, SNI, NAT port range and proxy access logs, its keys, per-VM abuse metrics, the `watcher` read user, and the deploy phases
 - [Watcher](docs/watcher.md) (planned): abuse detection, feeds, log integrity, the `abuse` report to Central, and `attribute_address`
 
 ### Contributing
