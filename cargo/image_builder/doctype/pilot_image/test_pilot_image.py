@@ -19,8 +19,10 @@ from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	start_site_images,
 )
 from cargo.testing import SETTINGS, set_frappe_branches, set_signup_apps, use_test_settings
+from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
+BUILD_MACHINE = "cargo.image_builder.doctype.build_machine"
 APPS = "cargo.image_builder.doctype.pilot_image.apps"
 COMMIT = "a" * 40
 NEW_COMMIT = "b" * 40
@@ -112,6 +114,13 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def completed(self, image: PilotImage, snapshot_id: str) -> PilotImage:
 		image.db_set({"status": "Completed", "snapshot_id": snapshot_id})
 		return image
+
+	def test_every_build_step_is_tracked(self):
+		flow = frappe.new_doc("Pilot Image")._create_image._wrapped
+		self.assertEqual(
+			[name for name, _ in called_methods_in_order(PilotImage, flow)],
+			["pin_releases", "run_provision_script", "take_snapshot", "wait_for_snapshot"],
+		)
 
 	def test_snapshot_is_requested_only_after_the_builder_stops(self):
 		image = self.image()
@@ -470,7 +479,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def atlas_reports(self, image: PilotImage, atlas_image: dict) -> MagicMock:
 		with (
-			patch(f"{CONTROLLER}.AtlasClient") as atlas,
+			patch(f"{BUILD_MACHINE}.AtlasClient") as atlas,
 			patch.object(PilotImage, "defer_current_task") as defer,
 		):
 			atlas.from_settings.return_value.get_snapshot.return_value = atlas_image
@@ -498,7 +507,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def delete_at_atlas(self, image: PilotImage, delete=None, status=None):
 		"""Delete through an Atlas whose delete raises `delete`, then reports `status`."""
-		with patch(f"{CONTROLLER}.AtlasClient") as atlas:
+		with patch(f"{BUILD_MACHINE}.AtlasClient") as atlas:
 			client = atlas.from_settings.return_value
 			client.delete_snapshot.side_effect = delete
 			client.get_snapshot.return_value = {"status": status}

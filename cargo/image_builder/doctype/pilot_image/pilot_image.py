@@ -7,11 +7,10 @@ import frappe
 from frappe import _
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Min
-from frappe.utils import now_datetime
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, AtlasClient, AtlasNotFound, base_image_id
-from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, base_image_id
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
+from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.pilot_image.apps import (
 	get_assets_url,
 	get_install_order,
@@ -25,7 +24,6 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	PROVISION_TIMEOUT,
 	SSH_READY_TIMEOUT,
 	Builder,
-	get_build_spec,
 )
 from cargo.image_builder.doctype.pilot_image.releases import (
 	FRAPPE_REPO,
@@ -51,7 +49,7 @@ BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 DOMAIN_PROVIDER = ("image_builder", "conf", "pilot", "domain_provider.py")
 
 
-class PilotImage(WorkflowBuilder):
+class PilotImage(BuildMachineOwner, WorkflowBuilder):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 
@@ -100,11 +98,6 @@ class PilotImage(WorkflowBuilder):
 		"""Request a build machine from atlas."""
 		self.request_build_machine()
 
-	def request_build_machine(self) -> None:
-		"""Rent a machine to build on. `sync_machines` starts the build once it is running."""
-		machine = MachineDoc.request(owner=self, spec=get_build_spec(), base_image=self.get_boot_image()).name
-		self.db_set({"machine": machine, "status": "Provisioning"})
-
 	def get_boot_image(self) -> str:
 		"""Base boots on Ubuntu, or on the branch's newest Base image when Cargo Settings updates
 		Pilot in place. Site boots on the Base image of its build, and Apps on its Site image."""
@@ -134,13 +127,6 @@ class PilotImage(WorkflowBuilder):
 		return snapshot_id
 
 	@property
-	def build_machine(self) -> MachineDoc | None:
-		if not self.machine:
-			return None
-
-		return frappe.get_doc("Machine", self.machine)
-
-	@property
 	def build_settings(self) -> "CargoSettings":
 		return frappe.get_cached_doc("Cargo Settings")
 
@@ -157,28 +143,6 @@ class PilotImage(WorkflowBuilder):
 			"snapshot_id",
 			order_by="creation desc",
 		)
-
-	def sync_machines(self) -> None:
-		"""Once the machine is live we can start the initial build process."""
-		# Past this, the workflow owns the machine: a finished build terminates it on purpose.
-		if self.status != "Provisioning":
-			return
-
-		machine_status = frappe.db.get_value("Machine", self.machine, "status")
-		if machine_status in DEAD_MACHINE_STATES:
-			self.status = "Failed"
-			self.error = f"Machine {self.machine} is dead. Status: {machine_status}"
-			self.save()
-			return
-
-		if machine_status == "Running":
-			self.status = "Building"
-			self.save()
-			self.create_image()
-			return
-
-		# Any thing other than Dead and Running is a transient state, wait for it.
-		return
 
 	def create_image(self) -> None:
 		"""Build the pilot image on the machine."""
@@ -265,6 +229,16 @@ class PilotImage(WorkflowBuilder):
 		self.take_snapshot()
 		self.wait_for_snapshot()
 
+	@task(queue="long", timeout=3600)
+	def take_snapshot(self) -> None:
+		"""Stop the build machine, then ask Atlas to capture its disk."""
+		super().take_snapshot()
+
+	@task(queue="short")
+	def wait_for_snapshot(self) -> None:
+		"""Wait for Atlas to make the image."""
+		super().wait_for_snapshot()
+
 	@task(queue="short")
 	@deadlock_retry(times=3)
 	def pin_releases(self) -> None:
@@ -288,37 +262,10 @@ class PilotImage(WorkflowBuilder):
 
 		self.save()
 
-	@task(queue="long", timeout=3600)
-	def take_snapshot(self) -> None:
-		"""Stop the build machine, then ask Atlas to capture its disk."""
-		machine = self.build_machine
-		Builder().stop_build_machine(machine)
-
-		is_warm_image = self.image_type != "Site"
-		self.snapshot_id = machine.snapshot(
-			self.name, self.get_atlas_tags(), cache_image=is_warm_image, memory_snapshot=is_warm_image
-		)
-		self.status = "Snapshotting"
-		self.save()
-
-	@task(queue="short")
-	def wait_for_snapshot(self) -> None:
-		"""Wait for Atlas to make the image. A deferred task is run again about once a minute."""
-		atlas_image = AtlasClient.from_settings().get_snapshot(self.snapshot_id)
-		status = atlas_image.get("status")
-		if status in ("failed", "deleting", "archived"):
-			frappe.throw(
-				_("Atlas image {0} is {1}: {2}").format(
-					self.snapshot_id, status, atlas_image.get("transfer_error") or _("Atlas gave no reason.")
-				)
-			)
-
-		if status != "available":
-			self.defer_current_task(_("Atlas is still making image {0}.").format(self.snapshot_id))
-			return
-
-		self.built_at = now_datetime()
-		self.save()
+	@property
+	def is_warm_image(self) -> bool:
+		"""Base and Apps images are captured with memory; a Site image is disk only."""
+		return self.image_type != "Site"
 
 	def get_atlas_tags(self) -> dict[str, str]:
 		"""The image's specification, which is what a search at Atlas asks for."""
@@ -376,75 +323,6 @@ class PilotImage(WorkflowBuilder):
 				f"{app.app} {app.repo} {app.branch} {app.commit}" for app in self.apps
 			),
 		}
-
-	def on_workflow_failure(self, workflow) -> None:
-		"""The workflow engine has given up on this image. The machine is still running, but
-		the image is not going to be built."""
-		failed = frappe.db.get_value(
-			"Press Workflow Task",
-			{"workflow": workflow.name, "status": "Failure"},
-			["method_title", "traceback"],
-			order_by="creation desc",
-			as_dict=True,
-		)
-		stage = failed.method_title if failed else _("Build")
-		if workflow.is_force_failure_requested:
-			stage = _("Stopped by request during: {0}").format(stage)
-		traceback = ((failed and failed.traceback) or workflow.workflow_traceback or "").strip()
-
-		# Recorded before the machine goes, so a failed release cannot hide why the build failed.
-		self.status = "Failed"
-		self.error = f"{stage}\n{traceback}"
-		self.save()
-
-		self.release_build_machine()
-		self.delete_atlas_image()
-
-	def on_workflow_success(self, workflow) -> None:
-		"""Record the completed image and release its stopped build machine."""
-		self.status = "Completed"
-		self.error = None
-		self.save()
-
-		self.release_build_machine()
-
-	def release_build_machine(self) -> None:
-		"""Let the build machine go. A refusal leaves it Broken and in the Error Log, which
-		`Machine.terminate` records."""
-		machine = self.build_machine
-		if machine and machine.status != "Terminated":
-			machine.terminate()
-
-	def delete_atlas_image(self) -> None:
-		"""Delete the Atlas image this build took, so it cannot be booted. Throws while Atlas
-		still has it, so the caller can try again."""
-		if not self.snapshot_id:
-			return
-
-		client = AtlasClient.from_settings()
-		try:
-			# A Pilot snapshot is a System image, which Atlas protects from deletion.
-			client.set_image_termination_protection(self.snapshot_id, enabled=False)
-			client.delete_snapshot(self.snapshot_id)
-			status = client.get_snapshot(self.snapshot_id).get("status")
-		except AtlasNotFound:
-			status = "deleted"
-
-		# Atlas reclaims a deleting or archived image itself, and boots neither.
-		if status not in ("deleted", "deleting", "archived"):
-			frappe.throw(_("Atlas still has image {0}, which is {1}.").format(self.snapshot_id, status))
-
-		self.db_set("snapshot_id", None)
-
-	def retire(self) -> None:
-		"""Delete this image's Atlas image and mark it Retired. Throws while Atlas keeps it,
-		leaving the image as it was for a later run."""
-		if self.status not in ("Completed", "Failed"):
-			frappe.throw(_("Only a finished build can be retired."))
-
-		self.delete_atlas_image()
-		self.status = "Retired"
-		self.save()
 
 
 def get_frappe_branches() -> list[str]:
