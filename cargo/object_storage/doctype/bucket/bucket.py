@@ -30,12 +30,14 @@ class Bucket(Document):
 		from frappe.types import DF
 
 		from cargo.object_storage.doctype.bucket_credential.bucket_credential import BucketCredential
+		from cargo.object_storage.doctype.bucket_tag.bucket_tag import BucketTag
 
 		bucket_credentials: DF.Table[BucketCredential]
 		bucket_name: DF.Data
 		cluster: DF.Link
 		max_objects: DF.Int
 		max_size_gib: DF.Int
+		tags: DF.Table[BucketTag]
 	# end: auto-generated types
 
 	@property
