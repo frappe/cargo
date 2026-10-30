@@ -50,12 +50,14 @@ Watcher uses these series:
 | `vm_abuse_transmit_packets_total`, `vm_abuse_transmit_bytes_total` | Outbound floods and volume. Labels `scope` (public or mesh) and `protocol`. |
 | `vm_abuse_receive_packets_total`, `vm_abuse_receive_bytes_total` | Answer ratios and inbound floods. Same labels. |
 | `vm_abuse_tcp_initiated_total`, `vm_abuse_tcp_answered_total` | SYN floods and scan answer ratios |
+| `vm_abuse_tcp_reset_total` | RST floods. TCP packets with the RST flag that the VM sends to public destinations. |
 | `vm_abuse_udp_first_packets_total` | UDP to new destinations |
 | `vm_abuse_destinations` | Gauge: distinct public destinations in the window. Labels `port_class` (a class, or `all`) and `window` (`60s` or `10m`). |
 | `vm_abuse_ports_per_destination_max` | Gauge: the highest number of distinct ports to one public address in the last 60 s |
 | `vm_abuse_flows_per_destination_max` | Gauge: the highest number of new flows to one public address in the last 10 min. Label `port_class`. |
 | `vm_abuse_unanswered_pairs` | Gauge: unanswered address and port pairs in the last 1 h |
-| `vm_abuse_smtp_blocked_total` | Port 25 attempts that `smtp_outbound` blocked. Metal blocks port 25 only for a VM whose network has `is_port_25_blocked`. |
+| `vm_abuse_mail_blocked_total` | New TCP flows on ports 25, 465 and 587 that the mail ports block dropped. Label `direction` (`outbound` or `inbound`). Metal blocks these ports only for a VM whose network has `is_mail_ports_blocked`. Watcher reads `direction="outbound"` only. |
+| `vm_abuse_smtp_sessions_total` | SMTP session rate. New TCP flows from the VM to public destinations in the `smtp` and `submission` classes. Label `port_class`. Flows that the mail ports block drops are not in this series. |
 | `vm_abuse_stratum_flows_total` | New flows with a stratum match in the first payload bytes |
 | `vm_abuse_amplification_bytes_total` | Public UDP bytes of the `amplification` class. Labels `direction` and `port`. `transmit` counts bytes from an amplification source port. `receive` counts bytes to an amplification destination port. |
 | `vm_abuse_public_address` | Gauge, value 1: one public IPv4 or IPv6 address that the VM has for itself. Label `address`. Watcher uses it for [address checks](#feeds). The shared host address is not in this series. It is in the `nat-ranges` log. |
@@ -63,6 +65,8 @@ Watcher uses these series:
 Watcher computes rates from counter differences. A counter that goes down is a metald restart. Watcher treats it as a gap, not as a rate.
 
 Port classes (`auth`, `smtp`, `submission`, `amplification`, `mining`) are a fixed list in metald. Watcher reads them only as the `port_class` label. See [Atlas port classes](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#port-classes).
+
+SMTP rules count SMTP sessions, not messages. A session is a new TCP flow to the `smtp` or `submission` class that the mail ports block did not drop. Blocked attempts count in `vm_abuse_mail_blocked_total`. To count messages, Watcher must read the SMTP content. TLS hides the content, and the platform does not read it.
 
 ### Stale inputs
 
@@ -77,12 +81,12 @@ A finding code uses the GuardDuty style `<threat>:<resource>/<name>`. A finding 
 
 | Finding code | Match | Source |
 |---|---|---|
-| `DoS:VM/OutboundFlood` | Public pps or bps above the threshold | Datum |
-| `DoS:VM/SynFlood` | Initiated SYN to few destinations, few answered | Datum |
-| `Recon:VM/Portscan` | Fan-out with a low answer ratio | Datum |
+| `DoS:VM/OutboundFlood` | Public packets, UDP packets, ICMP packets or TCP RST a second, or public bits a second, above the threshold | Datum |
+| `DoS:VM/SynFlood` | Initiated TCP SYN a second above the threshold, few answered | Datum |
+| `Recon:VM/Portscan` | Fan-out with a low answer ratio: distinct public addresses a second, addresses in one port class, or ports on one address | Datum |
 | `UnauthorizedAccess:VM/BruteForce` | Auth ports to many addresses, or many connections to one | Datum |
-| `Smtp:VM/BlockedPort25` | Fewer than 500 blocked port 25 attempts, to fewer than 50 destinations | Datum |
-| `Spam:VM/Smtp` | Many port 25 attempts, a submission spray, or a public address on a DNSBL or in SNDS | Datum, feed |
+| `Smtp:VM/BlockedMailPort` | Fewer than 500 blocked outbound mail port attempts, to fewer than 50 destinations | Datum |
+| `Spam:VM/Smtp` | Many blocked outbound mail port attempts, SMTP sessions a minute above the threshold, a submission spray, or a public address on a DNSBL or in SNDS | Datum, feed |
 | `Reflector:VM/<protocol>` | Amplification ratio, or a Shadowserver report | Datum, feed |
 | `CryptoCurrency:VM/PoolConnection` | Pool address from the feed in the flow log, or a stratum match | Flow log, Datum |
 | `CryptoCurrency:VM/PoolName` | Pool name in the SNI log | SNI log |
@@ -109,7 +113,7 @@ Every window is 1 min or longer.
 | Window | Use |
 |---|---|
 | 1 min | Volumetric flood, horizontal and vertical scan, reflector |
-| 2 min | UDP, small-packet, ICMP, and SYN floods, inbound flood |
+| 2 min | Packet, UDP, small-packet, ICMP, SYN and RST floods, inbound flood |
 | 10 min | Brute force, SMTP, mining stratum |
 | 1 h | Slow scan, C2 |
 
@@ -139,11 +143,14 @@ Outbound to public destinations:
 
 | Rule | Finding code | Trigger | Reads |
 |---|---|---|---|
+| Packet flood | `DoS:VM/OutboundFlood` | All protocols above 100k pps for 2 min, received below 10% of sent | `vm_abuse_transmit_packets_total`, `vm_abuse_receive_packets_total` |
 | UDP flood | `DoS:VM/OutboundFlood` | UDP above 20k pps for 2 min, and received below 10% of sent or fewer than 8 destinations | `vm_abuse_transmit_packets_total` and `vm_abuse_receive_packets_total` with `protocol="udp"`, `vm_abuse_destinations{port_class="all",window="60s"}` |
 | Small-packet flood | `DoS:VM/OutboundFlood` | Above 20k pps for 2 min, average packet below 200 bytes | `vm_abuse_transmit_packets_total`, `vm_abuse_transmit_bytes_total` |
 | Volumetric | `DoS:VM/OutboundFlood` | Above 1 Gbit/s for 1 min, received below 5% of sent | `vm_abuse_transmit_bytes_total`, `vm_abuse_receive_bytes_total` |
 | ICMP flood | `DoS:VM/OutboundFlood` | Above 1k pps for 2 min | `vm_abuse_transmit_packets_total{protocol="icmp"}` |
 | SYN flood | `DoS:VM/SynFlood` | Initiated SYN above 2k/s for 2 min, answered below 10% | `vm_abuse_tcp_initiated_total`, `vm_abuse_tcp_answered_total` |
+| RST flood | `DoS:VM/OutboundFlood` | Sent RST above 2k/s for 2 min, and above 2 times the TCP packets received. A VM that answers an inbound scan sends about one RST for each packet received, so it does not match. | `vm_abuse_tcp_reset_total`, `vm_abuse_receive_packets_total{protocol="tcp"}` |
+| Fan-out | `Recon:VM/Portscan` | 20 or more public addresses a second on any port, 1,200 or more in 1 min, below 25% answered | `vm_abuse_destinations{port_class="all",window="60s"}`, `vm_abuse_tcp_initiated_total`, `vm_abuse_tcp_answered_total` |
 | Horizontal scan | `Recon:VM/Portscan` | 256 or more addresses in one port class in 1 min, below 25% answered | `vm_abuse_destinations{window="60s"}` for each port class, `vm_abuse_tcp_initiated_total`, `vm_abuse_tcp_answered_total` |
 | Vertical scan | `Recon:VM/Portscan` | 512 or more ports on one address in 1 min, below 25% answered | `vm_abuse_ports_per_destination_max`, `vm_abuse_tcp_initiated_total`, `vm_abuse_tcp_answered_total` |
 | Slow scan | `Recon:VM/Portscan` | 2,000 or more unanswered address and port pairs in 1 h. Low severity. | `vm_abuse_unanswered_pairs` |
@@ -154,8 +161,9 @@ SMTP:
 
 | Rule | Trigger | Result | Reads |
 |---|---|---|---|
-| Port 25 misconfiguration | 1 to 499 blocked attempts in 10 min, to fewer than 50 destinations | `Smtp:VM/BlockedPort25`, Low | `vm_abuse_smtp_blocked_total`, `vm_abuse_destinations{port_class="smtp",window="10m"}` |
-| Port 25 spam | 500 or more blocked attempts in 10 min, or 50 or more destinations | `Spam:VM/Smtp`, Medium | `vm_abuse_smtp_blocked_total`, `vm_abuse_destinations{port_class="smtp",window="10m"}` |
+| Mail port misconfiguration | 1 to 499 blocked outbound attempts in 10 min, to fewer than 50 destinations | `Smtp:VM/BlockedMailPort`, Low | `vm_abuse_mail_blocked_total{direction="outbound"}`, `vm_abuse_destinations{port_class=~"smtp|submission",window="10m"}` |
+| Mail port spam | 500 or more blocked outbound attempts in 10 min, or 50 or more destinations | `Spam:VM/Smtp`, Medium | `vm_abuse_mail_blocked_total{direction="outbound"}`, `vm_abuse_destinations{port_class=~"smtp|submission",window="10m"}` |
+| SMTP session rate | The `smtp` and `submission` classes above 200 new sessions a minute for 10 min. Only a VM with open mail ports can match. | `Spam:VM/Smtp`, Medium | `vm_abuse_smtp_sessions_total` |
 | Submission spray | The `submission` class to 20 or more addresses, or 300 or more new flows to one address, in 10 min | `Spam:VM/Smtp`, Medium | `vm_abuse_destinations{port_class="submission",window="10m"}`, `vm_abuse_flows_per_destination_max{port_class="submission"}` |
 | DNSBL listing | A listing of a shared host address from the `nat-ranges` log, or of a dedicated public address of a VM | `Spam:VM/Smtp` from the feed. See [Feeds](#feeds). | DNSBL feeds, `nat-ranges` log, `vm_abuse_public_address` |
 
@@ -390,7 +398,7 @@ IPv6 does not use the shared IPv4 address or a range. Central attributes an IPv6
    | hydra against 100 SSH hosts in a test range | Brute force | 12 min |
    | iperf3 UDP at 2 Gbit/s to a silent sink | Volumetric | 3 min |
    | xmrig to a test stratum server | Mining, stratum | 12 min |
-   | swaks loop to 100 MX hosts on port 25 | Port 25 spam | 12 min |
+   | swaks loop to 100 MX hosts on port 25 | Mail port spam | 12 min |
 
    These must stay silent: a bench build (yarn, pip, git), `apt upgrade`, a 50 GB backup to S3, a month-end run of 10k emails, a 500 Mbit/s WireGuard VPN, and a crawler on 1k sites.
 4. Active. Switch one finding code at a time, when false positives are below 1 for each 1,000 VM-days and every red-team row gives a finding.

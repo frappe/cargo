@@ -233,9 +233,10 @@ Central owns the [deploy order](https://github.com/frappe/central/blob/develop/s
 [Phase 2: Findings and restrictions](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-2-findings-and-restrictions). Central acts on sample findings, abuse reports and operators. Watcher does not run yet.
 
 1. Cargo ships `attribute_address` with the `abuse:attribute` scope check. It reads the `nat-ranges` log. It does not need Watcher detection. See [Watcher attribution](watcher.md#attribution).
-2. Cargo ships `tools/fake_watcher` (planned), next to `tools/fake_atlas` and `tools/fake_proxy`, after the Central step of Phase 2. It is test scaffolding. It posts only to a Central that has the `abuse` report branch. It posts signed `abuse` reports with sample findings, from fixture files, to a Central test or staging site. It never posts to production. See [Watcher findings](watcher.md#findings).
+2. Cargo ships the Garage node baseline: the sysctl values and the per-source SYN meter in `count` mode, on each Garage machine. It does not need Phase 1 data. The last Phase 2 step moves the meter to `drop`, after at least 7 days of counters. See [network protection](object-storage.md#network-protection).
+3. Cargo ships `tools/fake_watcher` (planned), next to `tools/fake_atlas` and `tools/fake_proxy`, after the Central step of Phase 2. It is test scaffolding. It posts only to a Central that has the `abuse` report branch. It posts signed `abuse` reports with sample findings, from fixture files, to a Central test or staging site. It never posts to production. See [Watcher findings](watcher.md#findings).
 
 [Phase 3: Watcher](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#phase-3-watcher).
 
-1. Cargo ships Watcher, Abuse Threshold and Abuse Feed, with every Abuse Threshold in Shadow.
+1. Cargo ships Watcher, Abuse Threshold and Abuse Feed, with every Abuse Threshold in Shadow. The [thresholds](watcher.md#thresholds) include the packet, UDP, ICMP, SYN and RST flood rules, the fan-out rule and the SMTP session rate rule. A rule whose series Metal does not export yet stays Off.
 2. [Calibration](watcher.md#calibration) against the Phase 1 data. Then each finding code goes to Active, one at a time.
