@@ -4,18 +4,19 @@ Status: planned. Cargo does not implement this yet.
 
 ## Purpose
 
-Each region keeps its NAT log, SNI log and proxy access log for 180 days. These logs let Central find which VM used an address at a given time, and match traffic against abuse feeds. Cargo keeps them in one log bucket on the regional Garage cluster ([object storage](object-storage.md)).
+Each region keeps its NAT log, SNI log and proxy access log for 180 days. [Watcher](watcher.md) reads them to match traffic against abuse feeds, and to find which VM used an address at a given time. Cargo keeps them in one log bucket on the regional Garage cluster ([object storage](object-storage.md)).
 
-Each region also keeps per-VM abuse metrics for 30 days on its Datum Server. Central reads them to detect abuse.
+Each region also keeps per-VM abuse metrics for 30 days on its Datum Server. Watcher reads them to detect abuse.
 
-Cargo also checks public buckets against phishing feeds and suspends a public bucket on request from Central, if Cargo offers public buckets.
+If Cargo offers public buckets, Cargo also suspends a public bucket on request from Central.
 
 Other documents:
 
 - Log formats: [Atlas NAT log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#nat-log) and [Atlas SNI log](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#sni-log).
 - Uploads from Metal hosts and proxy nodes: [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
 - Per-VM counters: [Atlas counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters) and [Atlas telemetry](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#telemetry).
-- Detection, cases, policy, and retention of Central records: [Central abuse spec](https://github.com/frappe/central/blob/develop/spec/ABUSE.md).
+- Detection, feeds and findings: [Watcher](watcher.md).
+- Cases, policy, and retention of Central records: [Central abuse spec](https://github.com/frappe/central/blob/develop/spec/ABUSE.md).
 
 ## Log bucket
 
@@ -98,37 +99,34 @@ An object outside these prefixes does not expire. Writers write only these prefi
 | Owner key | `owner` | Cargo only. Sets the lifecycle rules. |
 | Host write key | `write` | Metal hosts. Atlas stores it and writes it into the metald host config. |
 | Proxy write key | `write` | HTTP proxy nodes. Atlas stores it and writes it into the proxy node config. |
-| Read key | `read` | Central, on the Region's Cargo connection. Central reads the bucket for feed matching and report attribution. |
+| Read key | `read` | Watcher, in Cargo. Watcher reads the bucket for feed matching and attribution. |
 
-Atlas has no read key. A write key cannot list or read objects. A Metal host cannot read the logs of another host.
+Atlas and Central have no read key. A write key cannot list or read objects. A Metal host cannot read the logs of another host.
 
 Garage has no bucket policies, no per-prefix permissions and no object lock. A write key can replace or delete any object in the bucket. Keep write keys on the writers only. Rotate a key if a writer is compromised.
 
-Cargo stores each secret encrypted, as for other buckets. The handover is manual:
+Cargo stores each secret encrypted, as for other buckets. The read key never leaves Cargo. The handover of the write keys is manual: an operator copies the endpoint, the bucket name, the host write key and the proxy write key from Cargo into Atlas. Atlas writes each write key into the config of its writers. See [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
 
-1. An operator copies the endpoint, the bucket name, the host write key and the proxy write key from Cargo into Atlas. Atlas writes each write key into the config of its writers. See [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
-2. An operator copies the endpoint, the bucket name and the read key from Cargo into the Region's Cargo connection in Central.
-
-To rotate a key:
+To rotate a write key:
 
 1. Cargo makes the new key.
-2. The operator copies the new key into its holder: Atlas for a write key, Central for the read key. Atlas gives a new write key to the writers.
+2. The operator copies the new key into Atlas. Atlas gives it to the writers.
 3. Cargo removes the old key.
 
-The old key works until step 3, so a rotation does not stop uploads or reads.
+The old key works until step 3, so a rotation does not stop uploads. To rotate the read key, Cargo makes the new key, Watcher uses it from its next run, and Cargo removes the old key.
 
 ## Access for investigation
 
-Central reads the bucket with the read key:
+Watcher reads the bucket with the read key:
 
-- Feed matching: after each 5-minute upload, Central matches the new NAT and SNI objects against its abuse feeds.
-- Report attribution: for an abuse report, Central finds the VM that used an address at the reported time.
+- Feed matching: Watcher reads each new NAT and SNI object once, and matches it against its abuse feeds. See [Watcher feeds](watcher.md#feeds).
+- Attribution: for an abuse report, Central calls `attribute_address`, and Watcher finds the VM that used a shared address at the reported time. See [Watcher attribution](watcher.md#attribution).
 
-See [Central feeds](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#feeds).
+Central has no read key. It gets log data only as the `evidence` of a finding and the answer of `attribute_address`.
 
-For an investigation that Central cannot answer, an operator adds a temporary `read` key on the Cargo desk. The operator removes the key when the investigation ends.
+For an investigation that Watcher cannot answer, an operator adds a temporary `read` key on the Cargo desk. The operator removes the key when the investigation ends.
 
-SNI rows can be personal data. Readers do not copy whole objects out of the bucket to Datum, Central or a laptop. Central keeps only the evidence that the Central abuse spec defines.
+SNI rows can be personal data. Readers do not copy whole objects out of the bucket to Datum, Central or a laptop. A finding holds no payloads. See [Watcher findings](watcher.md#findings).
 
 ## Failure behavior
 
@@ -136,7 +134,7 @@ SNI rows can be personal data. Readers do not copy whole objects out of the buck
 |---|---|
 | The gateway does not answer, or a partition cannot be written | Uploads fail. Writers keep up to 7 days of logs locally and alert. Cluster health is Critical ([cluster health](health.md)). |
 | The bucket quota is full | Garage refuses uploads. Writers keep logs locally as above. Customer buckets keep their space. |
-| The Cargo host is down | Uploads and Central reads continue: writers and Central speak S3 to the gateway directly. Key changes and rule checks wait for the next run. |
+| The Cargo host is down | Uploads continue: writers speak S3 to the gateway directly. Watcher does not run, so no `abuse` report goes to Central. Central alerts when a region sends no `abuse` report for 10 min. See [Watcher findings](watcher.md#findings). Key changes and rule checks wait for the next run. |
 | The lifecycle rules are missing or changed | The next run sets them again and writes an Error Log. Until then, objects do not expire. |
 | A write key leaks | Rotate the key. Objects that the leaked key replaced or deleted cannot be restored. |
 
@@ -144,7 +142,7 @@ The log bucket does not change cluster health. A full or failed log bucket does 
 
 ## Per-VM metrics
 
-Metal exports per-VM abuse counters to the regional Datum Server. Their names start with `vm_abuse_`, and the label `virtual_machine` holds the Atlas VM name. Atlas specifies the [counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters) and the [export](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#telemetry).
+Metal exports per-VM abuse counters to the regional Datum Server. Their names start with `vm_abuse_`, and the label `virtual_machine` holds the Atlas VM ID, for example `vm-0a1b2c3d4e`. Atlas specifies the [counters](https://github.com/frappe/atlas/blob/develop/docs/abuse/metrics.md#counters) and the [export](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#telemetry).
 
 Storage:
 
@@ -154,11 +152,11 @@ Storage:
 | Retention | 30 days, by a ClickHouse `TTL` on the sample time, with `ttl_only_drop_parts` as on `datum.traces` |
 | Other series | Stay in `datum.samples`, with no TTL. Datum keeps them forever. |
 
-Central read user:
+Watcher read user:
 
 | Property | Value |
 |---|---|
-| ClickHouse user | `central` |
+| ClickHouse user | `watcher` |
 | Grant | `SELECT` on the per-VM table only. No other table, no `INSERT`, no DDL. |
 | Made by | The Datum ACL migration (`datum-migrate`), the same way as the `insights` user |
 | Password | Made by Cargo on the Datum Server, as for `datum` and `insights`: 32 hex characters, set in `before_save` |
@@ -168,31 +166,28 @@ The `insights` user has `SELECT` on all of `datum.*`, so it can also read the pe
 
 Cargo changes:
 
-- Datum Server gets the Password field `central_user_password`, in `USER_PASSWORDS`. `before_save` fills it. The "Show Password" button shows it to a System Manager.
-- `DatumServer.environment` adds `CENTRAL_USER_PASSWORD`. `install.sh` and `update.sh` require it and give `--central-user-password` to `datum-migrate`.
+- Datum Server gets the Password field `watcher_user_password`, in `USER_PASSWORDS`. `before_save` fills it. The "Show Password" button shows it to a System Manager.
+- `DatumServer.environment` adds `WATCHER_USER_PASSWORD`. `install.sh` and `update.sh` require it and give `--watcher-user-password` to `datum-migrate`.
 - A Datum Server that exists before this change gets the user on its next update, because `update.sh` also runs `datum-migrate`.
 
-Handover to Central: an operator copies the endpoint, the user name and the password from the Datum Server into the Region's Cargo connection in Central. This is the same manual handover as the read key of the log bucket.
+Watcher reads the password from the Datum Server. The password never leaves Cargo, and no operator hands it over. No report to Central holds it, so it is not in the Webhook Request Log.
 
-Cargo does not send the password in a call. The only Datum call from Cargo to Central is the Frappe Webhook for the Datum Server status, and Frappe keeps each webhook body in the Webhook Request Log. The `configure` call from Central sends no data back that could hold it.
-
-If the Datum Server does not answer, Central cannot read per-VM metrics for the region.
+If the Datum Server does not answer, Watcher cannot read per-VM metrics for the region. See [Watcher inputs](watcher.md#inputs).
 
 Dependencies in [Datum](https://github.com/frappe/datum). Cargo cannot do these parts:
 
 1. A migration that makes the per-VM table with the 30-day TTL.
 2. Ingest that writes each series with a name that starts with `vm_abuse_` to the per-VM table, not to `datum.samples`. Datum decides if the per-VM table also feeds `daily_ingestion_stats`.
-3. A change to `000_acl.sql` that makes the `central` user with its grant, and a `--central-user-password` argument on `datum-migrate`.
+3. A change to `000_acl.sql` that makes the `watcher` user with its grant, and a `--watcher-user-password` argument on `datum-migrate`.
 4. A password rotation. `000_acl.sql` uses `CREATE USER IF NOT EXISTS`, so a new password on the Datum Server does not change an existing user. Until Datum sets the password on each run, a rotation needs an operator to run `ALTER USER` on the Datum host.
+
+The Datum release with items 1 to 3 (the per-VM table, the ingest routing and the `watcher` user in the ACL) must ship before Metal exports the series. If not, the series go to `datum.samples`, with no TTL. See [Central deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order).
 
 ## Public buckets
 
 This section applies only if Cargo offers public buckets. Cargo has no public buckets today: every key is private, and Cargo does not turn on Garage website access.
 
-Check:
-
-- When a bucket becomes public, and every day after, Cargo checks its public hostname against the phishing feeds. The feed URLs are a Cargo setting, with no default.
-- A match is a report to Central (see [reports to Central](#reports-to-central)). Cargo does not suspend a bucket on its own. Central owns the case and the decision.
+Check: Watcher checks the hostname of each public bucket against the phishing feeds. A match is a finding to Central. Cargo does not suspend a bucket on its own. Central owns the case and the decision. See [Watcher feeds](watcher.md#feeds).
 
 Suspend:
 
@@ -205,10 +200,8 @@ Suspend:
 
 The log bucket and the per-VM metrics add no field to the cluster report or the Datum Server report.
 
-A feed match on a public bucket adds an optional `abuse_signals` list to the existing `storage` report to `central.api.state_delivery.receive`. Cargo sends a `storage` report when the check finds a match. The Central spec defines the shape of the list: see [Central reports from Cargo](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#reports-from-cargo) and [Central inbound webhooks](https://github.com/frappe/central/blob/develop/spec/WEBHOOKS.md#cargo-reports).
-
-Each item has `signal_id`, `bucket`, `finding_code` (`Phishing:Bucket/Reported`), `severity`, `evidence`, `window_start` and `window_end`.
+Watcher sends its findings, a public bucket match included, in the `abuse` report. See [Watcher findings](watcher.md#findings).
 
 ## Deploy order
 
-Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). Cargo is step 1: the log bucket and its keys, the per-VM table with its TTL, and the Central read user.
+Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). Cargo is step 1: the log bucket and its keys, the per-VM table with its TTL, and the `watcher` read user. Watcher is the last step, with every Abuse Threshold in Shadow.

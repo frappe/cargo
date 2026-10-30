@@ -154,7 +154,13 @@ bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's 
 
 ### Planned: abuse protection
 
-The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. Central reads the log bucket with a read key, and reads per-VM abuse metrics on the Datum Server as the read-only ClickHouse user `central`. An operator copies both credentials into the Region's Cargo connection in Central. No call carries them. If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`, and Cargo adds an optional `abuse_signals` list to its `storage` report. Read [abuse logs and metrics](abuse-logs.md).
+The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. Read [abuse logs and metrics](abuse-logs.md).
+
+[Watcher](watcher.md), a planned Cargo module, detects abuse in the region. It reads the log bucket with the read key, and the per-VM abuse metrics as the read-only ClickHouse user `watcher`. Both credentials stay in Cargo. Central holds no abuse credential of Cargo.
+
+- Cargo to Central: after every run, also with no new finding, Watcher sends a signed report with `service` = `abuse`, a `checked_until` object and a `findings` list. Read [Watcher findings](watcher.md#findings).
+- Central to Cargo: `attribute_address` returns the VM that used a shared NAT address at a given time. It is an exception to the rule that every call takes `name` and `region`: it takes `address`, `port` and `time`, and it is in `cargo.watcher.api`. Read [Watcher attribution](watcher.md#attribution).
+- If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`. Read [public buckets](abuse-logs.md#public-buckets).
 
 ## Who holds which key
 
