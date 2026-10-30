@@ -51,6 +51,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		frappe.db.delete("Bucket", {"bucket_name": BUCKET})
 		# A raw delete leaves the child rows, which a new bucket of the same name would load.
 		frappe.db.delete("Bucket Credential", {"parent": BUCKET})
+		frappe.db.delete("Bucket Tag", {"parent": BUCKET})
 
 	@contextmanager
 	def caller(self):
@@ -92,6 +93,13 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		(credential,) = recorded.bucket_credentials
 		self.assertEqual(credential.access_key, KEY["accessKeyId"])
 		self.assertEqual(credential.get_password("secret_access_key"), KEY["secretAccessKey"])
+
+	def test_a_created_bucket_keeps_the_tags_it_was_given(self):
+		with self.caller():
+			create_bucket(name=BUCKET, region=self.region, tags={"team": "alpha", "server": "server-1"})
+
+		tags = {tag.key: tag.value for tag in frappe.get_doc("Bucket", BUCKET).tags}
+		self.assertEqual(tags, {"team": "alpha", "server": "server-1"})
 
 	def test_setting_a_quota_answers_with_the_cap_it_applied(self):
 		with self.caller() as garage:

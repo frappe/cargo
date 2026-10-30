@@ -12,7 +12,9 @@
   "bucket_credentials",
   "quota_section",
   "max_size_gib",
-  "max_objects"
+  "max_objects",
+  "tags_section",
+  "tags"
  ],
  "fields": [
   {
@@ -66,18 +68,31 @@
    "label": "Metadata"
   },
   {
+   "description": "Every key that opens this bucket. Add, rotate or remove one from the Credentials menu.",
    "fieldname": "bucket_credentials",
    "fieldtype": "Table",
-   "options": "Bucket Credential",
    "label": "Keys",
-   "description": "Every key that opens this bucket. Add, rotate or remove one from the Credentials menu.",
+   "options": "Bucket Credential",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tags_section",
+   "fieldtype": "Section Break",
+   "label": "Tags"
+  },
+  {
+   "fieldname": "tags",
+   "fieldtype": "Table",
+   "label": "Tags",
+   "options": "Bucket Tag",
+   "description": "Labels the caller set when it created this bucket, such as the team or server it belongs to.",
    "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-25 13:24:08.379716",
+ "modified": "2026-10-30 15:01:10.902710",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket",
