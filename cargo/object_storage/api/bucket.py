@@ -56,11 +56,18 @@ def bucket_for(name: str, region: str) -> Bucket:
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
-def create_bucket(name: str, region: str) -> dict:
+def create_bucket(name: str, region: str, tags: dict[str, str] | None = None) -> dict:
 	"""A bucket and the first key that opens it. The secret is handed back here and nowhere
-	else: Cargo keeps no copy a caller can read back."""
+	else: Cargo keeps no copy a caller can read back. Tags stay on the record, not in Garage."""
 	check_region(region)
-	bucket: Bucket = frappe.get_doc({"doctype": "Bucket", "bucket_name": name, "cluster": serving_cluster()})
+	bucket: Bucket = frappe.get_doc(
+		{
+			"doctype": "Bucket",
+			"bucket_name": name,
+			"cluster": serving_cluster(),
+			"tags": [{"key": key, "value": value} for key, value in (tags or {}).items()],
+		}
+	)
 	try:
 		bucket.insert(ignore_permissions=True)
 	except Exception:
