@@ -31,16 +31,20 @@ The log bucket belongs to tenant `0`. It is infrastructure, not a customer bucke
 | Quota | `max_size_gib`, set by an operator for 180 days of logs and a margin |
 | Location | The region. Cargo never copies an object out of the region. |
 
-Cargo makes the bucket, its keys and its lifecycle rules on a scheduled run when the cluster is Active. The run is idempotent: it makes only what is missing.
+Cargo makes the bucket, its owner key, the Watcher read key and its lifecycle rules on a scheduled run when the cluster is Active. The run is idempotent: it makes only what is missing.
 
-Every Central bucket call (`create_bucket`, `delete_bucket`, `add_credentials`, `rotate_credentials`, `remove_credentials`, `get_usage`, `set_quota`) refuses the configured log bucket name. Only Cargo changes the log bucket.
+Rules for bucket calls on the configured log bucket name:
+
+- A token from Central gets a refusal for every bucket call (`create_bucket`, `delete_bucket`, `add_credentials`, `rotate_credentials`, `remove_credentials`, `get_usage`, `set_quota`).
+- A token from Atlas can call only `add_credentials` with `permission` = `write`, and `remove_credentials` on a write key. Cargo refuses all other bucket calls from Atlas on the log bucket.
+- Only Cargo changes the bucket, its quota, its lifecycle rules, the owner key and the read key.
 
 ## Writers
 
 | Writer | Log | Gets the endpoint and key from |
 |---|---|---|
-| Metal host | NAT log, SNI log | Atlas, in the metald host config |
-| HTTP proxy node | Proxy access log | Atlas, in the proxy node config |
+| Metal host | NAT log, SNI log | Atlas, in the metald host config. Each host has its own write key. |
+| HTTP proxy node | Proxy access log | Atlas, in the proxy node config. Each node has its own write key. |
 
 Each writer compresses each closed 5-minute window with zstd and uploads it as one object. The writer deletes its local file only after a confirmed upload. The Atlas documents above specify the writer behavior and the content of each object.
 
@@ -94,26 +98,28 @@ An object outside these prefixes does not expire. Writers write only these prefi
 
 ## Keys
 
-| Key | Garage permission | Holder |
-|---|---|---|
-| Owner key | `owner` | Cargo only. Sets the lifecycle rules. |
-| Host write key | `write` | Metal hosts. Atlas stores it and writes it into the metald host config. |
-| Proxy write key | `write` | HTTP proxy nodes. Atlas stores it and writes it into the proxy node config. |
-| Read key | `read` | Watcher, in Cargo. Watcher reads the bucket for feed matching and attribution. |
+| Key | Garage permission | Count | Holder |
+|---|---|---|---|
+| Owner key | `owner` | One | Cargo only. Sets the lifecycle rules. |
+| Host write key | `write` | One for each Metal host | That Metal host. Atlas stores the secret in a Password field on the Metal Server and writes it into the metald host config. |
+| Proxy write key | `write` | One for each HTTP proxy node | That proxy node. Atlas stores the secret in a Password field on the Proxy Server and writes it into the proxy node config. |
+| Read key | `read` | One | Watcher, in Cargo. Watcher reads the bucket for feed matching, attribution and the [log integrity](watcher.md#log-integrity) check. |
+
+Cargo makes the owner key and the read key. Cargo stores each secret encrypted, as for other buckets. The owner key and the read key never leave Cargo.
+
+Atlas manages the write keys with the bucket calls of the [Central contract](central-contract.md#central-calling-cargo), with its tenant `0` `atlas-cargo` token, in the same way as its own bucket:
+
+1. When Atlas sets up a Metal host or a proxy node, it calls `add_credentials` with `permission` = `write`. Atlas writes the key into the config of that writer.
+2. Atlas rotates each write key every 30 days. It calls `add_credentials`, writes the new key into the writer config, and then calls `remove_credentials` for the old key. Uploads do not stop.
+3. When Atlas removes a Metal host or a proxy node, it calls `remove_credentials` for its key.
+
+Atlas does not use `rotate_credentials` for write keys, because it deletes the old key before the writer has the new one. See [Atlas log bucket keys](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-bucket-keys) and [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
 
 Atlas and Central have no read key. A write key cannot list or read objects. A Metal host cannot read the logs of another host.
 
-Garage has no bucket policies, no per-prefix permissions and no object lock. A write key can replace or delete any object in the bucket. Keep write keys on the writers only. Rotate a key if a writer is compromised.
+Limit: Garage has no bucket policies, no per-prefix permissions and no object lock. The Garage `write` permission includes delete. A write key can replace or delete any object in the bucket, also the objects of other writers. Each writer has its own key, so Atlas can remove the key of one writer and keep the others. Watcher finds a missing, changed or deleted object. See [log integrity](watcher.md#log-integrity).
 
-Cargo stores each secret encrypted, as for other buckets. The read key never leaves Cargo. The handover of the write keys is manual: an operator copies the endpoint, the bucket name, the host write key and the proxy write key from Cargo into Atlas. Atlas writes each write key into the config of its writers. See [Atlas log upload](https://github.com/frappe/atlas/blob/develop/docs/abuse/contract.md#log-upload).
-
-To rotate a write key:
-
-1. Cargo makes the new key.
-2. The operator copies the new key into Atlas. Atlas gives it to the writers.
-3. Cargo removes the old key.
-
-The old key works until step 3, so a rotation does not stop uploads. To rotate the read key, Cargo makes the new key, Watcher uses it from its next run, and Cargo removes the old key.
+To rotate the read key, Cargo makes the new key, Watcher uses it from its next run, and Cargo removes the old key.
 
 ## Access for investigation
 
@@ -134,9 +140,9 @@ SNI rows can be personal data. Readers do not copy whole objects out of the buck
 |---|---|
 | The gateway does not answer, or a partition cannot be written | Uploads fail. Writers keep up to 7 days of logs locally and alert. Cluster health is Critical ([cluster health](health.md)). |
 | The bucket quota is full | Garage refuses uploads. Writers keep logs locally as above. Customer buckets keep their space. |
-| The Cargo host is down | Uploads continue: writers speak S3 to the gateway directly. Watcher does not run, so no `abuse` report goes to Central. Central alerts when a region sends no `abuse` report for 10 min. See [Watcher findings](watcher.md#findings). Key changes and rule checks wait for the next run. |
+| The Cargo host is down | Uploads continue: writers speak S3 to the gateway directly. Watcher does not run, so no `abuse` report goes to Central. Central alerts when a region sends no `abuse` report for 10 min. See [Watcher findings](watcher.md#findings). Atlas cannot add, rotate or remove a write key until Cargo answers. Rule checks wait for the next run. |
 | The lifecycle rules are missing or changed | The next run sets them again and writes an Error Log. Until then, objects do not expire. |
-| A write key leaks | Rotate the key. Objects that the leaked key replaced or deleted cannot be restored. |
+| A write key leaks | Atlas rotates or removes the key of that writer. The other writers keep their keys. Objects that the leaked key replaced or deleted cannot be restored. Watcher reports them as `Integrity:Log/Missing`. |
 
 The log bucket does not change cluster health. A full or failed log bucket does not stop customer buckets, and a customer bucket problem does not change the log bucket.
 
@@ -204,4 +210,4 @@ Watcher sends its findings, a public bucket match included, in the `abuse` repor
 
 ## Deploy order
 
-Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). Cargo is step 1: the log bucket and its keys, the per-VM table with its TTL, and the `watcher` read user. Watcher is the last step, with every Abuse Threshold in Shadow.
+Central owns the [deploy order](https://github.com/frappe/central/blob/develop/spec/ABUSE.md#deploy-order). Cargo is step 1: the log bucket with its owner key and read key, the `permission` parameter of `add_credentials`, the `abuse:attribute` scope check on `attribute_address`, the per-VM table with its TTL, and the `watcher` read user. Watcher is the last step, with every Abuse Threshold in Shadow.

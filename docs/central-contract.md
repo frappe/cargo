@@ -2,11 +2,16 @@
 
 Two conversations, each one way.
 
-**Cargo → Central** is one webhook, and nothing else: a cluster reports whether it can be
-used. Cargo holds no Central credential and calls no Central endpoint.
+**Cargo → Central** is two flows. Both post a signed report to `central_webhook_url`:
+
+- The Frappe Webhook of each cluster: the cluster reports whether it can be used. See [Cargo reporting in](#cargo-reporting-in).
+- Planned: the Watcher `abuse` report, after every Watcher run. See [Planned: abuse protection](#planned-abuse-protection).
+
+Cargo holds no Central token and calls no other Central endpoint.
 
 **Central → Cargo** is bucket work: make a bucket, drop it, add, rotate or remove its keys. Cargo
-owns the cluster's admin token, so Central asks rather than acts.
+owns the cluster's admin token, so Central asks rather than acts. Planned: Central also calls
+`attribute_address`.
 
 Cargo's side is `cargo/object_storage/api/bucket.py` and the webhook built in
 `cargo/object_storage/doctype/object_storage_cluster/object_storage_cluster.py`. Central's
@@ -47,7 +52,7 @@ A **Frappe Webhook**, created against the cluster when the cluster is created, f
 `on_update` when `doc.status in ("Active", "Failed")` — the two states worth a call.
 
 ```
-POST {central_url}/api/method/central.api.cargo_webhooks.object_storage_cluster_webhook
+POST {central_url}/api/method/central.api.state_delivery.receive
 X-Frappe-Webhook-Signature: <base64 HMAC-SHA256 of the body>
 ```
 
@@ -100,8 +105,9 @@ could sign a token claiming to be Atlas, or the reverse.
 
 A failed check answers the same way whatever failed: `AuthenticationError`, no detail.
 
-Atlas already mints this audience for its own bucket call, with subject `atlas` and a 5-minute
-lifetime. Central does not mint it yet, so no Central call gets past the audience check today.
+Atlas mints this audience for its own bucket calls, with subject `atlas` and a 5-minute lifetime. Central mints it for its bucket calls with the scope `bucket:*`.
+
+The bucket calls do not check `scope`. Planned: `attribute_address` also needs `iss` = `central` and `scope` = `abuse:attribute`. Any other token gets `403`. Read [Watcher attribution](watcher.md#attribution).
 
 It travels in `X-Cargo-Access-Token` rather than `Authorization`, because Frappe rejects an
 unrecognised `Authorization` header with a 401 before the endpoint is reached.
@@ -134,18 +140,28 @@ already taken is refused before anything is made.
 Drops the bucket and all its keys, and frees the name with them. Garage refuses a bucket that
 still holds objects with a 409, which is what stops this ever taking data with it.
 
-A bucket can have more than one key. Each key has full read and write access to the bucket.
+A bucket can have more than one key. The key from `create_bucket` has full read and write access to the bucket.
 
 ### `add_credentials`
 
 One more key for the bucket. The other keys keep working. Returns the same `credentials`
 shape as `create_bucket`, once.
 
+Planned: an optional `permission`, `write` or `read`. With no `permission`, the key has full read and write access, as today.
+
+| `permission` | Garage permission | The key can |
+|---|---|---|
+| (none) | `read` and `write` | Read, list, write and delete objects |
+| `write` | `write` | Write and delete objects. It cannot read or list them. |
+| `read` | `read` | Read and list objects |
+
+Garage `write` includes delete. Atlas uses `write` for the log bucket keys of its Metal hosts and proxy nodes. Read [abuse log keys](abuse-logs.md#keys).
+
 ### `rotate_credentials`
 
 Takes `access_key`. Replaces that key and returns the new one in the `credentials` shape,
 once. The new key is made before the old one is deleted, so a failed rotation does not lock
-the bucket.
+the bucket. Planned: the new key gets the same `permission` as the old key.
 
 ### `remove_credentials`
 
@@ -154,12 +170,12 @@ bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's 
 
 ### Planned: abuse protection
 
-The regional log bucket name is a Cargo setting, with no default. Every bucket call above, `create_bucket` included, refuses the configured name. Read [abuse logs and metrics](abuse-logs.md).
+The regional log bucket name is a Cargo setting, with no default. Every bucket call above from a Central token, `create_bucket` included, refuses the configured name. A token from Atlas can only add and remove write keys on it. Read [abuse logs and metrics](abuse-logs.md#log-bucket).
 
 [Watcher](watcher.md), a planned Cargo module, detects abuse in the region. It reads the log bucket with the read key, and the per-VM abuse metrics as the read-only ClickHouse user `watcher`. Both credentials stay in Cargo. Central holds no abuse credential of Cargo.
 
-- Cargo to Central: after every run, also with no new finding, Watcher sends a signed report with `service` = `abuse`, a `checked_until` object and a `findings` list. Read [Watcher findings](watcher.md#findings).
-- Central to Cargo: `attribute_address` returns the VM that used a shared NAT address at a given time. It is an exception to the rule that every call takes `name` and `region`: it takes `address`, `port` and `time`, and it is in `cargo.watcher.api`. Read [Watcher attribution](watcher.md#attribution).
+- Cargo to Central: after every run, also with no new finding, Watcher sends a report with `service` = `abuse`, a `checked_until` object and a `findings` list. It posts to `central_webhook_url` and signs with `central_webhook_secret`, as the cluster webhook does. It sends nothing while `central_webhook_enabled` is off. The report has no `status` and no `service_endpoint`. Read [Watcher findings](watcher.md#findings).
+- Central to Cargo: `attribute_address` returns the VM that used a shared NAT address at a given time. It is an exception to the rule that every call takes `name` and `region`: it takes `address`, `port` and `time`, and it is in `cargo.watcher.api`. It needs a Central token with the scope `abuse:attribute`. Read [Watcher attribution](watcher.md#attribution).
 - If Cargo offers public buckets, Central also gets `suspend_bucket` and `unsuspend_bucket`. Read [public buckets](abuse-logs.md#public-buckets).
 
 ## Who holds which key
