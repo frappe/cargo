@@ -164,7 +164,13 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 						)
 
 					log.write(f"{file['source']} -> {file['destination']}\n")
-					target = Path(staging) / file["destination"].lstrip("/")
+					target = (Path(staging) / file["destination"].lstrip("/")).resolve()
+					if not target.is_relative_to(Path(staging).resolve()):
+						frappe.throw(
+							frappe._("Destination {0} must stay inside the machine's filesystem.").format(
+								file["destination"]
+							)
+						)
 					target.parent.mkdir(parents=True, exist_ok=True)
 					shutil.copytree(source, target, dirs_exist_ok=True) if source.is_dir() else shutil.copy2(
 						source, target

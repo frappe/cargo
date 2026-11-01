@@ -202,6 +202,22 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		with patch(f"{CONTROLLER}.rsync_over_ssh"), self.assertRaisesRegex(frappe.ValidationError, "inside"):
 			image.copy_files()
 
+	def test_a_template_destination_outside_the_machine_is_rejected(self):
+		(self.application() / "config" / "template.yaml").write_text(
+			f"{TEMPLATE_HEADER}build:\n  files: []\n"
+		)
+		(self.base_path / "common" / "config" / "template.yaml").write_text(
+			"build:\n  files:\n    - source: src\n      destination: /../../escaped\n"
+		)
+		image = self.image(status="Building")
+
+		with (
+			patch(f"{CONTROLLER}.rsync_over_ssh") as rsync,
+			self.assertRaisesRegex(frappe.ValidationError, "stay inside"),
+		):
+			image.copy_files()
+		rsync.assert_not_called()
+
 	def test_application_scripts_run_before_common_within_one_budget(self):
 		self.application(scripts=("20-app.sh", "10-setup.sh"))
 		image = self.image(status="Building")
