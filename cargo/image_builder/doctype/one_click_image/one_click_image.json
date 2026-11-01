@@ -11,13 +11,16 @@
   "application",
   "information",
   "os_version",
+  "commit",
+  "source_hash",
   "build_section",
   "status",
   "machine",
   "snapshot_id",
   "built_at",
   "error",
-  "build_log"
+  "build_log",
+  "template_config"
  ],
  "fields": [
   {
@@ -93,6 +96,27 @@
    "fieldname": "os_version",
    "fieldtype": "Data",
    "label": "OS Version"
+  },
+  {
+   "description": "The commit of the one-click templates repository this image was built from.",
+   "fieldname": "commit",
+   "fieldtype": "Data",
+   "label": "Commit",
+   "read_only": 1
+  },
+  {
+   "description": "The git trees of the application folder and common. A new commit that changes neither builds no new image.",
+   "fieldname": "source_hash",
+   "fieldtype": "Data",
+   "label": "Source Hash",
+   "read_only": 1
+  },
+  {
+   "description": "The template.yaml this image was built from. Central's calls read it, so a later change to the repository does not change what this image offers.",
+   "fieldname": "template_config",
+   "fieldtype": "JSON",
+   "label": "Template Config",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -109,7 +133,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-27 16:30:00.000000",
+ "modified": "2026-11-01 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",

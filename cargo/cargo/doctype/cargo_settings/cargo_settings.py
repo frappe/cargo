@@ -38,7 +38,8 @@ class CargoSettings(Document):
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
 		metadata_snapshot_interval_hours: DF.Float
-		one_click_image_base_path: DF.Data | None
+		one_click_repository_branch: DF.Data | None
+		one_click_repository_url: DF.Data | None
 		proxy_token: DF.Password
 		proxy_url: DF.Data
 		region: DF.Data

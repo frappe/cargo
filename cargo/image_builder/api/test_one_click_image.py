@@ -1,6 +1,6 @@
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 import yaml
@@ -43,6 +43,14 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 
 		self.enterContext(patch.object(OneClickImage, "application_base_path", self.base_path))
 		self.enterContext(patch.object(OneClickImage, "after_insert"))
+		repository = MagicMock(head_sha="commit-1")
+		repository.get_source_hash.return_value = "tree-1:common-1"
+		self.enterContext(
+			patch(
+				"cargo.image_builder.doctype.one_click_image.one_click_image.TemplateRepository.from_settings",
+				return_value=repository,
+			)
+		)
 		self.enterContext(
 			patch(
 				"cargo.image_builder.doctype.one_click_image.one_click_image.get_system_image",
@@ -134,3 +142,14 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 		):
 			with self.subTest(answers=answers), self.assertRaises(frappe.ValidationError):
 				get_one_click_image_user_data("fastapi", answers)
+
+	def test_an_image_offers_the_template_it_was_built_from(self):
+		self.image("Completed")
+		(self.base_path / "fastapi" / "config" / "template.yaml").write_text(
+			TEMPLATE.replace("FastAPI", "Renamed")
+		)
+
+		self.assertEqual(get_supported_one_click_images()[0]["title"], "FastAPI")
+		self.assertEqual(
+			get_one_click_image_requirements("fastapi")["inputs"], yaml.safe_load(TEMPLATE)["inputs"]
+		)

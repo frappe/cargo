@@ -28,7 +28,8 @@
   "max_auto_retry_count",
   "update_pilot_in_base_image",
   "one_click_image_section",
-  "one_click_image_base_path",
+  "one_click_repository_url",
+  "one_click_repository_branch",
   "signup_apps_section",
   "signup_apps",
   "build_machine_spec_section",
@@ -97,7 +98,7 @@
    "reqd": 1
   },
   {
-   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
+   "description": "Webhook secret that central will authenticate cargo with — for events sent from a document.",
    "fieldname": "central_webhook_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -334,16 +335,23 @@
    "label": "One Click Image"
   },
   {
-   "fieldname": "one_click_image_base_path",
+   "description": "The public https:// repository of one-click templates. Cargo clones it and builds each template that changes.",
+   "fieldname": "one_click_repository_url",
    "fieldtype": "Data",
-   "label": "One Click Image Base Path"
+   "label": "One Click Repository URL"
+  },
+  {
+   "default": "main",
+   "fieldname": "one_click_repository_branch",
+   "fieldtype": "Data",
+   "label": "One Click Repository Branch"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-30 02:43:35.410082",
+ "modified": "2026-11-01 20:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

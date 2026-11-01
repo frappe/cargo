@@ -297,6 +297,9 @@ scheduler_events = {
 		"0 */2 * * *": [
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_base_images",
 		],
+		"0 * * * *": [
+			"cargo.image_builder.doctype.one_click_image.one_click_image.build_changed_templates",
+		],
 	},
 	"hourly": ["cargo.object_storage.health.prune_history", "cargo.image_builder.health.ship_metrics"],
 }

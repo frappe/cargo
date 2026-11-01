@@ -4,13 +4,17 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.cargo.doctype.machine.machine import Machine
-from cargo.image_builder.doctype.one_click_image.one_click_image import OneClickImage, get_system_image
+from cargo.image_builder.doctype.one_click_image.one_click_image import (
+	OneClickImage,
+	build_changed_templates,
+	get_system_image,
+)
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
 from cargo.ssh import SshError
 from cargo.testing import use_test_settings
@@ -34,9 +38,12 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		directory = tempfile.TemporaryDirectory()
 		self.addCleanup(directory.cleanup)
 		self.base_path = Path(directory.name)
+		self.repository = MagicMock(head_sha="commit-1")
+		self.repository.get_source_hash.return_value = "tree-1:common-1"
 		for patcher in (
 			patch.object(OneClickImage, "application_base_path", self.base_path),
 			patch(f"{CONTROLLER}.get_system_image", return_value="img-ubuntu"),
+			patch(f"{CONTROLLER}.TemplateRepository.from_settings", return_value=self.repository),
 		):
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -269,3 +276,48 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 			image.retire()
 
 		delete_atlas_image.assert_not_called()
+
+	def test_an_image_is_pinned_to_the_commit_and_keeps_its_template(self):
+		self.application()
+		image = self.image()
+
+		self.assertEqual((image.commit, image.source_hash), ("commit-1", "tree-1:common-1"))
+		self.assertEqual(image.template["description"], "A test app.")
+		self.repository.export.assert_called_once()
+
+	def test_the_hourly_refresh_builds_only_templates_that_changed(self):
+		self.application()
+		frappe.db.set_single_value(
+			"Cargo Settings", "one_click_repository_url", "https://example.test/one-click"
+		)
+		self.repository.list_applications.return_value = ["wordpress"]
+
+		def refresh() -> int:
+			with (
+				patch.object(OneClickImage, "after_insert"),
+				patch(f"{CONTROLLER}.frappe.db.commit"),
+				patch(f"{CONTROLLER}.remove_unused_exports"),
+			):
+				build_changed_templates()
+			return frappe.db.count("One Click Image", {"application": "wordpress"})
+
+		self.assertEqual(refresh(), 1)
+		frappe.db.set_value("One Click Image", {"application": "wordpress"}, "status", "Completed")
+		self.assertEqual(refresh(), 1)
+
+		self.repository.get_source_hash.return_value = "tree-2:common-1"
+		self.assertEqual(refresh(), 2)
+
+	def test_a_build_in_progress_holds_back_the_next_one(self):
+		self.application()
+		frappe.db.set_single_value(
+			"Cargo Settings", "one_click_repository_url", "https://example.test/one-click"
+		)
+		self.repository.list_applications.return_value = ["wordpress"]
+		self.image(status="Building")
+		self.repository.get_source_hash.return_value = "tree-2:common-1"
+
+		with patch(f"{CONTROLLER}.frappe.db.commit"), patch(f"{CONTROLLER}.remove_unused_exports"):
+			build_changed_templates()
+
+		self.assertEqual(frappe.db.count("One Click Image", {"application": "wordpress"}), 1)

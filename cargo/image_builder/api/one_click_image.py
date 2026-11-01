@@ -26,7 +26,7 @@ def get_supported_one_click_images():
 	for image in frappe.db.get_all(
 		"One Click Image",
 		{"status": "Completed"},
-		["name", "application", "os_version", "information", "snapshot_id"],
+		["application", "os_version", "information", "snapshot_id", "template_config"],
 		order_by="creation desc",
 	):
 		newest.setdefault(image.application, image)
@@ -34,7 +34,7 @@ def get_supported_one_click_images():
 	return [
 		{
 			"application": image.application,
-			"title": frappe.get_doc("One Click Image", image.name).application_config["title"],
+			"title": frappe.parse_json(image.template_config)["title"],
 			"os_version": image.os_version,
 			"information": image.information,
 			"snapshot_id": image.snapshot_id,
@@ -52,7 +52,7 @@ def get_one_click_image_requirements(application: str):
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
-	config = image.application_config
+	config = image.template
 	return {
 		"inputs": config.get("inputs", []),
 		"minimum_size": config["minimum_size"],
@@ -71,7 +71,7 @@ def get_one_click_image_user_data(application: str, inputs: dict | str | None = 
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
-	declared = {item["name"]: item for item in image.application_config.get("inputs", [])}
+	declared = {item["name"]: item for item in image.template.get("inputs", [])}
 	if unknown := set(answers) - set(declared):
 		frappe.throw(_("{0} has no input {1}.").format(application, ", ".join(sorted(unknown))))
 
