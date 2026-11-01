@@ -36,59 +36,22 @@ class IntegrationTestTemplateRepository(IntegrationTestCase):
 		self.git(self.origin, "commit", "--quiet", "--message", message)
 		return self.git(self.origin, "rev-parse", "HEAD")
 
-	def test_the_first_use_clones_and_lists_the_templates(self):
-		self.repository.ensure_fresh()
+	def test_a_clone_is_at_the_head_of_the_branch(self):
+		self.repository.clone()
 
+		self.assertTrue(self.repository.is_cloned)
 		self.assertEqual(self.repository.head_sha, self.git(self.origin, "rev-parse", "HEAD"))
-		self.assertEqual(self.repository.list_applications(), ["mariadb", "redis"])
-
-	def test_an_export_holds_the_files_of_the_commit(self):
-		self.repository.ensure_fresh()
-		destination = self.root / "exports" / "build"
-
-		commit = self.repository.export(destination)
-
-		self.assertEqual(commit, self.repository.head_sha)
-		self.assertEqual((destination / "redis" / "config" / "template.yaml").read_text(), "name: redis\n")
-		self.assertFalse((destination / ".git").exists())
-
-	def test_a_refresh_moves_to_the_new_commit_and_changes_only_that_template(self):
-		self.repository.ensure_fresh()
-		redis, mariadb = (self.repository.get_source_hash(name) for name in ("redis", "mariadb"))
-		self.write("redis/config/template.yaml", "name: redis\ntitle: Redis\n")
-		head = self.commit("Change Redis")
-
-		self.repository.ensure_fresh(force=True)
-
-		self.assertEqual(self.repository.head_sha, head)
-		self.assertNotEqual(self.repository.get_source_hash("redis"), redis)
-		self.assertEqual(self.repository.get_source_hash("mariadb"), mariadb)
-
-	def test_a_change_to_common_changes_every_template(self):
-		self.repository.ensure_fresh()
-		redis = self.repository.get_source_hash("redis")
-		self.write("common/config/packages.txt", "curl\n")
-		self.commit("Change common")
-
-		self.repository.ensure_fresh(force=True)
-
-		self.assertNotEqual(self.repository.get_source_hash("redis"), redis)
-
-	def test_an_unreachable_origin_keeps_the_clone(self):
-		self.repository.ensure_fresh()
-		head = self.repository.head_sha
-		self.repository.url = f"file://{self.root / 'gone'}"
-
-		self.repository.ensure_fresh(force=True)
-
-		self.assertEqual(self.repository.head_sha, head)
+		self.assertEqual(
+			(self.repository.path / "redis" / "config" / "template.yaml").read_text(), "name: redis\n"
+		)
 
 	def test_a_hand_edited_clone_is_refused(self):
-		self.repository.ensure_fresh()
+		self.repository.clone()
+		self.repository.reject_if_tampered()
 		(self.repository.path / "redis" / "config" / "template.yaml").write_text("name: changed\n")
 
 		with self.assertRaises(TemplateRepositoryError):
-			self.repository.ensure_fresh()
+			self.repository.reject_if_tampered()
 
 	def test_only_an_https_repository_is_accepted_from_settings(self):
 		frappe.db.set_single_value("Cargo Settings", "one_click_repository_url", "file:///tmp/templates")

@@ -12,7 +12,6 @@
   "information",
   "os_version",
   "commit",
-  "source_hash",
   "build_section",
   "status",
   "machine",
@@ -102,13 +101,6 @@
    "fieldname": "commit",
    "fieldtype": "Data",
    "label": "Commit",
-   "read_only": 1
-  },
-  {
-   "description": "The git trees of the application folder and common. A new commit that changes neither builds no new image.",
-   "fieldname": "source_hash",
-   "fieldtype": "Data",
-   "label": "Source Hash",
    "read_only": 1
   },
   {

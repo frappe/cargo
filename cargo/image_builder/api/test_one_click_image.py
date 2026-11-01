@@ -44,7 +44,6 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 		self.enterContext(patch.object(OneClickImage, "application_base_path", self.base_path))
 		self.enterContext(patch.object(OneClickImage, "after_insert"))
 		repository = MagicMock(head_sha="commit-1")
-		repository.get_source_hash.return_value = "tree-1:common-1"
 		self.enterContext(
 			patch(
 				"cargo.image_builder.doctype.one_click_image.one_click_image.TemplateRepository.from_settings",

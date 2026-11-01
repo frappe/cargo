@@ -9,6 +9,7 @@ from pathlib import Path, PurePath
 
 import frappe
 import yaml
+from frappe.utils.synchronization import filelock
 
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.one_click_image.one_click_image_validator import (
@@ -28,7 +29,9 @@ from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
-IN_PROGRESS_STATES = ("Provisioning", "Building", "Snapshotting")
+# Two first builds must not clone the templates repository into the same folder at once.
+TEMPLATES_LOCK = "one_click_templates"
+TEMPLATES_LOCK_TIMEOUT = 120
 
 
 class OneClickImage(BuildMachineOwner, WorkflowBuilder):
@@ -52,7 +55,6 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		machine: DF.Link | None
 		os_version: DF.Data | None
 		snapshot_id: DF.Data | None
-		source_hash: DF.Data | None
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
 		template_config: DF.JSON | None
 	# end: auto-generated types
@@ -60,9 +62,8 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 	def before_insert(self):
 		"""Pin the build to the repository's current commit, check it and keep its template."""
 		repository = TemplateRepository.from_settings()
-		self.pin_source(repository)
+		self.commit = get_pinned_commit(repository)
 		OneClickApplicationValidator(self.application, self.application_base_path).validate()
-		self.source_hash = repository.get_source_hash(self.application)
 		self.template_config = frappe.as_json(self.application_config)
 		self.os_version = self.application_config["base_image"]["os_version"]
 		self.information = self.application_config["description"]
@@ -71,16 +72,10 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		"""Start the build process for the one click image, rent a machine for the build."""
 		self.request_build_machine()
 
-	def pin_source(self, repository: TemplateRepository) -> None:
-		"""Copy the templates at the current commit, so a refresh during the build changes nothing."""
-		repository.ensure_fresh()
-		self.commit = repository.head_sha
-		repository.export(self.application_base_path)
-
 	@cached_property
 	def application_base_path(self) -> Path:
-		"""This build's copy of the templates repository, at its pinned commit."""
-		return get_export_path(self.commit)
+		"""The one clone of the templates repository, which every build reads."""
+		return TemplateRepository.from_settings().path
 
 	@property
 	def template(self) -> dict:
@@ -261,48 +256,10 @@ def get_system_image(os: str, os_version: str, minimal: bool = False) -> str | N
 	)
 
 
-def get_export_path(commit: str) -> Path:
-	return Path(frappe.get_site_path("private", "one-click-builds", commit))
-
-
-def build_changed_templates() -> None:
-	"""Scheduler: refresh the templates repository, then build each template whose folder or
-	`common` changed since its last image. A build that failed is not tried again on its own."""
-	if not frappe.db.get_single_value("Cargo Settings", "one_click_repository_url"):
-		return
-
-	repository = TemplateRepository.from_settings()
-	repository.ensure_fresh(force=True)
-	for application in repository.list_applications():
-		source_hash = repository.get_source_hash(application)
-		if frappe.db.exists("One Click Image", {"application": application, "source_hash": source_hash}):
-			continue
-		if frappe.db.exists(
-			"One Click Image", {"application": application, "status": ("in", IN_PROGRESS_STATES)}
-		):
-			continue
-
-		try:
-			frappe.get_doc({"doctype": "One Click Image", "application": application}).insert()
-			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- keep each started build if a later template fails
-		except Exception:
-			frappe.db.rollback()
-			frappe.log_error(title=f"One click image for {application} could not start")
-
-	remove_unused_exports()
-
-
-def remove_unused_exports() -> None:
-	"""Delete the copies of the repository that no build in progress reads any more."""
-	in_use = set(frappe.get_all("One Click Image", {"status": ("in", IN_PROGRESS_STATES)}, pluck="commit"))
-	exports = Path(frappe.get_site_path("private", "one-click-builds"))
-	if not exports.is_dir():
-		return
-
-	for export in exports.iterdir():
-		if export.name not in in_use:
-			shutil.rmtree(export, ignore_errors=True)
-
-
-def on_doctype_update() -> None:
-	frappe.db.add_index("One Click Image", ["application", "source_hash"])
+def get_pinned_commit(repository: TemplateRepository) -> str:
+	"""The commit a new build pins to. The clone is made on first use and not refreshed."""
+	with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
+		if not repository.is_cloned:
+			repository.clone()
+		repository.reject_if_tampered()
+		return repository.head_sha
