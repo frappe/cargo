@@ -131,15 +131,17 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 		self.image("Completed")
 		email = {"admin_email": "me@example.com"}
 
-		for answers in (
-			{},
-			{"admin_email": "not an email"},
-			{**email, "domain": "not a domain"},
-			{**email, "admin_password": "short"},
-			{**email, "admin_password": "a long line\nwith a break"},
-			{**email, "shell": "rm -rf /"},
+		for answers, message in (
+			({}, "Admin email is required"),
+			({"admin_email": "not an email"}, "not a valid Email Address"),
+			({**email, "domain": "not a domain"}, "Domain must be a domain name"),
+			({**email, "domain": "a" * 300 + ".com"}, "Domain must be at most 255 characters"),
+			({**email, "admin_password": "password123"}, "Admin password is too easy to guess"),
+			({**email, "admin_password": "a long line\nwith a break"}, "only printable characters"),
+			({**email, "admin_password": "a long line\twith a tab"}, "only printable characters"),
+			({**email, "shell": "rm -rf /"}, "fastapi has no input shell"),
 		):
-			with self.subTest(answers=answers), self.assertRaises(frappe.ValidationError):
+			with self.subTest(answers=answers), self.assertRaisesRegex(frappe.ValidationError, message):
 				get_one_click_image_user_data("fastapi", answers)
 
 	def test_an_image_offers_the_template_it_was_built_from(self):

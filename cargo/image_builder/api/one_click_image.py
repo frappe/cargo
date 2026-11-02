@@ -6,6 +6,7 @@ import frappe
 import yaml
 from frappe import _
 from frappe.utils import validate_email_address
+from frappe.utils.password_strength import test_password_strength
 
 from cargo.auth import verify_token
 
@@ -60,6 +61,45 @@ def get_one_click_image_requirements(application: str):
 	}
 
 
+def validate_password(label: str, value: str) -> None:
+	"""Refuse a password that zxcvbn scores below 3 of 4, with its advice on how to fix it."""
+	result = test_password_strength(value)
+	if result["score"] < 3:
+		feedback = result["feedback"]
+		advice = " ".join([feedback.get("warning") or "", *feedback.get("suggestions", [])]).strip()
+		frappe.throw(
+			_("{0} is too easy to guess. {1}").format(
+				label, advice or _("Use a longer password made of a few uncommon words.")
+			)
+		)
+
+
+def validate_answer(name: str, item: dict, value: str) -> None:
+	"""Throw a message that says what is wrong with one answer and what the input takes."""
+	label = item.get("label", name)
+	kind = item.get("type", "string")
+	max_length = item.get("max_length", 255)
+
+	if not INPUT_NAME.fullmatch(name):
+		frappe.throw(_("The template input {0} is not a valid shell variable name.").format(name))
+	if len(value) > max_length:
+		frappe.throw(_("{0} must be at most {1} characters.").format(label, max_length))
+	if not value.isprintable():
+		frappe.throw(
+			_("{0} can contain only printable characters, with no line breaks or tabs.").format(label)
+		)
+	if kind == "email":
+		validate_email_address(value, throw=True)
+	elif kind == "domain" and not DOMAIN.fullmatch(value):
+		frappe.throw(_("{0} must be a domain name in lowercase, such as app.example.com.").format(label))
+	elif kind == "password":
+		validate_password(label, value)
+	if (pattern := item.get("pattern")) and not re.fullmatch(pattern, value):
+		frappe.throw(
+			_("{0} is not in the expected format. {1}").format(label, item.get("description", "")).strip()
+		)
+
+
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
 @frappe.whitelist(allow_guest=True)
 @verify_token
@@ -84,19 +124,7 @@ def get_one_click_image_user_data(application: str, inputs: dict | str | None = 
 				frappe.throw(_("{0} is required.").format(label))
 			continue
 
-		kind = item.get("type", "string")
-		pattern = item.get("pattern")
-		if (
-			not INPUT_NAME.fullmatch(name)
-			or len(value) > item.get("max_length", 255)
-			or any(character in value for character in "\r\n\0")
-			or (kind == "domain" and not DOMAIN.fullmatch(value))
-			or (kind == "email" and not validate_email_address(value))
-			or (kind == "password" and len(value) < 12)
-			or (pattern and not re.fullmatch(pattern, value))
-		):
-			frappe.throw(_("Enter a valid {0}.").format(label))
-
+		validate_answer(name, item, value)
 		lines.append(f"{name.upper()}={shlex.quote(value)}")
 
 	if not lines:
