@@ -11,11 +11,12 @@ import frappe
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
-from cargo.atlas_client import host_port
+from cargo.atlas_client import AtlasClient, host_port
+from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import run_over_ssh, script
-from cargo.telemetry.vector import install_script
+from cargo.telemetry.vector import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
@@ -38,6 +39,7 @@ class MachineRow(TypedDict):
 	zone: str
 	address: str
 	disk_size_gb: int
+	vm_id: str
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ class Setup(Client):
 				"reference_name": self.cluster.name,
 				"status": "Running",
 			},
-			fields=["name", "role", "zone", "address", "disk_size_gb"],
+			fields=["name", "role", "zone", "address", "disk_size_gb", "vm_id"],
 			order_by="creation",
 		)
 
@@ -209,6 +211,15 @@ class Setup(Client):
 			),
 			on_output,
 		)
+
+		AtlasClient.from_settings().replace_vm_metadata(
+			machine["vm_id"],
+			{
+				"role": machine["role"],
+				"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
+			},
+		)
+		self.run(machine, datum_refresh_script(), on_output)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
 		"""Write this machine into the next layout. Nothing takes effect until it is applied."""

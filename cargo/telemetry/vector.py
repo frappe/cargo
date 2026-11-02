@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import typing
+
+import frappe
+
 from cargo.ssh import script
 from cargo.telemetry.credential import get_metrics_info
+
+if typing.TYPE_CHECKING:
+	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 VECTOR_VERSION = "0.43.1"
 SCRIPT = ("telemetry", "conf", "vector", "install.sh")
@@ -31,3 +38,15 @@ def install_script(
 		variables["CLUSTER"] = cluster
 
 	return script(*SCRIPT, environment=variables)
+
+
+def datum_refresh_script() -> str:
+	"""The script that has a node fetch its own Datum token from Central every day."""
+	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+	return script(
+		"telemetry",
+		"conf",
+		"vector",
+		"setup_datum_refresh.sh",
+		environment={"CENTRAL_URL": settings.central_url},
+	)
