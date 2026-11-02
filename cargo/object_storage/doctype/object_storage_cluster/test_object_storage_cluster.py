@@ -639,6 +639,14 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 				self.assertEqual(step._queue, "long")
 				self.assertGreater(step._timeout, SSH_TIMEOUT)
 
+	def test_a_metrics_exporter_that_will_not_install_fails_the_node(self):
+		"""Nothing hands the node a token later, so setup is the only chance."""
+		with (
+			patch.object(Setup, "setup_machine"),
+			patch.object(Setup, "install_metrics_exporter", side_effect=RuntimeError("vector refused")),
+		):
+			self.assertFalse(self.cluster.start_setup_on_machine(frappe.get_doc("Machine", self.gateway)))
+
 	def test_installing_garage_no_longer_touches_nginx(self):
 		with (
 			patch.object(Setup, "run"),

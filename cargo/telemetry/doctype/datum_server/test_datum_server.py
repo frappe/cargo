@@ -18,7 +18,6 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	SOURCE_HEADER,
 	WEBHOOK_NAME,
 	DatumServer,
-	install_datum_metrics_exporter,
 )
 from cargo.testing import SETTINGS, use_test_settings
 
@@ -621,61 +620,52 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 
 
 class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
-	"""Vector on the Datum host, pushing its own host metrics with the region's token."""
+	"""Vector on the Datum host, pushing its own host metrics with the host's own token."""
 
-	setUp = IntegrationTestTelemetryRouting.setUp
+	def setUp(self):
+		IntegrationTestTelemetryRouting.setUp(self)
+		module = "cargo.telemetry.doctype.datum_server.datum_server"
+		self.atlas = self.enterContext(patch(f"{module}.AtlasClient.from_settings"))
+		self.enterContext(patch(f"{module}.generate_machine_token", return_value="machine-token"))
 
 	def ssh(self, **behaviour):
 		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
 
-	def token(self, **behaviour):
-		return patch(
-			"cargo.telemetry.vector.get_metrics_info",
-			**({"return_value": {"endpoint": "https://datum.test", "token": "datum-jwt"}} | behaviour),
-		)
-
 	def test_the_host_labels_its_metrics_as_telemetry(self):
-		with self.token(), self.ssh() as ran:
+		with self.ssh() as ran:
 			self.server.install_metrics_exporter()
 
-		sent = ran.call_args.args[1]
-		self.assertIn("export DATUM_TOKEN=datum-jwt", sent)
+		sent = ran.call_args_list[1].args[1]
+		self.assertNotIn("export DATUM_TOKEN=", sent)
 		self.assertIn(f"export ROLE={TELEMETRY}", sent)
 		self.assertIn(f"export MACHINE={shlex.quote(self.machine.name)}", sent)
 		self.assertIn(f"export REGION={SETTINGS['region']}", sent)
 		self.assertNotIn("export CLUSTER=", sent)
 
+	def test_the_host_keeps_its_role_and_gets_its_machine_token(self):
+		with self.ssh() as ran:
+			self.server.install_metrics_exporter()
+
+		self.atlas.return_value.replace_vm_metadata.assert_called_once_with(
+			self.machine.vm_id, {"role": TELEMETRY, "datum_telemetry_token": "machine-token"}
+		)
+		refresh = ran.call_args_list[0].args[1]
+		self.assertIn("datum-refresh.timer", refresh)
+		# Central only learns the endpoint once this host is Active, so Cargo names it.
+		self.assertIn(f"export DATUM_ENDPOINT={shlex.quote(self.server.service_endpoint)}", refresh)
+
 	def test_setup_installs_vector_once_datum_is_installed(self):
-		with self.token(), self.ssh() as ran:
+		with self.ssh() as ran:
 			self.assertTrue(self.server.start_setup_on_machine())
 
-		self.assertEqual(ran.call_count, 2)
-		self.assertIn("export VECTOR_VERSION=", ran.call_args_list[1].args[1])
+		self.assertEqual(ran.call_count, 3)
+		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[1])
+		self.assertIn("export VECTOR_VERSION=", ran.call_args_list[2].args[1])
 
-	def test_setup_without_a_token_skips_vector(self):
-		with self.token(side_effect=RuntimeError("no token")), self.ssh() as ran:
-			self.assertTrue(self.server.start_setup_on_machine())
-
-		self.assertEqual(ran.call_count, 1)
-
-	def test_a_vector_that_will_not_install_does_not_fail_setup(self):
-		with self.token(), self.ssh(side_effect=["", RuntimeError("vector refused")]):
-			self.assertTrue(self.server.start_setup_on_machine())
+	def test_a_metrics_exporter_that_will_not_install_fails_the_host(self):
+		"""Nothing hands the host a token later, so setup is the only chance."""
+		with self.ssh(side_effect=["", RuntimeError("Central refused the machine token")]):
+			self.assertFalse(self.server.start_setup_on_machine())
 
 		self.server.reload()
-		self.assertNotEqual(self.server.status, "Failed")
-
-	def test_a_new_token_reaches_a_serving_host(self):
-		self.server.mark("Active")
-		with patch.object(frappe, "enqueue_doc") as enqueue:
-			install_datum_metrics_exporter()
-
-		enqueue.assert_called_once()
-		self.assertEqual(enqueue.call_args.args[2], "install_metrics_exporter")
-		self.assertTrue(enqueue.call_args.kwargs["deduplicate"])
-
-	def test_a_host_still_being_set_up_waits_for_its_setup(self):
-		with patch.object(frappe, "enqueue_doc") as enqueue:
-			install_datum_metrics_exporter()
-
-		enqueue.assert_not_called()
+		self.assertEqual(self.server.status, "Failed")

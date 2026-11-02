@@ -89,6 +89,10 @@ class AtlasClient:
 
 		return payload
 
+	def replace_vm_metadata(self, machine_id: str, metadata: dict[str, str]) -> None:
+		"""Replace the VM's whole metadata map. Atlas drops every key left out."""
+		self.call("PUT", f"/virtual-machines/{machine_id}/metadata", {"metadata": metadata})
+
 	def create_vm(
 		self,
 		*,

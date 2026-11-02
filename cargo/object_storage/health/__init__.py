@@ -14,7 +14,6 @@ if typing.TYPE_CHECKING:
 
 __all__ = [
 	"LiveHealth",
-	"install_garage_metrics_exporters",
 	"prune_history",
 	"queue_cluster_metrics_exporters",
 	"refresh_health",
@@ -35,12 +34,6 @@ def refresh_health() -> None:
 			frappe.log_error(title=f"Could not read {name} health")
 
 
-def install_garage_metrics_exporters() -> None:
-	"""Hand every live cluster's nodes the current Datum token, one job per cluster."""
-	for name in live_clusters():
-		queue_cluster_metrics_exporters(name)
-
-
 def queue_cluster_metrics_exporters(cluster: str) -> None:
 	"""Re-install Vector on one cluster's nodes in the background."""
 	frappe.enqueue(
@@ -54,7 +47,7 @@ def queue_cluster_metrics_exporters(cluster: str) -> None:
 
 
 def install_cluster_metrics_exporters(cluster: str) -> None:
-	"""One node failing must not keep the token from the rest."""
+	"""One node failing must not keep the exporter from the rest."""
 	garage: Setup = frappe.get_doc("Object Storage Cluster", cluster).garage_setup
 	for machine in garage.machines:
 		try:

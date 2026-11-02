@@ -1,8 +1,9 @@
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import PropertyMock, patch
 
 import frappe
-from frappe.tests import IntegrationTestCase
+from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.setup import NGINX_CONF, Setup
@@ -16,6 +17,7 @@ def machine(role: str) -> dict:
 		"zone": "z1",
 		"address": "fdaa:1::5",
 		"disk_size_gb": 20,
+		"vm_id": f"vm-{role}",
 	}
 
 
@@ -236,3 +238,29 @@ class IntegrationTestStaleRoles(IntegrationTestCase):
 		workers = {"one": [{"name": "Block resync worker #1", "queueLength": 0, "persistentErrors": 0}]}
 
 		self.assertEqual(self.moving_blocks_with(setup, workers), [])
+
+
+class UnitTestMetricsExporter(UnitTestCase):
+	"""Each node gets its own machine token in its metadata, and a timer that trades it."""
+
+	def test_the_node_keeps_its_role_and_gets_its_machine_token(self):
+		cluster = SimpleNamespace(name="OSC-0001", region="blr", admin_port=3903, metrics_scrape_seconds=30)
+		setup = Setup(cluster)
+		node = machine(STORAGE)
+		module = "cargo.object_storage.doctype.object_storage_cluster.setup"
+
+		with (
+			patch.object(Setup, "secrets", new_callable=PropertyMock, return_value={"metrics_token": "m"}),
+			patch.object(Setup, "run") as run,
+			patch(f"{module}.install_script", return_value="install vector"),
+			patch(f"{module}.datum_refresh_script", return_value="install timer"),
+			patch(f"{module}.generate_machine_token", return_value="machine-token") as generate,
+			patch(f"{module}.AtlasClient.from_settings") as atlas,
+		):
+			setup.install_metrics_exporter(node)
+
+		generate.assert_called_once_with(STORAGE, node["name"])
+		atlas.return_value.replace_vm_metadata.assert_called_once_with(
+			"vm-storage", {"role": STORAGE, "datum_telemetry_token": "machine-token"}
+		)
+		self.assertEqual([call.args[1] for call in run.call_args_list], ["install timer", "install vector"])
