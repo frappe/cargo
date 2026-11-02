@@ -4,11 +4,13 @@ import shlex
 import shutil
 import tempfile
 import time
+from datetime import datetime, timedelta
 from functools import cached_property
 from pathlib import Path, PurePath
 
 import frappe
 import yaml
+from frappe.utils import now_datetime
 from frappe.utils.synchronization import filelock
 
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
@@ -276,6 +278,7 @@ def get_pinned_commit(repository: TemplateRepository) -> str:
 
 def refresh_latest_registry():
 	"""Move the clone to the branch head and start a build for each application without an image."""
+	report_if_registry_is_stale()
 	repository = TemplateRepository.from_settings()
 	with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
 		# A build reads the clone until its snapshot, so the clone must not move under it.
@@ -286,7 +289,7 @@ def refresh_latest_registry():
 
 		get_pinned_commit(repository)
 		repository.refresh()
-		frappe.db.set_single_value("Cargo Settings", "last_repository_refresh", frappe.utils.now_datetime())
+		frappe.db.set_single_value("Cargo Settings", "last_repository_refresh", now_datetime())
 		frappe.db.commit()  # nosemgrep
 
 	# Outside the lock: inserting an image takes it again to pin the commit.
@@ -298,6 +301,25 @@ def refresh_latest_registry():
 		except Exception:
 			frappe.db.rollback()
 			frappe.log_error(title=f"Could not start a one-click image of {application}")
+
+
+def report_if_registry_is_stale() -> None:
+	"""Log an error with a fixed title when the clone has not moved for 6 hours, for an alert to count."""
+	last_refresh = frappe.db.get_single_value("Cargo Settings", "last_repository_refresh")
+	# An unset Datetime reads back as 0001-01-01: the first refresh has not run yet.
+	if last_refresh == datetime.min or now_datetime() - last_refresh < timedelta(hours=6):
+		return
+
+	building = frappe.get_all(
+		"One Click Image", {"status": ("in", ["Provisioning", "Building", "Snapshotting"])}, pluck="name"
+	)
+	frappe.log_error(
+		title="One-click templates repository is stale",
+		message=f"Last refreshed at {last_refresh}. Builds in progress, which skip a refresh: "
+		f"{', '.join(building) or 'none'}.",
+		# The refresh can still fail after this, and a rollback must not take the log with it.
+		defer_insert=True,
+	)
 
 
 def get_unbuilt_applications(repository: TemplateRepository) -> list[str]:

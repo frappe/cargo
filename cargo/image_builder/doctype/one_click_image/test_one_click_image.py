@@ -3,17 +3,20 @@
 
 import os
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import now_datetime
 
 from cargo.cargo.doctype.machine.machine import Machine
 from cargo.image_builder.doctype.one_click_image.one_click_image import (
 	OneClickImage,
 	get_system_image,
 	refresh_latest_registry,
+	report_if_registry_is_stale,
 )
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
 from cargo.ssh import SshError
@@ -354,3 +357,18 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 			image.install_packages()
 
 		wait.assert_not_called()
+
+	def test_a_repository_not_refreshed_for_6_hours_is_logged(self):
+		self.application()
+		self.image(status="Building")
+		for hours, is_logged in ((None, False), (5, False), (7, True)):
+			last_refresh = now_datetime() - timedelta(hours=hours) if hours else None
+			frappe.db.set_single_value("Cargo Settings", "last_repository_refresh", last_refresh)
+
+			with self.subTest(hours=hours), patch.object(frappe, "log_error") as log_error:
+				report_if_registry_is_stale()
+
+			self.assertEqual(log_error.called, is_logged)
+
+		self.assertEqual(log_error.call_args.kwargs["title"], "One-click templates repository is stale")
+		self.assertIn("OCI-", log_error.call_args.kwargs["message"])
