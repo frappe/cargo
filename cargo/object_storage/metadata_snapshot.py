@@ -7,7 +7,6 @@ import frappe
 from frappe.utils import get_datetime, now_datetime
 
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import get_running_workflow
-from cargo.object_storage.health import live_clusters
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (

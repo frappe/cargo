@@ -117,6 +117,19 @@ class IntegrationTestBuilder(IntegrationTestCase):
 			self.builder.stop_build_machine(Mock(vm_id="vm-builder"))
 		flush.assert_not_called()
 
+	def test_stop_without_flush_does_not_need_ssh(self):
+		with (
+			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
+			patch.object(Builder, "flush_build_machine") as flush,
+		):
+			atlas.return_value.get_vm.side_effect = [
+				{"current_state": "running"},
+				{"current_state": "stopped"},
+			]
+			self.builder.stop_build_machine(Mock(vm_id="vm-builder"), flush=False)
+		flush.assert_not_called()
+		atlas.return_value.set_power_state.assert_called_once_with("vm-builder", "stop")
+
 	def test_failed_flush_does_not_request_stop(self):
 		with (
 			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,

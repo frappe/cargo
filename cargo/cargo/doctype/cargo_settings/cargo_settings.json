@@ -27,6 +27,10 @@
   "frappe_branches",
   "max_auto_retry_count",
   "update_pilot_in_base_image",
+  "one_click_image_section",
+  "one_click_repository_url",
+  "one_click_repository_branch",
+  "last_repository_refresh",
   "signup_apps_section",
   "signup_apps",
   "build_machine_spec_section",
@@ -95,7 +99,7 @@
    "reqd": 1
   },
   {
-   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
+   "description": "Webhook secret that central will authenticate cargo with — for events sent from a document.",
    "fieldname": "central_webhook_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -325,13 +329,36 @@
    "fieldtype": "Float",
    "label": "Snapshot Interval (Hours)",
    "non_negative": 1
+  },
+  {
+   "fieldname": "one_click_image_section",
+   "fieldtype": "Section Break",
+   "label": "One Click Image"
+  },
+  {
+   "description": "The public https:// repository of one-click apps. Cargo clones it, moves it to the branch head on a refresh and builds each new app.",
+   "fieldname": "one_click_repository_url",
+   "fieldtype": "Data",
+   "label": "One Click Repository URL"
+  },
+  {
+   "default": "main",
+   "fieldname": "one_click_repository_branch",
+   "fieldtype": "Data",
+   "label": "One Click Repository Branch"
+  },
+  {
+   "fieldname": "last_repository_refresh",
+   "fieldtype": "Datetime",
+   "label": "Last Repository Refresh",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-24 16:00:14.628836",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
