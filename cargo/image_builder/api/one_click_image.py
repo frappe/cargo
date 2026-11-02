@@ -50,7 +50,7 @@ def get_supported_one_click_images():
 @verify_token
 def get_one_click_image_requirements(application: str):
 	"""What Central needs to launch the application's newest image: the inputs to ask the user
-	for, the smallest machine it runs on and the ports to open."""
+	for, the smallest machine it runs on, the ports to open and the logo the server shows."""
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
@@ -59,6 +59,7 @@ def get_one_click_image_requirements(application: str):
 		"inputs": config.get("inputs", []),
 		"minimum_size": config["minimum_size"],
 		"ports": config.get("ports", []),
+		"logo": image.logo,
 	}
 
 
