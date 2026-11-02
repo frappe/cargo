@@ -16,6 +16,7 @@ from cargo.auth import (
 	ALGORITHM,
 	TOKEN_HEADER,
 	authenticate_request,
+	generate_machine_token,
 	issuer_for_key_id,
 	token_claims,
 	verify_token,
@@ -284,3 +285,33 @@ class UnitTestAuthenticateRequest(UnitTestCase):
 		with patch("frappe.get_request_header", return_value="   "):
 			with self.assertRaises(frappe.AuthenticationError):
 				authenticate_request()
+
+
+class UnitTestMachineToken(UnitTestCase):
+	"""Central checks a machine token with the webhook secret it shares with this Cargo."""
+
+	secret = "a-webhook-secret-of-32-bytes-len"
+
+	def generate(self, role: str = "storage", machine: str = "vm-1") -> str:
+		settings = SimpleNamespace(region="blr", get_password=lambda field, raise_exception: self.secret)
+		with patch("frappe.get_cached_doc", return_value=settings):
+			return generate_machine_token(role, machine)
+
+	def test_the_webhook_secret_verifies_the_machine_and_its_region(self):
+		claims = jwt.decode(
+			self.generate(), self.secret, algorithms=["HS256"], audience="central:datum-credential"
+		)
+
+		self.assertEqual(claims["iss"], "cargo")
+		self.assertEqual(claims["region"], "blr")
+		self.assertEqual(claims["machine"], "vm-1")
+		self.assertEqual(claims["role"], "storage")
+
+	def test_another_secret_does_not_verify_it(self):
+		with self.assertRaises(jwt.InvalidSignatureError):
+			jwt.decode(
+				self.generate(),
+				"another-secret-of-32-bytes-long!",
+				algorithms=["HS256"],
+				audience="central:datum-credential",
+			)

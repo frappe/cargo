@@ -123,6 +123,16 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertTrue(request.call_args.args[1].endswith("/virtual-machines/vm-1/termination-protection"))
 		self.assertEqual(request.call_args.kwargs["json"], {"enabled": True})
 
+	def test_replacing_metadata_puts_the_whole_map(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.replace_vm_metadata("vm-1", {"role": "storage", "datum-credential": "token"})
+
+		self.assertEqual(request.call_args.args[0], "PUT")
+		self.assertTrue(request.call_args.args[1].endswith("/virtual-machines/vm-1/metadata"))
+		self.assertEqual(
+			request.call_args.kwargs["json"], {"metadata": {"role": "storage", "datum-credential": "token"}}
+		)
+
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):
 			self.client.create_vm(
