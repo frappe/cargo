@@ -1,5 +1,6 @@
+import base64
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import frappe
 
@@ -9,6 +10,9 @@ COMMON = "common"
 PACKAGES_FILE = Path("config") / "packages.txt"
 APPLICATION_NAME = re.compile(r"^[a-z][a-z0-9-]*$")
 PACKAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9+.-]+$")
+LOGO_MAX_BYTES = 32 * 1024
+# Central shows the logo as an image, which runs no script, but a logo holds only drawing.
+UNSAFE_SVG = re.compile(r"<!|<script|<foreignobject|\bon[a-z]+\s*=|href\s*=", re.IGNORECASE)
 
 
 class OneClickApplicationValidator:
@@ -94,3 +98,30 @@ def get_packages(folder: str, base_path: Path) -> list[str]:
 
 	lines = (line.split("#", 1)[0].strip() for line in path.read_text().splitlines())
 	return [line for line in lines if line]
+
+
+def get_logo(folder: str, base_path: Path, config: dict) -> str | None:
+	"""The `logo` of an app's template.yaml as a data URI, or None when it names none. It must
+	be a small SVG file inside the app's config folder."""
+	if not (name := config.get("logo")):
+		return None
+
+	relative = PurePosixPath(str(name))
+	if relative.parts[:1] != ("config",) or ".." in relative.parts or relative.suffix != ".svg":
+		frappe.throw(frappe._("The logo {0} must be an .svg file inside the config folder.").format(name))
+
+	path = base_path / folder / relative
+	if not path.is_file():
+		frappe.throw(frappe._("The logo {0} does not exist.").format(name))
+
+	content = path.read_bytes()
+	if len(content) > LOGO_MAX_BYTES:
+		frappe.throw(frappe._("The logo {0} must be at most 32 KiB.").format(name))
+
+	text = content.decode("utf-8", errors="replace")
+	if not text.lstrip().startswith("<svg") or UNSAFE_SVG.search(text):
+		frappe.throw(
+			frappe._("The logo {0} must be a plain SVG without scripts, links or a doctype.").format(name)
+		)
+
+	return "data:image/svg+xml;base64," + base64.b64encode(content).decode()

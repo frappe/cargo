@@ -11,6 +11,7 @@
   "application",
   "information",
   "os_version",
+  "logo",
   "commit",
   "build_section",
   "status",
@@ -97,6 +98,13 @@
    "label": "OS Version"
   },
   {
+   "description": "The app's logo from template.yaml, as a data URI Central shows.",
+   "fieldname": "logo",
+   "fieldtype": "Long Text",
+   "label": "Logo",
+   "read_only": 1
+  },
+  {
    "description": "The commit of the one-click apps repository this image was built from.",
    "fieldname": "commit",
    "fieldtype": "Data",
@@ -125,7 +133,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-11-02 16:00:00.000000",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",

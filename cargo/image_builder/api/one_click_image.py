@@ -27,7 +27,7 @@ def get_supported_one_click_images():
 	for image in frappe.db.get_all(
 		"One Click Image",
 		{"status": "Completed"},
-		["application", "os_version", "information", "snapshot_id", "app_config"],
+		["application", "os_version", "information", "snapshot_id", "app_config", "logo"],
 		order_by="creation desc",
 	):
 		newest.setdefault(image.application, image)
@@ -38,6 +38,7 @@ def get_supported_one_click_images():
 			"title": frappe.parse_json(image.app_config)["title"],
 			"os_version": image.os_version,
 			"information": image.information,
+			"logo": image.logo,
 			"snapshot_id": image.snapshot_id,
 		}
 		for image in newest.values()

@@ -78,6 +78,7 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 					"title": "FastAPI",
 					"os_version": "24.04",
 					"information": "A test app.",
+					"logo": None,
 					"snapshot_id": "img-new",
 				}
 			],
