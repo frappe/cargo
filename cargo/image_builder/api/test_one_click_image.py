@@ -93,7 +93,6 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 				"inputs": yaml.safe_load(APP_CONFIG)["inputs"],
 				"minimum_size": {"cpu_millicores": 500, "memory_mib": 512, "disk_mib": 5120},
 				"ports": [{"port": 80, "protocol": "tcp"}],
-				"logo": None,
 			},
 		)
 
