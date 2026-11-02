@@ -44,6 +44,10 @@ class TemplateRepository:
 		self.path.parent.mkdir(parents=True, exist_ok=True)
 		run(["git", "clone", "--depth", "1", "--branch", self.branch, "--", self.url, str(self.path)])
 
+	def refresh(self) -> None:
+		self.git("fetch", "--depth", "1", "origin", self.branch)
+		self.git("reset", "--hard", "FETCH_HEAD")
+
 	def reject_if_tampered(self) -> None:
 		if self.git("status", "--porcelain"):
 			frappe.throw(

@@ -30,6 +30,7 @@
   "one_click_image_section",
   "one_click_repository_url",
   "one_click_repository_branch",
+  "last_repository_refresh",
   "signup_apps_section",
   "signup_apps",
   "build_machine_spec_section",
@@ -335,7 +336,7 @@
    "label": "One Click Image"
   },
   {
-   "description": "The public https:// repository of one-click templates. Cargo clones it once, for the first build, and every build reads that clone.",
+   "description": "The public https:// repository of one-click templates. Cargo clones it, moves it to the branch head on a refresh and builds each new template.",
    "fieldname": "one_click_repository_url",
    "fieldtype": "Data",
    "label": "One Click Repository URL"
@@ -345,13 +346,19 @@
    "fieldname": "one_click_repository_branch",
    "fieldtype": "Data",
    "label": "One Click Repository Branch"
+  },
+  {
+   "fieldname": "last_repository_refresh",
+   "fieldtype": "Datetime",
+   "label": "Last Repository Refresh",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 20:00:00.000000",
+ "modified": "2026-11-02 11:17:08.971654",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

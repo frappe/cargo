@@ -29,7 +29,7 @@ from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
-# Two first builds must not clone the templates repository into the same folder at once.
+# Held to clone, pin or refresh the one templates clone, so none of them sees it half moved.
 TEMPLATES_LOCK = "one_click_templates"
 TEMPLATES_LOCK_TIMEOUT = 120
 
@@ -62,9 +62,11 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 	def before_insert(self):
 		"""Pin the build to the repository's current commit, check it and keep its template."""
 		repository = TemplateRepository.from_settings()
-		self.commit = get_pinned_commit(repository)
-		OneClickApplicationValidator(self.application, self.application_base_path).validate()
-		self.template_config = frappe.as_json(self.application_config)
+		# A refresh must not move the clone between pinning the commit and reading the template.
+		with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
+			self.commit = get_pinned_commit(repository)
+			OneClickApplicationValidator(self.application, self.application_base_path).validate()
+			self.template_config = frappe.as_json(self.application_config)
 		self.os_version = self.application_config["base_image"]["os_version"]
 		self.information = self.application_config["description"]
 
@@ -127,6 +129,14 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 	@task(queue="long", timeout=BUILD_TIMEOUT)
 	def install_packages(self):
 		"""Install the apt packages first, so the files and scripts after it can rely on them."""
+		# A refresh can move the clone before this image's row is visible to it.
+		if TemplateRepository.from_settings().head_sha != self.commit:
+			frappe.throw(
+				frappe._("The templates clone moved off commit {0} before the build started.").format(
+					self.commit
+				)
+			)
+
 		machine = self.build_machine
 		private_key = machine.get_password("ssh_private_key")
 		Builder().wait_until_reachable(machine.address, private_key)
@@ -257,9 +267,49 @@ def get_system_image(os: str, os_version: str, minimal: bool = False) -> str | N
 
 
 def get_pinned_commit(repository: TemplateRepository) -> str:
-	"""The commit a new build pins to. The clone is made on first use and not refreshed."""
+	"""The clone's commit, cloning it on first use. Call it holding TEMPLATES_LOCK."""
+	if not repository.is_cloned:
+		repository.clone()
+	repository.reject_if_tampered()
+	return repository.head_sha
+
+
+def refresh_latest_registry():
+	"""Move the clone to the branch head and start a build for each application without an image."""
+	repository = TemplateRepository.from_settings()
 	with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
-		if not repository.is_cloned:
-			repository.clone()
-		repository.reject_if_tampered()
-		return repository.head_sha
+		# A build reads the clone until its snapshot, so the clone must not move under it.
+		if frappe.db.exists(
+			"One Click Image", {"status": ("in", ["Provisioning", "Building", "Snapshotting"])}
+		):
+			return
+
+		get_pinned_commit(repository)
+		repository.refresh()
+		frappe.db.set_single_value("Cargo Settings", "last_repository_refresh", frappe.utils.now_datetime())
+		frappe.db.commit()  # nosemgrep
+
+	# Outside the lock: inserting an image takes it again to pin the commit.
+	for application in get_unbuilt_applications(repository):
+		try:
+			frappe.get_doc({"doctype": "One Click Image", "application": application}).insert()
+			# Inserting rents a machine at Atlas, which a later rollback cannot give back.
+			frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not start a one-click image of {application}")
+
+
+def get_unbuilt_applications(repository: TemplateRepository) -> list[str]:
+	"""Application folders in the clone that have no image yet, other than a retired one."""
+	built = set(
+		frappe.get_all("One Click Image", {"status": ("!=", "Retired")}, pluck="application", distinct=True)
+	)
+	return [
+		folder.name
+		for folder in sorted(repository.path.iterdir())
+		if folder.is_dir()
+		and folder.name != COMMON
+		and not folder.name.startswith((".", "_"))
+		and folder.name not in built
+	]

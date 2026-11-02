@@ -13,6 +13,7 @@ from cargo.cargo.doctype.machine.machine import Machine
 from cargo.image_builder.doctype.one_click_image.one_click_image import (
 	OneClickImage,
 	get_system_image,
+	refresh_latest_registry,
 )
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
 from cargo.ssh import SshError
@@ -37,11 +38,13 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		directory = tempfile.TemporaryDirectory()
 		self.addCleanup(directory.cleanup)
 		self.base_path = Path(directory.name)
-		self.repository = MagicMock(head_sha="commit-1")
+		self.repository = MagicMock(head_sha="commit-1", path=self.base_path)
 		for patcher in (
 			patch.object(OneClickImage, "application_base_path", self.base_path),
 			patch(f"{CONTROLLER}.get_system_image", return_value="img-ubuntu"),
 			patch(f"{CONTROLLER}.TemplateRepository.from_settings", return_value=self.repository),
+			# A refresh commits after each image, which would leak rows past the test's rollback.
+			patch.object(frappe.db, "commit"),
 		):
 			patcher.start()
 			self.addCleanup(patcher.stop)
@@ -297,3 +300,57 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		self.image()
 
 		self.repository.clone.assert_called_once_with()
+
+	def test_a_refresh_builds_each_application_without_an_image(self):
+		self.application()
+		self.image(status="Completed")
+		self.application("redis")
+		(self.base_path / "_template").mkdir()
+
+		with patch.object(OneClickImage, "after_insert"):
+			refresh_latest_registry()
+
+		self.repository.refresh.assert_called_once_with()
+		self.assertEqual(
+			frappe.get_all("One Click Image", pluck="application", order_by="application"),
+			["redis", "wordpress"],
+		)
+
+	def test_a_refresh_waits_while_an_image_builds(self):
+		self.application()
+		self.image(status="Building")
+		self.application("redis")
+
+		refresh_latest_registry()
+
+		self.repository.refresh.assert_not_called()
+		self.assertFalse(frappe.db.exists("One Click Image", {"application": "redis"}))
+
+	def test_a_failed_application_does_not_stop_the_others(self):
+		self.application("redis")
+		self.application("valkey")
+		(self.base_path / "redis" / "README.md").write_text("")
+
+		with (
+			patch.object(OneClickImage, "after_insert"),
+			patch.object(frappe.db, "rollback") as rollback,
+			patch.object(frappe, "log_error") as log_error,
+		):
+			refresh_latest_registry()
+
+		self.assertEqual(frappe.get_all("One Click Image", pluck="application"), ["valkey"])
+		rollback.assert_called_once_with()
+		self.assertIn("redis", log_error.call_args.kwargs["title"])
+
+	def test_a_build_does_not_start_once_the_clone_moved_off_its_commit(self):
+		self.application()
+		image = self.image(status="Building")
+		self.repository.head_sha = "commit-2"
+
+		with (
+			patch.object(Builder, "wait_until_reachable") as wait,
+			self.assertRaisesRegex(frappe.ValidationError, "commit-1"),
+		):
+			image.install_packages()
+
+		wait.assert_not_called()

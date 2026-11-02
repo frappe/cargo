@@ -35,6 +35,7 @@ class CargoSettings(Document):
 		first_storage_disk_growth_percent: DF.Percent
 		frappe_branches: DF.Table[FrappeBranch]
 		jwks_url: DF.Data
+		last_repository_refresh: DF.Datetime | None
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
 		metadata_snapshot_interval_hours: DF.Float

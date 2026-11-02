@@ -45,6 +45,16 @@ class IntegrationTestTemplateRepository(IntegrationTestCase):
 			(self.repository.path / "redis" / "config" / "template.yaml").read_text(), "name: redis\n"
 		)
 
+	def test_a_refresh_moves_the_clone_to_the_branch_head(self):
+		self.repository.clone()
+		self.write("valkey/config/template.yaml", "name: valkey\n")
+		head = self.commit("Add valkey")
+
+		self.repository.refresh()
+
+		self.assertEqual(self.repository.head_sha, head)
+		self.assertTrue((self.repository.path / "valkey").is_dir())
+
 	def test_a_hand_edited_clone_is_refused(self):
 		self.repository.clone()
 		self.repository.reject_if_tampered()
