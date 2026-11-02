@@ -5,7 +5,6 @@ import typing
 import frappe
 
 from cargo.ssh import script
-from cargo.telemetry.credential import get_metrics_info
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -21,14 +20,10 @@ def install_script(
 	cluster: str | None = None,
 	environment: dict[str, str | int] | None = None,
 ) -> str:
-	"""The script that installs Vector on a rented machine, or hands it a new Datum token.
-	`environment` carries what only this role needs. Raises `RuntimeError` while this host
-	has no Datum token to hand over."""
-	info = get_metrics_info()
+	"""The script that installs Vector on a rented machine, after `datum_refresh_script` gave it
+	a Datum token. `environment` carries what only this role needs."""
 	variables = {
 		"VECTOR_VERSION": VECTOR_VERSION,
-		"DATUM_ENDPOINT": info["endpoint"],
-		"DATUM_TOKEN": info["token"],
 		"REGION": region,
 		"ROLE": role,
 		"MACHINE": machine,
@@ -41,12 +36,16 @@ def install_script(
 
 
 def datum_refresh_script() -> str:
-	"""The script that has a node fetch its own Datum token from Central every day."""
+	"""The script that has a node fetch its own Datum token from Central every day, and ship
+	to this region's Datum host."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 	return script(
 		"telemetry",
 		"conf",
 		"vector",
 		"setup_datum_refresh.sh",
-		environment={"CENTRAL_URL": settings.central_url},
+		environment={
+			"CENTRAL_URL": settings.central_url,
+			"DATUM_ENDPOINT": frappe.get_single("Datum Server").service_endpoint,
+		},
 	)

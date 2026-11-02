@@ -263,4 +263,4 @@ class UnitTestMetricsExporter(UnitTestCase):
 		atlas.return_value.replace_vm_metadata.assert_called_once_with(
 			"vm-storage", {"role": STORAGE, "datum_telemetry_token": "machine-token"}
 		)
-		self.assertEqual([call.args[1] for call in run.call_args_list], ["install vector", "install timer"])
+		self.assertEqual([call.args[1] for call in run.call_args_list], ["install timer", "install vector"])

@@ -9,15 +9,14 @@ from frappe.tests import IntegrationTestCase
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster import object_storage_cluster
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
-from cargo.object_storage.health import install_cluster_metrics_exporters, install_garage_metrics_exporters
-from cargo.telemetry import vector as vector_module
+from cargo.object_storage.health import install_cluster_metrics_exporters
 from cargo.testing import use_test_settings
 
-INFO = {"endpoint": "https://datum.test", "token": "datum-jwt"}
+SETUP_MODULE = "cargo.object_storage.doctype.object_storage_cluster.setup"
 
 
 class IntegrationTestMetricsExporter(IntegrationTestCase):
-	"""Vector on every node: host metrics and Garage's own, pushed to datum with the region's token."""
+	"""Vector on every node: host metrics and Garage's own, pushed to datum with the node's own token."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -55,29 +54,31 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 	def install(self, run=None) -> MagicMock:
 		run = run or MagicMock()
 		with (
-			patch.object(vector_module, "get_metrics_info", return_value=INFO),
+			patch(f"{SETUP_MODULE}.AtlasClient.from_settings"),
+			patch(f"{SETUP_MODULE}.generate_machine_token", return_value="machine-token"),
 			patch.object(Setup, "run", run),
 		):
 			install_cluster_metrics_exporters(self.cluster.name)
 
 		return run
 
-	def sent_to(self, machine: str) -> str:
-		return next(call.args[1] for call in self.install().call_args_list if call.args[0]["name"] == machine)
+	def sent_to(self, machine: str) -> list[str]:
+		return [call.args[1] for call in self.install().call_args_list if call.args[0]["name"] == machine]
 
 	def test_every_node_gets_the_exporter(self):
 		run = self.install()
 
 		self.assertEqual({call.args[0]["name"] for call in run.call_args_list}, {self.gateway, self.storage})
 
-	def test_the_node_is_handed_datums_endpoint_and_token(self):
-		sent = self.install().call_args_list[0].args[1]
+	def test_the_node_fetches_its_own_token_before_vector_installs(self):
+		refresh, vector = self.sent_to(self.storage)
 
-		self.assertIn("export DATUM_ENDPOINT=https://datum.test", sent)
-		self.assertIn("export DATUM_TOKEN=datum-jwt", sent)
+		self.assertIn("datum-refresh.timer", refresh)
+		self.assertIn("export VECTOR_VERSION=", vector)
+		self.assertNotIn("export DATUM_TOKEN=", vector)
 
 	def test_the_node_labels_its_metrics_with_where_it_runs(self):
-		sent = self.sent_to(self.storage)
+		sent = self.sent_to(self.storage)[1]
 
 		self.assertIn(f"export CLUSTER={self.cluster.name}", sent)
 		self.assertIn(f"export MACHINE={self.storage}", sent)
@@ -85,33 +86,24 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 
 	def test_the_node_scrapes_garage_itself_with_the_clusters_settings(self):
 		self.cluster.db_set("metrics_scrape_seconds", 120)
-		sent = self.sent_to(self.gateway)
+		sent = self.sent_to(self.gateway)[1]
 
 		self.assertIn(f"export GARAGE_ADMIN_PORT={self.cluster.admin_port}", sent)
 		self.assertIn("export GARAGE_METRICS_TOKEN=cluster-metrics-token", sent)
 		self.assertIn("export GARAGE_SCRAPE_SECONDS=120", sent)
 
 	def test_histograms_reach_datum_as_sum_and_count_only(self):
-		sent = self.sent_to(self.storage)
+		sent = self.sent_to(self.storage)[1]
 
 		self.assertIn('type = "prometheus_scrape"', sent)
 		self.assertIn('sum.name = name + "_sum"', sent)
 		self.assertIn('count.name = name + "_count"', sent)
 		self.assertIn("del(.aggregated_histogram)", sent)
 
-	def test_one_unreachable_node_does_not_keep_the_token_from_the_rest(self):
-		run = self.install(run=MagicMock(side_effect=[RuntimeError("ssh refused"), ""]))
+	def test_one_unreachable_node_does_not_keep_the_exporter_from_the_rest(self):
+		run = self.install(run=MagicMock(side_effect=[RuntimeError("ssh refused"), "", ""]))
 
-		self.assertEqual(run.call_count, 2)
-
-	def test_a_new_token_reaches_every_live_cluster_once(self):
-		self.cluster.db_set("activated_on", frappe.utils.now_datetime())
-		with patch.object(frappe, "enqueue") as enqueue:
-			install_garage_metrics_exporters()
-
-		enqueued = [call for call in enqueue.call_args_list if call.kwargs["cluster"] == self.cluster.name]
-		self.assertEqual(len(enqueued), 1)
-		self.assertTrue(enqueued[0].kwargs["deduplicate"])
+		self.assertEqual(run.call_count, 3)
 
 
 class IntegrationTestScrapeInterval(IntegrationTestCase):

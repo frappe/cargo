@@ -1,12 +1,10 @@
 #!/bin/bash
 # Runs over SSH on a machine Cargo rented: a Garage node or the Datum host. Arguments come
 # from the environment; CLUSTER is left out on a machine no cluster owns.
-# Idempotent: run again with a new DATUM_TOKEN to rotate it.
+# Runs after setup_datum_refresh.sh, which owns the Datum lines of datum.env. Idempotent.
 set -euo pipefail
 
 : "${VECTOR_VERSION:?VECTOR_VERSION is required}"
-: "${DATUM_ENDPOINT:?DATUM_ENDPOINT is required}"
-: "${DATUM_TOKEN:?DATUM_TOKEN is required}"
 : "${REGION:?REGION is required}"
 : "${ROLE:?ROLE is required}"
 : "${MACHINE:?MACHINE is required}"
@@ -42,14 +40,18 @@ install -d -m 755 /etc/vector
 # Validation checks it exists; systemd moves it under /var/lib/private on first start.
 install -d -m 755 /var/lib/vector
 
-cat > /etc/vector/datum.env <<DATUM_ENV
-DATUM_ENDPOINT=${DATUM_ENDPOINT%/}
-DATUM_TOKEN=$DATUM_TOKEN
-DATUM_ENV
-if [ "$IS_GARAGE_NODE" = true ]; then
-	echo "GARAGE_METRICS_TOKEN=$GARAGE_METRICS_TOKEN" >> /etc/vector/datum.env
+if ! grep -q '^DATUM_TOKEN=' /etc/vector/datum.env 2>/dev/null; then
+	echo "/etc/vector/datum.env has no Datum token; run setup_datum_refresh.sh first" >&2
+	exit 1
 fi
-chmod 600 /etc/vector/datum.env
+
+# The Datum lines stay as datum-refresh wrote them; only this role's own lines are rewritten.
+next=$(mktemp /etc/vector/datum.env.XXXXXX)
+grep -e '^DATUM_ENDPOINT=' -e '^DATUM_TOKEN=' /etc/vector/datum.env > "$next"
+if [ "$IS_GARAGE_NODE" = true ]; then
+	echo "GARAGE_METRICS_TOKEN=$GARAGE_METRICS_TOKEN" >> "$next"
+fi
+mv "$next" /etc/vector/datum.env
 
 cat > /etc/vector/vector.toml <<VECTOR_TOML
 data_dir = "/var/lib/vector"

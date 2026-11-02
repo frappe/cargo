@@ -193,13 +193,23 @@ class Setup(Client):
 	def install_metrics_exporter(
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:
-		"""Install Vector on a node, or hand it a new Datum token or scrape interval. Safe to
-		repeat. Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
+		"""Install Vector and the timer that fetches the node's own Datum token. Safe to repeat.
+		Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
 		garage_metrics = {
 			"GARAGE_ADMIN_PORT": self.cluster.admin_port,
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
 			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
 		}
+		# Atlas replaces the whole map, so the role set at creation is sent again.
+		AtlasClient.from_settings().replace_vm_metadata(
+			machine["vm_id"],
+			{
+				"role": machine["role"],
+				"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
+			},
+		)
+		# Vector only installs once the node holds its own Datum token.
+		self.run(machine, datum_refresh_script(), on_output)
 		self.run(
 			machine,
 			install_script(
@@ -211,15 +221,6 @@ class Setup(Client):
 			),
 			on_output,
 		)
-
-		AtlasClient.from_settings().replace_vm_metadata(
-			machine["vm_id"],
-			{
-				"role": machine["role"],
-				"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
-			},
-		)
-		self.run(machine, datum_refresh_script(), on_output)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
 		"""Write this machine into the next layout. Nothing takes effect until it is applied."""

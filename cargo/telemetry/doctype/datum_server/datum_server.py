@@ -211,24 +211,34 @@ class DatumServer(WorkflowBuilder):
 				self.mark("Failed", "datum did not install. See the Setup Log.")
 				return False
 
-			# Metrics are not worth failing a host over; the next Datum token retries it.
+			# Nothing hands the host a token later, so a host without one is not set up.
 			try:
 				self.install_metrics_exporter(on_output=log.write)
-			except RuntimeError:
-				pass
 			except Exception:
-				frappe.log_error(title=f"Could not install the metrics exporter on {self.machine}")
+				frappe.log_error(
+					title=f"Could not install the metrics exporter on {self.machine}",
+					message=frappe.get_traceback(with_context=True),
+				)
+				self.mark("Failed", "The metrics exporter did not install. See the Setup Log.")
+				return False
 
 		return True
 
 	def install_metrics_exporter(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Install Vector on the host, or hand it a new Datum token. Safe to repeat. Raises
-		`RuntimeError` while Cargo has no token, which a new host waits for."""
+		"""Install Vector on the host and the timer that fetches its own Datum token. Safe to repeat."""
 		from cargo.cargo.doctype.machine.machine import Machine
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		key = machine.get_password("ssh_private_key")
+
+		# Atlas replaces the whole map, so the role set at creation is sent again.
+		AtlasClient.from_settings().replace_vm_metadata(
+			machine.vm_id,
+			{"role": TELEMETRY, "datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name)},
+		)
+		# Vector only installs once the host holds its own Datum token.
+		run_over_ssh(machine.address, datum_refresh_script(), key, timeout=SETUP_TIMEOUT, on_output=on_output)
 		run_over_ssh(
 			machine.address,
 			install_script(TELEMETRY, machine.name, settings.region),
@@ -236,13 +246,6 @@ class DatumServer(WorkflowBuilder):
 			timeout=SETUP_TIMEOUT,
 			on_output=on_output,
 		)
-
-		# Atlas replaces the whole map, so the role set at creation is sent again.
-		AtlasClient.from_settings().replace_vm_metadata(
-			machine.vm_id,
-			{"role": TELEMETRY, "datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name)},
-		)
-		run_over_ssh(machine.address, datum_refresh_script(), key, timeout=SETUP_TIMEOUT, on_output=on_output)
 
 	@frappe.whitelist()
 	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
@@ -491,22 +494,3 @@ def configure_telemetry_webhook(server: DatumServer) -> None:
 		}
 	)
 	webhook.save(ignore_permissions=True)
-
-
-def install_datum_metrics_exporter() -> None:
-	"""Hand the Datum host the current token in the background. A host still being set up
-	takes it at the end of its own setup."""
-	server: DatumServer = frappe.get_single("Datum Server")
-	if server.status not in ("Active", "Unreachable") or not server.machine:
-		return
-
-	frappe.enqueue_doc(
-		server.doctype,
-		server.name,
-		"install_metrics_exporter",
-		queue="long",
-		timeout=SETUP_TIMEOUT,
-		job_id="install-metrics-exporter:datum",
-		deduplicate=True,
-		enqueue_after_commit=True,
-	)
