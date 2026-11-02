@@ -623,7 +623,11 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 	"""Vector on the Datum host, pushing its own host metrics with the region's token."""
 
-	setUp = IntegrationTestTelemetryRouting.setUp
+	def setUp(self):
+		IntegrationTestTelemetryRouting.setUp(self)
+		module = "cargo.telemetry.doctype.datum_server.datum_server"
+		self.atlas = self.enterContext(patch(f"{module}.AtlasClient.from_settings"))
+		self.enterContext(patch(f"{module}.generate_machine_token", return_value="machine-token"))
 
 	def ssh(self, **behaviour):
 		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
@@ -638,18 +642,27 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		with self.token(), self.ssh() as ran:
 			self.server.install_metrics_exporter()
 
-		sent = ran.call_args.args[1]
+		sent = ran.call_args_list[0].args[1]
 		self.assertIn("export DATUM_TOKEN=datum-jwt", sent)
 		self.assertIn(f"export ROLE={TELEMETRY}", sent)
 		self.assertIn(f"export MACHINE={shlex.quote(self.machine.name)}", sent)
 		self.assertIn(f"export REGION={SETTINGS['region']}", sent)
 		self.assertNotIn("export CLUSTER=", sent)
 
+	def test_the_host_keeps_its_role_and_gets_its_machine_token(self):
+		with self.token(), self.ssh() as ran:
+			self.server.install_metrics_exporter()
+
+		self.atlas.return_value.replace_vm_metadata.assert_called_once_with(
+			self.machine.vm_id, {"role": TELEMETRY, "datum_telemetry_token": "machine-token"}
+		)
+		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[1])
+
 	def test_setup_installs_vector_once_datum_is_installed(self):
 		with self.token(), self.ssh() as ran:
 			self.assertTrue(self.server.start_setup_on_machine())
 
-		self.assertEqual(ran.call_count, 2)
+		self.assertEqual(ran.call_count, 3)
 		self.assertIn("export VECTOR_VERSION=", ran.call_args_list[1].args[1])
 
 	def test_setup_without_a_token_skips_vector(self):

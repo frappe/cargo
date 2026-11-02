@@ -10,12 +10,13 @@ import frappe
 from frappe import _
 from frappe.utils import cint
 
-from cargo.atlas_client import base_image_id
+from cargo.atlas_client import AtlasClient, base_image_id
+from cargo.auth import generate_machine_token
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
-from cargo.telemetry.vector import install_script
+from cargo.telemetry.vector import datum_refresh_script, install_script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -227,13 +228,21 @@ class DatumServer(WorkflowBuilder):
 
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+		key = machine.get_password("ssh_private_key")
 		run_over_ssh(
 			machine.address,
 			install_script(TELEMETRY, machine.name, settings.region),
-			machine.get_password("ssh_private_key"),
+			key,
 			timeout=SETUP_TIMEOUT,
 			on_output=on_output,
 		)
+
+		# Atlas replaces the whole map, so the role set at creation is sent again.
+		AtlasClient.from_settings().replace_vm_metadata(
+			machine.vm_id,
+			{"role": TELEMETRY, "datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name)},
+		)
+		run_over_ssh(machine.address, datum_refresh_script(), key, timeout=SETUP_TIMEOUT, on_output=on_output)
 
 	@frappe.whitelist()
 	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
