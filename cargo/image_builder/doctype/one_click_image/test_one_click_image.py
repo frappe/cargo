@@ -282,6 +282,31 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		self.assertEqual(image.commit, "commit-1")
 		self.assertEqual(image.app["description"], "A test app.")
 
+	def test_the_logo_is_kept_as_a_data_uri(self):
+		path = self.application()
+		(path / "config" / "template.yaml").write_text(
+			f"{APP_HEADER}logo: config/logo.svg\nbuild:\n  files: []\n"
+		)
+		(path / "config" / "logo.svg").write_text(
+			'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1"/></svg>'
+		)
+
+		self.assertTrue(self.image().logo.startswith("data:image/svg+xml;base64,"))
+
+	def test_an_unsafe_or_misplaced_logo_is_rejected(self):
+		path = self.application()
+		(path / "config" / "logo.svg").write_text("<svg><script>alert(1)</script></svg>")
+		for logo, message in (
+			("config/logo.svg", "without scripts"),
+			("../common/config/logo.svg", "inside the config folder"),
+			("config/missing.svg", "does not exist"),
+		):
+			with self.subTest(logo=logo):
+				(path / "config" / "template.yaml").write_text(
+					f"{APP_HEADER}logo: {logo}\nbuild:\n  files: []\n"
+				)
+				self.assert_rejected(message)
+
 	def test_a_new_image_uses_the_existing_clone(self):
 		self.application()
 

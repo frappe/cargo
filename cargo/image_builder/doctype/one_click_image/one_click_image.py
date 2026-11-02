@@ -18,6 +18,7 @@ from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.one_click_image.one_click_image_validator import (
 	COMMON,
 	OneClickApplicationValidator,
+	get_logo,
 	get_packages,
 )
 from cargo.image_builder.doctype.pilot_image.builder import (
@@ -54,6 +55,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		commit: DF.Data | None
 		error: DF.LongText | None
 		information: DF.SmallText | None
+		logo: DF.LongText | None
 		machine: DF.Link | None
 		os_version: DF.Data | None
 		snapshot_id: DF.Data | None
@@ -69,6 +71,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 			self.commit = get_pinned_commit(repository)
 			OneClickApplicationValidator(self.application, self.application_base_path).validate()
 			self.app_config = frappe.as_json(self.application_config)
+			self.logo = get_logo(self.application, self.application_base_path, self.application_config)
 		self.os_version = self.application_config["base_image"]["os_version"]
 		self.information = self.application_config["description"]
 
