@@ -176,9 +176,11 @@ def rsync_over_ssh(
 	on_output: Callable[[str], None] | None = None,
 ) -> str:
 	"""Copy `source` to `destination` as root: a folder's contents into the destination folder,
-	or a file to the destination path. Existing folders keep their permissions and new files keep
-	only their executable bit, so `/etc` is never loosened."""
+	or a file to the destination path. Existing folders keep their owner and permissions, and new
+	files are root's with only their executable bit kept, so `/etc` is never loosened."""
 	with private_key_file(address, key) as path:
+		# No --owner or --group: they reset every folder on the path, so a package's own folder
+		# such as /etc/redis (redis:redis 2770) would become root's and lock the package out.
 		command = [
 			"rsync",
 			"--recursive",
@@ -186,9 +188,6 @@ def rsync_over_ssh(
 			"--times",
 			"--omit-dir-times",
 			"--executability",
-			"--owner",
-			"--group",
-			"--chown=root:root",
 			"--mkpath",
 			"--rsh",
 			shlex.join(["ssh", "-i", path, *OPTIONS]),
