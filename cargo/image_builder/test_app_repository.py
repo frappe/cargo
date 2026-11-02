@@ -5,13 +5,13 @@ from pathlib import Path
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from cargo.image_builder.template_repository import TemplateRepository, TemplateRepositoryError
+from cargo.image_builder.app_repository import AppRepository, AppRepositoryError
 
 GIT_AUTHOR = ["-c", "user.name=Cargo Test", "-c", "user.email=cargo@example.test"]
 
 
-class IntegrationTestTemplateRepository(IntegrationTestCase):
-	"""The clone of the one-click templates repository, against a local origin."""
+class IntegrationTestAppRepository(IntegrationTestCase):
+	"""The clone of the one-click apps repository, against a local origin."""
 
 	def setUp(self):
 		self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -19,8 +19,8 @@ class IntegrationTestTemplateRepository(IntegrationTestCase):
 		self.git(self.origin.parent, "init", "--quiet", "--initial-branch", "main", str(self.origin))
 		for folder in ("common", "redis", "mariadb", "_template"):
 			self.write(f"{folder}/config/template.yaml", f"name: {folder}\n")
-		self.commit("Add templates")
-		self.repository = TemplateRepository(f"file://{self.origin}", "main", self.root / "clone")
+		self.commit("Add apps")
+		self.repository = AppRepository(f"file://{self.origin}", "main", self.root / "clone")
 
 	def git(self, directory: Path, *args: str) -> str:
 		return subprocess.run(
@@ -60,12 +60,12 @@ class IntegrationTestTemplateRepository(IntegrationTestCase):
 		self.repository.reject_if_tampered()
 		(self.repository.path / "redis" / "config" / "template.yaml").write_text("name: changed\n")
 
-		with self.assertRaises(TemplateRepositoryError):
+		with self.assertRaises(AppRepositoryError):
 			self.repository.reject_if_tampered()
 
 	def test_only_an_https_repository_is_accepted_from_settings(self):
-		frappe.db.set_single_value("Cargo Settings", "one_click_repository_url", "file:///tmp/templates")
+		frappe.db.set_single_value("Cargo Settings", "one_click_repository_url", "file:///tmp/apps")
 		self.addCleanup(frappe.db.rollback)
 
 		with self.assertRaises(frappe.ValidationError):
-			TemplateRepository.from_settings()
+			AppRepository.from_settings()

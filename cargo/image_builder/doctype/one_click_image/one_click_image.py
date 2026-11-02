@@ -13,6 +13,7 @@ import yaml
 from frappe.utils import now_datetime
 from frappe.utils.synchronization import filelock
 
+from cargo.image_builder.app_repository import AppRepository
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.one_click_image.one_click_image_validator import (
 	COMMON,
@@ -25,15 +26,14 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	SSH_READY_TIMEOUT,
 	Builder,
 )
-from cargo.image_builder.template_repository import TemplateRepository
 from cargo.ssh import OutputLog, rsync_over_ssh, run_over_ssh
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
-# Held to clone, pin or refresh the one templates clone, so none of them sees it half moved.
-TEMPLATES_LOCK = "one_click_templates"
-TEMPLATES_LOCK_TIMEOUT = 120
+# Held to clone, pin or refresh the one clone of the apps repository, so none of them sees it half moved.
+APPS_LOCK = "one_click_apps"
+APPS_LOCK_TIMEOUT = 120
 
 
 class OneClickImage(BuildMachineOwner, WorkflowBuilder):
@@ -58,17 +58,17 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		os_version: DF.Data | None
 		snapshot_id: DF.Data | None
 		status: DF.Literal["Provisioning", "Building", "Snapshotting", "Completed", "Failed", "Retired"]
-		template_config: DF.JSON | None
+		app_config: DF.JSON | None
 	# end: auto-generated types
 
 	def before_insert(self):
-		"""Pin the build to the repository's current commit, check it and keep its template."""
-		repository = TemplateRepository.from_settings()
-		# A refresh must not move the clone between pinning the commit and reading the template.
-		with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
+		"""Pin the build to the repository's current commit, check it and keep its app config."""
+		repository = AppRepository.from_settings()
+		# A refresh must not move the clone between pinning the commit and reading the app config.
+		with filelock(APPS_LOCK, timeout=APPS_LOCK_TIMEOUT):
 			self.commit = get_pinned_commit(repository)
 			OneClickApplicationValidator(self.application, self.application_base_path).validate()
-			self.template_config = frappe.as_json(self.application_config)
+			self.app_config = frappe.as_json(self.application_config)
 		self.os_version = self.application_config["base_image"]["os_version"]
 		self.information = self.application_config["description"]
 
@@ -78,13 +78,13 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 
 	@cached_property
 	def application_base_path(self) -> Path:
-		"""The one clone of the templates repository, which every build reads."""
-		return TemplateRepository.from_settings().path
+		"""The one clone of the apps repository, which every build reads."""
+		return AppRepository.from_settings().path
 
 	@property
-	def template(self) -> dict:
+	def app(self) -> dict:
 		"""The template.yaml this image was built from, which Central's calls read."""
-		return frappe.parse_json(self.template_config)
+		return frappe.parse_json(self.app_config)
 
 	@cached_property
 	def application_config(self):
@@ -132,11 +132,11 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 	def install_packages(self):
 		"""Install the apt packages first, so the files and scripts after it can rely on them."""
 		# A refresh can move the clone before this image's row is visible to it.
-		if TemplateRepository.from_settings().head_sha != self.commit:
+		if AppRepository.from_settings().head_sha != self.commit:
 			frappe.throw(
-				frappe._("The templates clone moved off commit {0} before the build started.").format(
-					self.commit
-				)
+				frappe._(
+					"The clone of the apps repository moved off commit {0} before the build started."
+				).format(self.commit)
 			)
 
 		machine = self.build_machine
@@ -174,7 +174,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 				log.write(f"==> {folder} files\n")
 				for file in configuration["build"]["files"]:
 					source = (folder_path / file["source"]).resolve()
-					# A template could name `../` and copy Cargo's own files to the build machine.
+					# An app could name `../` and copy Cargo's own files to the build machine.
 					if not source.is_relative_to(folder_path) or not source.exists():
 						frappe.throw(
 							frappe._("{0} is not a file or folder inside {1}.").format(source, folder_path)
@@ -268,8 +268,8 @@ def get_system_image(os: str, os_version: str, minimal: bool = False) -> str | N
 	)
 
 
-def get_pinned_commit(repository: TemplateRepository) -> str:
-	"""The clone's commit, cloning it on first use. Call it holding TEMPLATES_LOCK."""
+def get_pinned_commit(repository: AppRepository) -> str:
+	"""The clone's commit, cloning it on first use. Call it holding APPS_LOCK."""
 	if not repository.is_cloned:
 		repository.clone()
 	repository.reject_if_tampered()
@@ -279,8 +279,8 @@ def get_pinned_commit(repository: TemplateRepository) -> str:
 def refresh_latest_registry():
 	"""Move the clone to the branch head and start a build for each application without an image."""
 	report_if_registry_is_stale()
-	repository = TemplateRepository.from_settings()
-	with filelock(TEMPLATES_LOCK, timeout=TEMPLATES_LOCK_TIMEOUT):
+	repository = AppRepository.from_settings()
+	with filelock(APPS_LOCK, timeout=APPS_LOCK_TIMEOUT):
 		# A build reads the clone until its snapshot, so the clone must not move under it.
 		if frappe.db.exists(
 			"One Click Image", {"status": ("in", ["Provisioning", "Building", "Snapshotting"])}
@@ -314,7 +314,7 @@ def report_if_registry_is_stale() -> None:
 		"One Click Image", {"status": ("in", ["Provisioning", "Building", "Snapshotting"])}, pluck="name"
 	)
 	frappe.log_error(
-		title="One-click templates repository is stale",
+		title="One-click apps repository is stale",
 		message=f"Last refreshed at {last_refresh}. Builds in progress, which skip a refresh: "
 		f"{', '.join(building) or 'none'}.",
 		# The refresh can still fail after this, and a rollback must not take the log with it.
@@ -322,7 +322,7 @@ def report_if_registry_is_stale() -> None:
 	)
 
 
-def get_unbuilt_applications(repository: TemplateRepository) -> list[str]:
+def get_unbuilt_applications(repository: AppRepository) -> list[str]:
 	"""Application folders in the clone that have no image yet, other than a retired one."""
 	built = set(
 		frappe.get_all("One Click Image", {"status": ("!=", "Retired")}, pluck="application", distinct=True)

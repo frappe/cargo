@@ -19,7 +19,7 @@
   "built_at",
   "error",
   "build_log",
-  "template_config"
+  "app_config"
  ],
  "fields": [
   {
@@ -97,7 +97,7 @@
    "label": "OS Version"
   },
   {
-   "description": "The commit of the one-click templates repository this image was built from.",
+   "description": "The commit of the one-click apps repository this image was built from.",
    "fieldname": "commit",
    "fieldtype": "Data",
    "label": "Commit",
@@ -105,9 +105,9 @@
   },
   {
    "description": "The template.yaml this image was built from. Central's calls read it, so a later change to the repository does not change what this image offers.",
-   "fieldname": "template_config",
+   "fieldname": "app_config",
    "fieldtype": "JSON",
-   "label": "Template Config",
+   "label": "App Config",
    "read_only": 1
   }
  ],
@@ -125,7 +125,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-11-01 20:00:00.000000",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "One Click Image",

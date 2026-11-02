@@ -27,7 +27,7 @@ def get_supported_one_click_images():
 	for image in frappe.db.get_all(
 		"One Click Image",
 		{"status": "Completed"},
-		["application", "os_version", "information", "snapshot_id", "template_config"],
+		["application", "os_version", "information", "snapshot_id", "app_config"],
 		order_by="creation desc",
 	):
 		newest.setdefault(image.application, image)
@@ -35,7 +35,7 @@ def get_supported_one_click_images():
 	return [
 		{
 			"application": image.application,
-			"title": frappe.parse_json(image.template_config)["title"],
+			"title": frappe.parse_json(image.app_config)["title"],
 			"os_version": image.os_version,
 			"information": image.information,
 			"snapshot_id": image.snapshot_id,
@@ -53,7 +53,7 @@ def get_one_click_image_requirements(application: str):
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
-	config = image.template
+	config = image.app
 	return {
 		"inputs": config.get("inputs", []),
 		"minimum_size": config["minimum_size"],
@@ -81,7 +81,7 @@ def validate_answer(name: str, item: dict, value: str) -> None:
 	max_length = item.get("max_length", 255)
 
 	if not INPUT_NAME.fullmatch(name):
-		frappe.throw(_("The template input {0} is not a valid shell variable name.").format(name))
+		frappe.throw(_("The app input {0} is not a valid shell variable name.").format(name))
 	if len(value) > max_length:
 		frappe.throw(_("{0} must be at most {1} characters.").format(label, max_length))
 	if not value.isprintable():
@@ -111,7 +111,7 @@ def get_one_click_image_user_data(application: str, inputs: dict | str | None = 
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
-	declared = {item["name"]: item for item in image.template.get("inputs", [])}
+	declared = {item["name"]: item for item in image.app.get("inputs", [])}
 	if unknown := set(answers) - set(declared):
 		frappe.throw(_("{0} has no input {1}.").format(application, ", ".join(sorted(unknown))))
 

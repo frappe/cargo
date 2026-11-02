@@ -24,9 +24,7 @@ from cargo.testing import use_test_settings
 from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.one_click_image.one_click_image"
-TEMPLATE_HEADER = (
-	"description: A test app.\nbase_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\n"
-)
+APP_HEADER = "description: A test app.\nbase_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\n"
 
 
 class IntegrationTestOneClickImage(IntegrationTestCase):
@@ -45,7 +43,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		for patcher in (
 			patch.object(OneClickImage, "application_base_path", self.base_path),
 			patch(f"{CONTROLLER}.get_system_image", return_value="img-ubuntu"),
-			patch(f"{CONTROLLER}.TemplateRepository.from_settings", return_value=self.repository),
+			patch(f"{CONTROLLER}.AppRepository.from_settings", return_value=self.repository),
 			# A refresh commits after each image, which would leak rows past the test's rollback.
 			patch.object(frappe.db, "commit"),
 		):
@@ -60,7 +58,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 			(path / folder).mkdir(parents=True)
 		for script in scripts:
 			(path / "scripts" / script).write_text(f"echo {script}\n")
-		(path / "config" / "template.yaml").write_text(f"{TEMPLATE_HEADER}build:\n  files: []\n")
+		(path / "config" / "template.yaml").write_text(f"{APP_HEADER}build:\n  files: []\n")
 		return path
 
 	def image(self, name: str = "wordpress", status: str = "Provisioning") -> OneClickImage:
@@ -118,7 +116,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		with patch(f"{CONTROLLER}.get_system_image", return_value=None):
 			self.assert_rejected("no available system image")
 
-	def test_the_build_boots_on_the_base_image_from_the_template(self):
+	def test_the_build_boots_on_the_base_image_from_the_app(self):
 		self.application()
 		with (
 			patch(f"{CONTROLLER}.get_system_image", wraps=get_system_image) as lookup,
@@ -132,7 +130,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		lookup.assert_called_once_with("Ubuntu", "24.04", True)
 		self.assertEqual(atlas.return_value.find_system_image.call_args.args[0]["minimal"], "true")
 
-	def test_the_template_description_and_os_version_are_saved(self):
+	def test_the_app_description_and_os_version_are_saved(self):
 		self.application()
 		image = self.image()
 
@@ -181,7 +179,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		(path / "src" / "plugins").mkdir()
 		(path / "src" / "plugins" / "cache.php").write_text("")
 		(path / "config" / "template.yaml").write_text(
-			f"{TEMPLATE_HEADER}build:\n  files:\n"
+			f"{APP_HEADER}build:\n  files:\n"
 			"    - source: src/wp-config.php\n      destination: /var/www/wp-config.php\n"
 			"    - source: src/plugins\n      destination: /var/www/plugins\n"
 		)
@@ -201,10 +199,8 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 			[("/", []), ("/", ["var/www/plugins/cache.php", "var/www/wp-config.php"])],
 		)
 
-	def test_a_template_source_outside_its_folder_is_rejected(self):
-		(self.application() / "config" / "template.yaml").write_text(
-			f"{TEMPLATE_HEADER}build:\n  files: []\n"
-		)
+	def test_an_app_source_outside_its_folder_is_rejected(self):
+		(self.application() / "config" / "template.yaml").write_text(f"{APP_HEADER}build:\n  files: []\n")
 		(self.base_path / "common" / "config" / "template.yaml").write_text(
 			"build:\n  files:\n    - source: ../wordpress/config\n      destination: /etc\n"
 		)
@@ -213,10 +209,8 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		with patch(f"{CONTROLLER}.rsync_over_ssh"), self.assertRaisesRegex(frappe.ValidationError, "inside"):
 			image.copy_files()
 
-	def test_a_template_destination_outside_the_machine_is_rejected(self):
-		(self.application() / "config" / "template.yaml").write_text(
-			f"{TEMPLATE_HEADER}build:\n  files: []\n"
-		)
+	def test_an_app_destination_outside_the_machine_is_rejected(self):
+		(self.application() / "config" / "template.yaml").write_text(f"{APP_HEADER}build:\n  files: []\n")
 		(self.base_path / "common" / "config" / "template.yaml").write_text(
 			"build:\n  files:\n    - source: src\n      destination: /../../escaped\n"
 		)
@@ -281,12 +275,12 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 
 		delete_atlas_image.assert_not_called()
 
-	def test_an_image_is_pinned_to_the_commit_and_keeps_its_template(self):
+	def test_an_image_is_pinned_to_the_commit_and_keeps_its_app_config(self):
 		self.application()
 		image = self.image()
 
 		self.assertEqual(image.commit, "commit-1")
-		self.assertEqual(image.template["description"], "A test app.")
+		self.assertEqual(image.app["description"], "A test app.")
 
 	def test_a_new_image_uses_the_existing_clone(self):
 		self.application()
@@ -370,5 +364,5 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 
 			self.assertEqual(log_error.called, is_logged)
 
-		self.assertEqual(log_error.call_args.kwargs["title"], "One-click templates repository is stale")
+		self.assertEqual(log_error.call_args.kwargs["title"], "One-click apps repository is stale")
 		self.assertIn("OCI-", log_error.call_args.kwargs["message"])

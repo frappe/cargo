@@ -9,12 +9,12 @@ GIT_TIMEOUT_SECONDS = 300
 BRANCH_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 
 
-class TemplateRepositoryError(frappe.ValidationError):
+class AppRepositoryError(frappe.ValidationError):
 	pass
 
 
-class TemplateRepository:
-	"""The one shallow, read-only clone of the one-click templates repository, made on first use."""
+class AppRepository:
+	"""The one shallow, read-only clone of the one-click apps repository, made on first use."""
 
 	def __init__(self, url: str, branch: str, path: Path):
 		self.url = url
@@ -22,7 +22,7 @@ class TemplateRepository:
 		self.path = path
 
 	@classmethod
-	def from_settings(cls) -> "TemplateRepository":
+	def from_settings(cls) -> "AppRepository":
 		url = frappe.db.get_single_value("Cargo Settings", "one_click_repository_url")
 		branch = frappe.db.get_single_value("Cargo Settings", "one_click_repository_branch") or "main"
 		if not url or not url.startswith("https://"):
@@ -30,7 +30,7 @@ class TemplateRepository:
 		if not BRANCH_NAME.fullmatch(branch):
 			frappe.throw(_("{0} is not a branch name.").format(branch))
 
-		return cls(url, branch, Path(frappe.get_site_path("private", "one-click-templates")))
+		return cls(url, branch, Path(frappe.get_site_path("private", "one-click-apps")))
 
 	@property
 	def is_cloned(self) -> bool:
@@ -52,9 +52,9 @@ class TemplateRepository:
 		if self.git("status", "--porcelain"):
 			frappe.throw(
 				_(
-					"The one-click templates clone at {0} was changed by hand. Delete it so Cargo clones it again."
+					"The one-click apps clone at {0} was changed by hand. Delete it so Cargo clones it again."
 				).format(self.path),
-				TemplateRepositoryError,
+				AppRepositoryError,
 			)
 
 	def git(self, *args: str) -> str:
@@ -66,7 +66,7 @@ def run(command: list[str], timeout: int = GIT_TIMEOUT_SECONDS) -> str:
 	if result.returncode != 0:
 		frappe.throw(
 			_("{0} failed: {1}").format(" ".join(command[:3]), result.stderr.strip()[-500:]),
-			TemplateRepositoryError,
+			AppRepositoryError,
 		)
 
 	return result.stdout

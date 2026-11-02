@@ -13,7 +13,7 @@ from cargo.image_builder.api.one_click_image import (
 )
 from cargo.image_builder.doctype.one_click_image.one_click_image import OneClickImage
 
-TEMPLATE = """\
+APP_CONFIG = """\
 title: FastAPI
 description: A test app.
 base_image: {os: Ubuntu, os_version: '24.04', minimal: true}
@@ -39,14 +39,14 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 			for subfolder in ("src", "config", "scripts"):
 				(self.base_path / folder / subfolder).mkdir(parents=True)
 			(self.base_path / folder / "scripts" / "10-setup.sh").write_text("true\n")
-		(self.base_path / "fastapi" / "config" / "template.yaml").write_text(TEMPLATE)
+		(self.base_path / "fastapi" / "config" / "template.yaml").write_text(APP_CONFIG)
 
 		self.enterContext(patch.object(OneClickImage, "application_base_path", self.base_path))
 		self.enterContext(patch.object(OneClickImage, "after_insert"))
 		repository = MagicMock(head_sha="commit-1")
 		self.enterContext(
 			patch(
-				"cargo.image_builder.doctype.one_click_image.one_click_image.TemplateRepository.from_settings",
+				"cargo.image_builder.doctype.one_click_image.one_click_image.AppRepository.from_settings",
 				return_value=repository,
 			)
 		)
@@ -83,13 +83,13 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 			],
 		)
 
-	def test_requirements_come_from_the_completed_image_template(self):
+	def test_requirements_come_from_the_completed_image_app(self):
 		self.image("Completed")
 
 		self.assertEqual(
 			get_one_click_image_requirements("fastapi"),
 			{
-				"inputs": yaml.safe_load(TEMPLATE)["inputs"],
+				"inputs": yaml.safe_load(APP_CONFIG)["inputs"],
 				"minimum_size": {"cpu_millicores": 500, "memory_mib": 512, "disk_mib": 5120},
 				"ports": [{"port": 80, "protocol": "tcp"}],
 			},
@@ -144,13 +144,13 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 			with self.subTest(answers=answers), self.assertRaisesRegex(frappe.ValidationError, message):
 				get_one_click_image_user_data("fastapi", answers)
 
-	def test_an_image_offers_the_template_it_was_built_from(self):
+	def test_an_image_offers_the_app_it_was_built_from(self):
 		self.image("Completed")
 		(self.base_path / "fastapi" / "config" / "template.yaml").write_text(
-			TEMPLATE.replace("FastAPI", "Renamed")
+			APP_CONFIG.replace("FastAPI", "Renamed")
 		)
 
 		self.assertEqual(get_supported_one_click_images()[0]["title"], "FastAPI")
 		self.assertEqual(
-			get_one_click_image_requirements("fastapi")["inputs"], yaml.safe_load(TEMPLATE)["inputs"]
+			get_one_click_image_requirements("fastapi")["inputs"], yaml.safe_load(APP_CONFIG)["inputs"]
 		)
