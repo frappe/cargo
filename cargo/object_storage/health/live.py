@@ -241,12 +241,16 @@ def increase_disk_size_if_required():
 	if not connected.peers:
 		return
 
+	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
+	offline_seconds = cluster_settings.node_offline_seconds
+
+	# A Garage restart drops a node for seconds. Setting it up then would only restart it again.
 	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
-	if running - connected.machines:
+	lost = running - connected.machines
+	if any(connected.seconds_down.get(machine, offline_seconds) >= offline_seconds for machine in lost):
 		cluster.setup()
 		return
 
-	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
 	grow_storage_node_disks = GrowStorageNodeDisks(cluster)
 	fullest_node_samples = grow_storage_node_disks.get_samples()
 	if not fullest_node_samples:

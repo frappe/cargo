@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, TypedDict
 from urllib.parse import urlsplit
@@ -56,6 +56,7 @@ class ConnectedNodes:
 
 	peers: list[NodeIdentifier]
 	machines: set[MachineName]
+	seconds_down: dict[MachineName, int] = field(default_factory=dict)
 
 
 class Setup(Client):
@@ -118,9 +119,16 @@ class Setup(Client):
 			tags.update((node.get("role") or {}).get("tags", []))
 			tags.update(staged_tags.get(node["id"], []))
 
+		seconds_down = {}
+		for node in nodes:
+			if not node.get("isUp") and node.get("lastSeenSecsAgo") is not None:
+				for tag in (node.get("role") or {}).get("tags", []):
+					seconds_down[tag] = node["lastSeenSecsAgo"]
+
 		return ConnectedNodes(
 			peers=[f"{node['id']}@{node['addr']}" for node in up if node.get("addr")],
 			machines={machine["name"] for machine in self.machines if machine["name"] in tags},
+			seconds_down=seconds_down,
 		)
 
 	def healthy_nodes(self) -> set[MachineName]:

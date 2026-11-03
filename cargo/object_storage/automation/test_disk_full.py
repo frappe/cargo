@@ -417,6 +417,32 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 		self.setup.assert_called_once()
 		grow.assert_not_called()
 
+	def test_a_node_down_for_seconds_is_not_set_up(self):
+		frappe.db.set_single_value("Object Storage Health Settings", "node_offline_seconds", 120)
+		frappe.clear_document_cache("Object Storage Health Settings", "Object Storage Health Settings")
+		connected = ConnectedNodes(
+			peers=["gateway@[::1]:3901"],
+			machines={self.gateway, self.storage[1]},
+			seconds_down={self.storage[0]: 5},
+		)
+
+		self.run_job([self.usage(used_gb=50)], connected=connected)
+
+		self.setup.assert_not_called()
+
+	def test_a_node_down_past_the_offline_threshold_is_set_up(self):
+		frappe.db.set_single_value("Object Storage Health Settings", "node_offline_seconds", 120)
+		frappe.clear_document_cache("Object Storage Health Settings", "Object Storage Health Settings")
+		connected = ConnectedNodes(
+			peers=["gateway@[::1]:3901"],
+			machines={self.gateway, self.storage[1]},
+			seconds_down={self.storage[0]: 120},
+		)
+
+		self.run_job([self.usage(used_gb=50)], connected=connected)
+
+		self.setup.assert_called_once()
+
 	def test_a_stopped_node_does_not_trigger_setup(self):
 		frappe.db.set_value("Machine", self.storage[0], "status", "Stopped")
 
