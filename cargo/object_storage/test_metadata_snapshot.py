@@ -15,6 +15,12 @@ from cargo.object_storage.metadata_snapshot import is_snapshot_due, take_metadat
 from cargo.testing import use_test_settings
 
 SNAPSHOT = "2026-10-23T10:00:00Z"
+
+
+def run_jobs_now():
+	return patch("frappe.enqueue", side_effect=lambda method, queue, **kwargs: method(**kwargs))
+
+
 NOW = datetime(2026, 10, 23, 12, 0, 0)
 
 
@@ -91,6 +97,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(
 				Setup, "upload_metadata_snapshots", side_effect=[RuntimeError, None, None, None]
 			) as upload,
+			run_jobs_now(),
 			patch.object(Setup, "prune_metadata_backups"),
 			patch("frappe.log_error") as log_error,
 		):
@@ -128,6 +135,26 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		self.assertIn(f"{self.cluster.name}/{self.storage[0]}", sent)
 		self.assertIn(f"export NAME={SNAPSHOT}", sent)
 
+	def test_each_machine_uploads_in_its_own_long_job(self):
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/bucket",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		with (
+			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
+			patch("frappe.enqueue") as enqueue,
+		):
+			take_metadata_snapshots()
+
+		self.assertEqual(enqueue.call_count, 4)
+		self.assertEqual({call.kwargs["queue"] for call in enqueue.call_args_list}, {"long"})
+		self.assertEqual(
+			{call.kwargs["machine_name"] for call in enqueue.call_args_list}, {self.gateway, *self.storage}
+		)
+		self.assertIsNotNone(self.last_snapshot())
+
 	def test_a_refusing_node_does_not_upload_an_older_snapshot_under_this_name(self):
 		self.cluster.db_set(
 			{
@@ -141,6 +168,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(Setup, "get_layout_nodes", return_value=[("bbb", self.storage[1])]),
 			patch.object(Setup, "upload_metadata_snapshots") as upload,
 			patch.object(Setup, "prune_metadata_backups"),
+			run_jobs_now(),
 			patch("frappe.log_error"),
 		):
 			take_metadata_snapshots()
@@ -303,6 +331,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		with (
 			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
 			patch.object(Setup, "upload_metadata_snapshots", side_effect=RuntimeError),
+			run_jobs_now(),
 			patch.object(Setup, "prune_metadata_backups") as prune,
 			patch("frappe.log_error"),
 		):
