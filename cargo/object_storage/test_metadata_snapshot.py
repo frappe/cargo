@@ -10,7 +10,11 @@ from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client
 from cargo.object_storage.doctype.object_storage_cluster import test_object_storage_cluster
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
-from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import (
+	BACKUP_SSH_TIMEOUT,
+	BACKUP_TRANSFER_TIMEOUT,
+	Setup,
+)
 from cargo.object_storage.metadata_snapshot import is_snapshot_due, take_metadata_snapshots
 from cargo.testing import use_test_settings
 
@@ -18,7 +22,7 @@ SNAPSHOT = "2026-10-23T10:00:00Z"
 
 
 def run_jobs_now():
-	return patch("frappe.enqueue", side_effect=lambda method, queue, **kwargs: method(**kwargs))
+	return patch("frappe.enqueue", side_effect=lambda method, queue, timeout, **kwargs: method(**kwargs))
 
 
 NOW = datetime(2026, 10, 23, 12, 0, 0)
@@ -133,6 +137,8 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		sent = run.call_args.args[1]
 		self.assertNotIn("s3cr3t-value", sent)
 		self.assertIn(f"{self.cluster.name}/{self.storage[0]}", sent)
+		self.assertEqual(run.call_args.kwargs["timeout"], BACKUP_SSH_TIMEOUT)
+		self.assertIn(f"export TRANSFER_TIMEOUT={BACKUP_TRANSFER_TIMEOUT}", sent)
 		self.assertIn(f"export NAME={SNAPSHOT}", sent)
 
 	def test_each_machine_uploads_in_its_own_long_job(self):
@@ -150,6 +156,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 
 		self.assertEqual(enqueue.call_count, 4)
 		self.assertEqual({call.kwargs["queue"] for call in enqueue.call_args_list}, {"long"})
+		self.assertTrue(all(call.kwargs["timeout"] > BACKUP_SSH_TIMEOUT for call in enqueue.call_args_list))
 		self.assertEqual(
 			{call.kwargs["machine_name"] for call in enqueue.call_args_list}, {self.gateway, *self.storage}
 		)

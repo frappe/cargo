@@ -14,7 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
-from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT, Setup
 from cargo.object_storage.health import queue_cluster_metrics_exporters
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT, OutputLog
@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
+# Fetches run one machine after another: a gateway and up to four storage nodes.
+FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 SOURCE_HEADER = "X-FC-Source"
 REGION_HEADER = "X-FC-Region"
 SOURCE = "cargo"
@@ -475,7 +477,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.swap_in_metadata_snapshot(snapshot, machines)
 		self.repair_metadata_tables(machines)
 
-	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
+	@task(queue="long", timeout=FETCH_STEP_TIMEOUT)
 	def fetch_metadata_snapshots(self, snapshot: str, machines: list[str]) -> None:
 		"""Before anything stops, so a missing backup leaves every node serving."""
 		garage = self.garage_setup

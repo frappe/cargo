@@ -7,6 +7,7 @@ import frappe
 from frappe.utils import get_datetime, now_datetime
 
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import get_running_workflow
+from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -74,6 +75,7 @@ def queue_metadata_uploads(cluster: ObjectStorageCluster, name: str, skip: set[s
 			frappe.enqueue(
 				upload_metadata_snapshot,
 				queue="long",
+				timeout=BACKUP_SSH_TIMEOUT + 180,
 				cluster_name=cluster.name,
 				machine_name=machine["name"],
 				snapshot_name=name,

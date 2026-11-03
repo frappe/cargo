@@ -17,7 +17,7 @@ from cargo.atlas_client import AtlasClient, host_port
 from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
-from cargo.ssh import run_over_ssh, script
+from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 from cargo.telemetry.vector import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
@@ -29,6 +29,10 @@ TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 GIGABYTE = 1000**3
 # As many as Garage keeps on a node.
 KEEP_METADATA_BACKUPS = 2
+# How long curl may move one snapshot to or from the bucket. SSH gets a little more, for the
+# MMDS key wait, and the whole stays under the long queue's job timeout.
+BACKUP_TRANSFER_TIMEOUT = 1200
+BACKUP_SSH_TIMEOUT = BACKUP_TRANSFER_TIMEOUT + 120
 #: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
 #: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
@@ -78,9 +82,17 @@ class Setup(Client):
 		columns, so this cannot come off the machine query."""
 		return get_decrypted_password("Machine", machine["name"], "ssh_private_key")
 
-	def run(self, machine: MachineRow, script: str, on_output: Callable[[str], None] | None = None) -> str:
+	def run(
+		self,
+		machine: MachineRow,
+		script: str,
+		on_output: Callable[[str], None] | None = None,
+		timeout: int = SSH_TIMEOUT,
+	) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(machine["address"], script, self.key_for(machine), on_output=on_output)
+		return run_over_ssh(
+			machine["address"], script, self.key_for(machine), on_output=on_output, timeout=timeout
+		)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -245,6 +257,7 @@ class Setup(Client):
 			},
 		)
 		return {
+			"TRANSFER_TIMEOUT": BACKUP_TRANSFER_TIMEOUT,
 			"BACKUP_ENDPOINT": cluster.metadata_backup_endpoint,
 			"BACKUP_REGION": cluster.region,
 			"BACKUP_PREFIX": self.get_backup_prefix(machine),
@@ -304,7 +317,10 @@ class Setup(Client):
 			**self.get_backup_environment(machine),
 		}
 		return self.run(
-			machine, script(*CONF, "upload_metadata_snapshots.sh", environment=environment), on_output
+			machine,
+			script(*CONF, "upload_metadata_snapshots.sh", environment=environment),
+			on_output,
+			timeout=BACKUP_SSH_TIMEOUT,
 		)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
@@ -349,7 +365,10 @@ class Setup(Client):
 			**self.get_backup_environment(machine),
 		}
 		return self.run(
-			machine, script(*CONF, "fetch_metadata_snapshot.sh", environment=environment), on_output
+			machine,
+			script(*CONF, "fetch_metadata_snapshot.sh", environment=environment),
+			on_output,
+			timeout=BACKUP_SSH_TIMEOUT,
 		)
 
 	def repair_tables(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:

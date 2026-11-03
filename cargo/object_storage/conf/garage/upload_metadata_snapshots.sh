@@ -8,6 +8,7 @@ set -euo pipefail
 : "${BACKUP_ENDPOINT:?BACKUP_ENDPOINT is required}"
 : "${BACKUP_REGION:?BACKUP_REGION is required}"
 : "${BACKUP_PREFIX:?BACKUP_PREFIX is required}"
+: "${TRANSFER_TIMEOUT:?TRANSFER_TIMEOUT is required}"
 : "${NAME:?NAME is required}"
 
 METADATA=http://169.254.169.254/latest
@@ -38,7 +39,7 @@ fi
 
 key="$BACKUP_PREFIX/$NAME/db.lmdb"
 # Keys go through a config on stdin so they never show in the process list.
-curl -fsS --max-time 3600 --aws-sigv4 "aws:amz:$BACKUP_REGION:s3" -K - \
+curl -fsS --max-time "$TRANSFER_TIMEOUT" --aws-sigv4 "aws:amz:$BACKUP_REGION:s3" -K - \
 	-T "$SNAPSHOTS/$newest/db.lmdb" "${BACKUP_ENDPOINT%/}/$key" <<<"user = \"$access_key:$secret_key\""
 echo "uploaded $newest as $key"
 
