@@ -48,6 +48,8 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 	would rotate away the good nodes' older snapshot."""
 	garage = cluster.garage_setup
 	refused = garage.create_metadata_snapshot().get("error") or {}
+	if garage.has_metadata_backup:
+		upload_metadata_snapshots(cluster)
 	cluster.db_set("last_metadata_snapshot_at", now_datetime())
 
 	if refused:
@@ -58,3 +60,13 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 				f"{machines.get(node_id, node_id)}: {reason}" for node_id, reason in refused.items()
 			),
 		)
+
+
+def upload_metadata_snapshots(cluster: ObjectStorageCluster) -> None:
+	"""One node failing to upload keeps its local snapshots and does not stop the others."""
+	garage = cluster.garage_setup
+	for machine in garage.machines:
+		try:
+			garage.upload_metadata_snapshots(machine)
+		except Exception:
+			frappe.log_error(title=f"{machine['name']}: could not upload metadata snapshots")

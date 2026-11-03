@@ -71,6 +71,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		health_reason: DF.Data | None
 		last_metadata_snapshot_at: DF.Datetime | None
 		machines: DF.Table[ObjectStorageNode]
+		metadata_backup_endpoint: DF.Data | None
+		metadata_bucket_access_key: DF.Data | None
+		metadata_bucket_secret_key: DF.Password | None
 		metadata_dir: DF.Data
 		metrics_scrape_seconds: DF.Int
 		metrics_token: DF.Password | None

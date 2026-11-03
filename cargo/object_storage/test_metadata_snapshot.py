@@ -68,6 +68,61 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		create.assert_called_once()
 		self.assertIsNotNone(self.last_snapshot())
 
+	def test_no_upload_without_a_backup_bucket(self):
+		with (
+			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
+			patch.object(Setup, "upload_metadata_snapshots") as upload,
+		):
+			take_metadata_snapshots()
+
+		upload.assert_not_called()
+
+	def test_every_machine_uploads_and_one_failure_does_not_stop_the_rest(self):
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/garage-metadata",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		with (
+			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
+			patch.object(
+				Setup, "upload_metadata_snapshots", side_effect=[RuntimeError, None, None, None]
+			) as upload,
+			patch("frappe.log_error") as log_error,
+		):
+			take_metadata_snapshots()
+
+		self.assertEqual(upload.call_count, 4)
+		log_error.assert_called_once()
+		self.assertIsNotNone(self.last_snapshot())
+
+	def test_bucket_keys_go_through_machine_metadata(self):
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/garage-metadata",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		self.cluster.metadata_bucket_secret_key = "s3cr3t-value"
+		self.cluster.save()
+		garage = Setup(self.cluster)
+		machine = garage.machine(self.storage[0])
+
+		with (
+			patch.object(Setup, "replace_vm_metadata") as replace,
+			patch.object(Setup, "run") as run,
+		):
+			garage.upload_metadata_snapshots(machine)
+
+		self.assertEqual(
+			replace.call_args.args[1],
+			{"metadata_bucket_access_key": "GK123", "metadata_bucket_secret_key": "s3cr3t-value"},
+		)
+		sent = run.call_args.args[1]
+		self.assertNotIn("s3cr3t-value", sent)
+		self.assertIn(f"{self.cluster.name}/{self.storage[0]}", sent)
+
 	def test_nothing_is_asked_before_the_interval_passes(self):
 		self.cluster.db_set("last_metadata_snapshot_at", frappe.utils.now_datetime())
 

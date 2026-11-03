@@ -200,14 +200,7 @@ class Setup(Client):
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
 			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
 		}
-		# Atlas replaces the whole map, so the role set at creation is sent again.
-		AtlasClient.from_settings().replace_vm_metadata(
-			machine["vm_id"],
-			{
-				"role": machine["role"],
-				"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
-			},
-		)
+		self.replace_vm_metadata(machine)
 		# Vector only installs once the node holds its own Datum token.
 		self.run(machine, datum_refresh_script(), on_output)
 		self.run(
@@ -220,6 +213,43 @@ class Setup(Client):
 				environment=garage_metrics,
 			),
 			on_output,
+		)
+
+	def replace_vm_metadata(self, machine: MachineRow, extra: dict[str, str] | None = None) -> None:
+		"""Atlas replaces the whole map, so the role and Datum token are always sent again."""
+		metadata = {
+			"role": machine["role"],
+			"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
+			**(extra or {}),
+		}
+		AtlasClient.from_settings().replace_vm_metadata(machine["vm_id"], metadata)
+
+	@property
+	def has_metadata_backup(self) -> bool:
+		cluster = self.cluster
+		return bool(cluster.metadata_backup_endpoint and cluster.metadata_bucket_access_key)
+
+	def upload_metadata_snapshots(
+		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Ship the node's snapshots to the backup bucket, then delete the local copies. Keys
+		reach the node through MMDS, never the SSH script."""
+		cluster = self.cluster
+		self.replace_vm_metadata(
+			machine,
+			{
+				"metadata_bucket_access_key": cluster.metadata_bucket_access_key,
+				"metadata_bucket_secret_key": cluster.get_password("metadata_bucket_secret_key"),
+			},
+		)
+		environment = {
+			"METADATA_DIR": cluster.metadata_dir,
+			"BACKUP_ENDPOINT": cluster.metadata_backup_endpoint,
+			"BACKUP_REGION": cluster.region,
+			"BACKUP_PREFIX": f"{cluster.name}/{machine['name']}",
+		}
+		return self.run(
+			machine, script(*CONF, "upload_metadata_snapshots.sh", environment=environment), on_output
 		)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
