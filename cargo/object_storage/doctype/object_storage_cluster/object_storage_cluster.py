@@ -14,7 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
-from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT, Setup
 from cargo.object_storage.health import queue_cluster_metrics_exporters
 from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT, OutputLog
@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
 MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
+# Fetches run one machine after another: a gateway and up to four storage nodes.
+FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 SOURCE_HEADER = "X-FC-Source"
 REGION_HEADER = "X-FC-Region"
 SOURCE = "cargo"
@@ -71,6 +73,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		health_reason: DF.Data | None
 		last_metadata_snapshot_at: DF.Datetime | None
 		machines: DF.Table[ObjectStorageNode]
+		metadata_backup_endpoint: DF.Data | None
+		metadata_bucket_access_key: DF.Data | None
+		metadata_bucket_secret_key: DF.Password | None
 		metadata_dir: DF.Data
 		metrics_scrape_seconds: DF.Int
 		metrics_token: DF.Password | None
@@ -465,11 +470,21 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@flow
 	def _restore_metadata(self, snapshot: str, machines: list[str]) -> None:
+		self.fetch_metadata_snapshots(snapshot, machines)
 		# Every machine stops before any comes back: a restored node would otherwise take the
 		# newer entries straight back from a peer still running on them.
 		self.stop_garage_on_machines(machines)
 		self.swap_in_metadata_snapshot(snapshot, machines)
 		self.repair_metadata_tables(machines)
+
+	@task(queue="long", timeout=FETCH_STEP_TIMEOUT)
+	def fetch_metadata_snapshots(self, snapshot: str, machines: list[str]) -> None:
+		"""Before anything stops, so a missing backup leaves every node serving."""
+		garage = self.garage_setup
+		with OutputLog(self, "setup_log", append=True) as log:
+			for name in machines:
+				log.write(f"\n=== fetching snapshot {snapshot} for {name} ===\n")
+				garage.fetch_metadata_snapshot(garage.machine(name), snapshot, on_output=log.write)
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
 	def stop_garage_on_machines(self, machines: list[str]) -> None:
@@ -703,7 +718,7 @@ def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: 
 		ensure_every_machine_runs(cluster)
 		machines = [node.name for node in cluster.all_nodes]
 
-	ensure_snapshot_on_machines(cluster, snapshot, machines)
+	ensure_snapshot_is_backed_up(cluster, snapshot, machines)
 	return machines
 
 
@@ -717,17 +732,15 @@ def ensure_every_machine_runs(cluster: ObjectStorageCluster) -> None:
 		)
 
 
-def ensure_snapshot_on_machines(cluster: ObjectStorageCluster, snapshot: str, machines: list[str]) -> None:
-	"""The name must be one the node lists under snapshots/, so it cannot point anywhere else."""
+def ensure_snapshot_is_backed_up(cluster: ObjectStorageCluster, snapshot: str, machines: list[str]) -> None:
+	"""Every machine must have its own backup of the snapshot in the bucket."""
 	garage = cluster.garage_setup
-	missing = []
-	for name in machines:
-		snapshots = garage.get_metadata_snapshots(garage.machine(name))
-		if snapshot not in snapshots:
-			missing.append(f"{name} has {', '.join(snapshots) or 'none'}")
+	if not garage.has_metadata_backup:
+		frappe.throw(_("Set a Metadata Backup Endpoint and keys before restoring metadata."))
 
+	missing = [name for name in machines if not garage.has_metadata_backup_of(garage.machine(name), snapshot)]
 	if missing:
-		frappe.throw(_("Snapshot {0} is not on every machine: {1}").format(snapshot, "; ".join(missing)))
+		frappe.throw(_("No backup of snapshot {0} for: {1}").format(snapshot, ", ".join(missing)))
 
 
 def ensure_peers_serve(cluster: ObjectStorageCluster, machine: str) -> None:

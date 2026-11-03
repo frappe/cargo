@@ -4,10 +4,12 @@ import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TypedDict
+from typing import Any, TypedDict
 from urllib.parse import urlsplit
 
+import boto3
 import frappe
+from botocore.exceptions import ClientError
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
@@ -15,7 +17,7 @@ from cargo.atlas_client import AtlasClient, host_port
 from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
-from cargo.ssh import run_over_ssh, script
+from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 from cargo.telemetry.vector import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
@@ -25,6 +27,12 @@ NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
 # unique-local address cannot arrive from the internet, so no client can forge the header.
 TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 GIGABYTE = 1000**3
+# As many as Garage keeps on a node.
+KEEP_METADATA_BACKUPS = 2
+# How long curl may move one snapshot to or from the bucket. SSH gets a little more, for the
+# MMDS key wait, and the whole stays under the long queue's job timeout.
+BACKUP_TRANSFER_TIMEOUT = 1200
+BACKUP_SSH_TIMEOUT = BACKUP_TRANSFER_TIMEOUT + 120
 #: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
 #: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
@@ -74,9 +82,17 @@ class Setup(Client):
 		columns, so this cannot come off the machine query."""
 		return get_decrypted_password("Machine", machine["name"], "ssh_private_key")
 
-	def run(self, machine: MachineRow, script: str, on_output: Callable[[str], None] | None = None) -> str:
+	def run(
+		self,
+		machine: MachineRow,
+		script: str,
+		on_output: Callable[[str], None] | None = None,
+		timeout: int = SSH_TIMEOUT,
+	) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(machine["address"], script, self.key_for(machine), on_output=on_output)
+		return run_over_ssh(
+			machine["address"], script, self.key_for(machine), on_output=on_output, timeout=timeout
+		)
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -200,14 +216,7 @@ class Setup(Client):
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
 			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
 		}
-		# Atlas replaces the whole map, so the role set at creation is sent again.
-		AtlasClient.from_settings().replace_vm_metadata(
-			machine["vm_id"],
-			{
-				"role": machine["role"],
-				"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
-			},
-		)
+		self.replace_vm_metadata(machine)
 		# Vector only installs once the node holds its own Datum token.
 		self.run(machine, datum_refresh_script(), on_output)
 		self.run(
@@ -220,6 +229,98 @@ class Setup(Client):
 				environment=garage_metrics,
 			),
 			on_output,
+		)
+
+	def replace_vm_metadata(self, machine: MachineRow, extra: dict[str, str] | None = None) -> None:
+		"""Atlas replaces the whole map, so the role and Datum token are always sent again."""
+		metadata = {
+			"role": machine["role"],
+			"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
+			**(extra or {}),
+		}
+		AtlasClient.from_settings().replace_vm_metadata(machine["vm_id"], metadata)
+
+	@property
+	def has_metadata_backup(self) -> bool:
+		cluster = self.cluster
+		return bool(cluster.metadata_backup_endpoint and cluster.metadata_bucket_access_key)
+
+	def get_backup_environment(self, machine: MachineRow) -> dict[str, str]:
+		"""Where this machine's own backups live. Keys reach the node through MMDS, never the
+		SSH script."""
+		cluster = self.cluster
+		self.replace_vm_metadata(
+			machine,
+			{
+				"metadata_bucket_access_key": cluster.metadata_bucket_access_key,
+				"metadata_bucket_secret_key": cluster.get_password("metadata_bucket_secret_key"),
+			},
+		)
+		return {
+			"TRANSFER_TIMEOUT": BACKUP_TRANSFER_TIMEOUT,
+			"BACKUP_ENDPOINT": cluster.metadata_backup_endpoint,
+			"BACKUP_REGION": cluster.region,
+			"BACKUP_PREFIX": self.get_backup_prefix(machine),
+		}
+
+	def get_backup_prefix(self, machine: MachineRow) -> str:
+		return f"{self.cluster.name}/{machine['name']}"
+
+	@cached_property
+	def backup_bucket(self) -> str:
+		return urlsplit(self.cluster.metadata_backup_endpoint).path.strip("/")
+
+	@cached_property
+	def backup_client(self) -> Any:
+		cluster = self.cluster
+		endpoint = urlsplit(cluster.metadata_backup_endpoint)
+		return boto3.client(
+			"s3",
+			endpoint_url=f"{endpoint.scheme}://{endpoint.netloc}",
+			region_name=cluster.region,
+			aws_access_key_id=cluster.metadata_bucket_access_key,
+			aws_secret_access_key=cluster.get_password("metadata_bucket_secret_key"),
+		)
+
+	def has_metadata_backup_of(self, machine: MachineRow, snapshot: str) -> bool:
+		"""Whether the bucket holds this machine's own backup of the snapshot."""
+		key = f"{self.get_backup_prefix(machine)}/{snapshot}/db.lmdb"
+		try:
+			self.backup_client.head_object(Bucket=self.backup_bucket, Key=key)
+		except ClientError as error:
+			if error.response["Error"]["Code"] in ("404", "NoSuchKey"):
+				return False
+			raise
+
+		return True
+
+	def prune_metadata_backups(self, machine: MachineRow) -> list[str]:
+		"""Delete all but this machine's newest backups. Names sort in time order. Returns the
+		keys deleted."""
+		pages = self.backup_client.get_paginator("list_objects_v2").paginate(
+			Bucket=self.backup_bucket, Prefix=f"{self.get_backup_prefix(machine)}/"
+		)
+		keys = sorted(item["Key"] for page in pages for item in page.get("Contents", []))
+		stale = keys[:-KEEP_METADATA_BACKUPS]
+		for key in stale:
+			self.backup_client.delete_object(Bucket=self.backup_bucket, Key=key)
+
+		return stale
+
+	def upload_metadata_snapshots(
+		self, machine: MachineRow, name: str, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Ship the node's newest snapshot to the bucket as `name`, then delete the local copies."""
+		environment = {
+			"METADATA_DIR": self.cluster.metadata_dir,
+			"NAME": name,
+			**self.get_backup_environment(machine),
+		}
+		return self.run(
+			machine,
+			script(*CONF, "upload_metadata_snapshots.sh", environment=environment),
+			on_output,
+			timeout=BACKUP_SSH_TIMEOUT,
 		)
 
 	def stage_role(self, machine: MachineRow, identifier: NodeIdentifier) -> dict:
@@ -240,11 +341,6 @@ class Setup(Client):
 		environment = {"DATA_DIR": self.cluster.data_dir}
 		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
 
-	def get_metadata_snapshots(self, machine: MachineRow) -> list[str]:
-		"""The snapshots a node holds, oldest first. Garage names each by its UTC time."""
-		snapshots_dir = shlex.quote(f"{self.cluster.metadata_dir}/snapshots")
-		return sorted(self.run(machine, f"ls -1 {snapshots_dir} 2>/dev/null || true").split())
-
 	def stop_garage(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
 		return self.run(machine, "systemctl stop garage", on_output)
 
@@ -258,6 +354,22 @@ class Setup(Client):
 			"SNAPSHOT": snapshot,
 		}
 		return self.run(machine, script(*CONF, "restore_metadata.sh", environment=environment), on_output)
+
+	def fetch_metadata_snapshot(
+		self, machine: MachineRow, snapshot: str, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Download the node's own backup of a snapshot, unless it still holds it."""
+		environment = {
+			"METADATA_DIR": self.cluster.metadata_dir,
+			"SNAPSHOT": snapshot,
+			**self.get_backup_environment(machine),
+		}
+		return self.run(
+			machine,
+			script(*CONF, "fetch_metadata_snapshot.sh", environment=environment),
+			on_output,
+			timeout=BACKUP_SSH_TIMEOUT,
+		)
 
 	def repair_tables(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
 		"""Have the node fetch every table entry its peers hold newer than its own. Garage runs

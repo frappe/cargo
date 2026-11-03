@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "OSC-.####.",
- "creation": "2026-09-11 17:22:03.268619",
+ "creation": "2026-10-23 15:59:42.137634",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -25,6 +25,9 @@
   "metadata_dir",
   "data_dir",
   "last_metadata_snapshot_at",
+  "metadata_backup_endpoint",
+  "metadata_bucket_secret_key",
+  "metadata_bucket_access_key",
   "section_break_ports",
   "s3_port",
   "rpc_port",
@@ -189,7 +192,7 @@
   },
   {
    "default": "3900",
-   "description": "Garage's S3 API, on every node. Users never reach it directly: nginx on the gateway takes port 80 and forwards s3-svc.<domain> here.",
+   "description": "Garage's S3 API, on every node. Users never reach it directly: nginx on the gateway takes port 80 and forwards s3-svc.",
    "fieldname": "s3_port",
    "fieldtype": "Int",
    "label": "S3 API",
@@ -280,6 +283,22 @@
    "fieldtype": "Table",
    "label": "Machines",
    "options": "Object Storage Node"
+  },
+  {
+   "description": "Offsite bucket URL each node uploads its metadata snapshots to, e.g. https://s3.example.com/garage-metadata.",
+   "fieldname": "metadata_backup_endpoint",
+   "fieldtype": "Data",
+   "label": "Metadata Backup Endpoint"
+  },
+  {
+   "fieldname": "metadata_bucket_secret_key",
+   "fieldtype": "Password",
+   "label": "Metadata Bucket Secret Key"
+  },
+  {
+   "fieldname": "metadata_bucket_access_key",
+   "fieldtype": "Data",
+   "label": "Metadata Bucket Access key"
   }
  ],
  "grid_page_length": 50,
@@ -296,7 +315,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-23 12:00:00.000000",
+ "modified": "2026-11-03 13:00:24.614681",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",
