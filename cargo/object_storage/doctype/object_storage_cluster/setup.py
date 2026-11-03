@@ -4,7 +4,7 @@ import shlex
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TypedDict
+from typing import Any, TypedDict
 from urllib.parse import urlsplit
 
 import boto3
@@ -27,6 +27,8 @@ NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
 # unique-local address cannot arrive from the internet, so no client can forge the header.
 TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 GIGABYTE = 1000**3
+# As many as Garage keeps on a node.
+KEEP_METADATA_BACKUPS = 2
 #: `Machine.name`, e.g. ``OSC-0001-storage-0001``.
 MachineName = str
 #: ``<node id>@<address>:<rpc port>``, as `garage node id` prints it.
@@ -251,26 +253,46 @@ class Setup(Client):
 	def get_backup_prefix(self, machine: MachineRow) -> str:
 		return f"{self.cluster.name}/{machine['name']}"
 
-	def has_metadata_backup_of(self, machine: MachineRow, snapshot: str) -> bool:
-		"""Whether the bucket holds this machine's own backup of the snapshot."""
+	@cached_property
+	def backup_bucket(self) -> str:
+		return urlsplit(self.cluster.metadata_backup_endpoint).path.strip("/")
+
+	@cached_property
+	def backup_client(self) -> Any:
 		cluster = self.cluster
 		endpoint = urlsplit(cluster.metadata_backup_endpoint)
-		client = boto3.client(
+		return boto3.client(
 			"s3",
 			endpoint_url=f"{endpoint.scheme}://{endpoint.netloc}",
 			region_name=cluster.region,
 			aws_access_key_id=cluster.metadata_bucket_access_key,
 			aws_secret_access_key=cluster.get_password("metadata_bucket_secret_key"),
 		)
+
+	def has_metadata_backup_of(self, machine: MachineRow, snapshot: str) -> bool:
+		"""Whether the bucket holds this machine's own backup of the snapshot."""
 		key = f"{self.get_backup_prefix(machine)}/{snapshot}/db.lmdb"
 		try:
-			client.head_object(Bucket=endpoint.path.strip("/"), Key=key)
+			self.backup_client.head_object(Bucket=self.backup_bucket, Key=key)
 		except ClientError as error:
 			if error.response["Error"]["Code"] in ("404", "NoSuchKey"):
 				return False
 			raise
 
 		return True
+
+	def prune_metadata_backups(self, machine: MachineRow) -> list[str]:
+		"""Delete all but this machine's newest backups. Names sort in time order. Returns the
+		keys deleted."""
+		pages = self.backup_client.get_paginator("list_objects_v2").paginate(
+			Bucket=self.backup_bucket, Prefix=f"{self.get_backup_prefix(machine)}/"
+		)
+		keys = sorted(item["Key"] for page in pages for item in page.get("Contents", []))
+		stale = keys[:-KEEP_METADATA_BACKUPS]
+		for key in stale:
+			self.backup_client.delete_object(Bucket=self.backup_bucket, Key=key)
+
+		return stale
 
 	def upload_metadata_snapshots(
 		self, machine: MachineRow, name: str, on_output: Callable[[str], None] | None = None

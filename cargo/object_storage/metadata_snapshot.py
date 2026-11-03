@@ -67,8 +67,8 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 
 
 def upload_metadata_snapshots(cluster: ObjectStorageCluster, name: str, skip: set[str | None]) -> None:
-	"""A node that refused this run is skipped: its newest snapshot is an older one. One node
-	failing to upload keeps its local snapshots and does not stop the others."""
+	"""A node that refused this run is skipped: its newest snapshot is an older one. Old backups
+	are pruned only after a good upload. One node failing does not stop the others."""
 	garage = cluster.garage_setup
 	for machine in garage.machines:
 		# In case the snapshot was refused skip the upload.
@@ -77,5 +77,6 @@ def upload_metadata_snapshots(cluster: ObjectStorageCluster, name: str, skip: se
 
 		try:
 			garage.upload_metadata_snapshots(machine, name)
+			garage.prune_metadata_backups(machine)
 		except Exception:
 			frappe.log_error(title=f"{machine['name']}: could not upload metadata snapshots")

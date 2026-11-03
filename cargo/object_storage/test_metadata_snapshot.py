@@ -91,6 +91,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(
 				Setup, "upload_metadata_snapshots", side_effect=[RuntimeError, None, None, None]
 			) as upload,
+			patch.object(Setup, "prune_metadata_backups"),
 			patch("frappe.log_error") as log_error,
 		):
 			take_metadata_snapshots()
@@ -139,6 +140,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(Setup, "create_metadata_snapshot", return_value=refused),
 			patch.object(Setup, "get_layout_nodes", return_value=[("bbb", self.storage[1])]),
 			patch.object(Setup, "upload_metadata_snapshots") as upload,
+			patch.object(Setup, "prune_metadata_backups"),
 			patch("frappe.log_error"),
 		):
 			take_metadata_snapshots()
@@ -276,6 +278,37 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 
 		with self.assertRaisesRegex(frappe.ValidationError, "served"):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT)
+
+	def test_only_the_two_newest_backups_are_kept(self):
+		garage = Setup(self.cluster)
+		machine = garage.machine(self.storage[0])
+		prefix = f"{self.cluster.name}/{self.storage[0]}"
+		names = ["2026-10-23T04:00:00Z", "2026-10-23T10:00:00Z", "2026-10-22T22:00:00Z", SNAPSHOT]
+		page = {"Contents": [{"Key": f"{prefix}/{name}/db.lmdb"} for name in names]}
+
+		with patch("cargo.object_storage.doctype.object_storage_cluster.setup.boto3.client") as client:
+			set_encrypted_password(
+				self.cluster.doctype, self.cluster.name, "s3cr3t-value", "metadata_bucket_secret_key"
+			)
+			client.return_value.get_paginator.return_value.paginate.return_value = [page]
+			pruned = garage.prune_metadata_backups(machine)
+
+		self.assertEqual(
+			pruned, [f"{prefix}/2026-10-22T22:00:00Z/db.lmdb", f"{prefix}/2026-10-23T04:00:00Z/db.lmdb"]
+		)
+		deleted = [call.kwargs["Key"] for call in client.return_value.delete_object.call_args_list]
+		self.assertEqual(deleted, pruned)
+
+	def test_a_failed_upload_prunes_nothing(self):
+		with (
+			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
+			patch.object(Setup, "upload_metadata_snapshots", side_effect=RuntimeError),
+			patch.object(Setup, "prune_metadata_backups") as prune,
+			patch("frappe.log_error"),
+		):
+			take_metadata_snapshots()
+
+		prune.assert_not_called()
 
 	def test_a_machine_without_its_backup_refuses_the_restore(self):
 		self.has_backup.side_effect = lambda machine, _: machine["name"] != self.storage[1]
