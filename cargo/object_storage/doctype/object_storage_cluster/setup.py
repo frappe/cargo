@@ -7,7 +7,9 @@ from functools import cached_property
 from typing import TypedDict
 from urllib.parse import urlsplit
 
+import boto3
 import frappe
+from botocore.exceptions import ClientError
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
@@ -229,11 +231,9 @@ class Setup(Client):
 		cluster = self.cluster
 		return bool(cluster.metadata_backup_endpoint and cluster.metadata_bucket_access_key)
 
-	def upload_metadata_snapshots(
-		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
-	) -> str:
-		"""Ship the node's snapshots to the backup bucket, then delete the local copies. Keys
-		reach the node through MMDS, never the SSH script."""
+	def get_backup_environment(self, machine: MachineRow) -> dict[str, str]:
+		"""Where this machine's own backups live. Keys reach the node through MMDS, never the
+		SSH script."""
 		cluster = self.cluster
 		self.replace_vm_metadata(
 			machine,
@@ -242,11 +242,44 @@ class Setup(Client):
 				"metadata_bucket_secret_key": cluster.get_password("metadata_bucket_secret_key"),
 			},
 		)
-		environment = {
-			"METADATA_DIR": cluster.metadata_dir,
+		return {
 			"BACKUP_ENDPOINT": cluster.metadata_backup_endpoint,
 			"BACKUP_REGION": cluster.region,
-			"BACKUP_PREFIX": f"{cluster.name}/{machine['name']}",
+			"BACKUP_PREFIX": self.get_backup_prefix(machine),
+		}
+
+	def get_backup_prefix(self, machine: MachineRow) -> str:
+		return f"{self.cluster.name}/{machine['name']}"
+
+	def has_metadata_backup_of(self, machine: MachineRow, snapshot: str) -> bool:
+		"""Whether the bucket holds this machine's own backup of the snapshot."""
+		cluster = self.cluster
+		endpoint = urlsplit(cluster.metadata_backup_endpoint)
+		client = boto3.client(
+			"s3",
+			endpoint_url=f"{endpoint.scheme}://{endpoint.netloc}",
+			region_name=cluster.region,
+			aws_access_key_id=cluster.metadata_bucket_access_key,
+			aws_secret_access_key=cluster.get_password("metadata_bucket_secret_key"),
+		)
+		key = f"{self.get_backup_prefix(machine)}/{snapshot}/db.lmdb"
+		try:
+			client.head_object(Bucket=endpoint.path.strip("/"), Key=key)
+		except ClientError as error:
+			if error.response["Error"]["Code"] in ("404", "NoSuchKey"):
+				return False
+			raise
+
+		return True
+
+	def upload_metadata_snapshots(
+		self, machine: MachineRow, name: str, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Ship the node's newest snapshot to the bucket as `name`, then delete the local copies."""
+		environment = {
+			"METADATA_DIR": self.cluster.metadata_dir,
+			"NAME": name,
+			**self.get_backup_environment(machine),
 		}
 		return self.run(
 			machine, script(*CONF, "upload_metadata_snapshots.sh", environment=environment), on_output
@@ -270,11 +303,6 @@ class Setup(Client):
 		environment = {"DATA_DIR": self.cluster.data_dir}
 		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
 
-	def get_metadata_snapshots(self, machine: MachineRow) -> list[str]:
-		"""The snapshots a node holds, oldest first. Garage names each by its UTC time."""
-		snapshots_dir = shlex.quote(f"{self.cluster.metadata_dir}/snapshots")
-		return sorted(self.run(machine, f"ls -1 {snapshots_dir} 2>/dev/null || true").split())
-
 	def stop_garage(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
 		return self.run(machine, "systemctl stop garage", on_output)
 
@@ -288,6 +316,19 @@ class Setup(Client):
 			"SNAPSHOT": snapshot,
 		}
 		return self.run(machine, script(*CONF, "restore_metadata.sh", environment=environment), on_output)
+
+	def fetch_metadata_snapshot(
+		self, machine: MachineRow, snapshot: str, on_output: Callable[[str], None] | None = None
+	) -> str:
+		"""Download the node's own backup of a snapshot, unless it still holds it."""
+		environment = {
+			"METADATA_DIR": self.cluster.metadata_dir,
+			"SNAPSHOT": snapshot,
+			**self.get_backup_environment(machine),
+		}
+		return self.run(
+			machine, script(*CONF, "fetch_metadata_snapshot.sh", environment=environment), on_output
+		)
 
 	def repair_tables(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
 		"""Have the node fetch every table entry its peers hold newer than its own. Garage runs

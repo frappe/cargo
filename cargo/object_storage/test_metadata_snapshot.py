@@ -1,8 +1,10 @@
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
+from botocore.exceptions import ClientError
 from frappe.tests import IntegrationTestCase
+from frappe.utils.password import set_encrypted_password
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client
@@ -94,6 +96,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			take_metadata_snapshots()
 
 		self.assertEqual(upload.call_count, 4)
+		self.assertEqual(len({call.args[1] for call in upload.call_args_list}), 1)
 		log_error.assert_called_once()
 		self.assertIsNotNone(self.last_snapshot())
 
@@ -113,7 +116,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(Setup, "replace_vm_metadata") as replace,
 			patch.object(Setup, "run") as run,
 		):
-			garage.upload_metadata_snapshots(machine)
+			garage.upload_metadata_snapshots(machine, SNAPSHOT)
 
 		self.assertEqual(
 			replace.call_args.args[1],
@@ -122,6 +125,46 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		sent = run.call_args.args[1]
 		self.assertNotIn("s3cr3t-value", sent)
 		self.assertIn(f"{self.cluster.name}/{self.storage[0]}", sent)
+		self.assertIn(f"export NAME={SNAPSHOT}", sent)
+
+	def test_a_refusing_node_does_not_upload_an_older_snapshot_under_this_name(self):
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/bucket",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		refused = {"success": {}, "error": {"bbb": "Cannot acquire lock"}}
+		with (
+			patch.object(Setup, "create_metadata_snapshot", return_value=refused),
+			patch.object(Setup, "get_layout_nodes", return_value=[("bbb", self.storage[1])]),
+			patch.object(Setup, "upload_metadata_snapshots") as upload,
+			patch("frappe.log_error"),
+		):
+			take_metadata_snapshots()
+
+		uploaded = {call.args[0]["name"] for call in upload.call_args_list}
+		self.assertEqual(uploaded, {self.gateway, self.storage[0], self.storage[2]})
+
+	def test_a_restore_fetches_only_the_machines_own_backup(self):
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/bucket",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		set_encrypted_password(
+			self.cluster.doctype, self.cluster.name, "s3cr3t-value", "metadata_bucket_secret_key"
+		)
+		self.cluster.reload()
+		garage = Setup(self.cluster)
+
+		with patch.object(Setup, "replace_vm_metadata"), patch.object(Setup, "run") as run:
+			garage.fetch_metadata_snapshot(garage.machine(self.storage[0]), SNAPSHOT)
+
+		sent = run.call_args.args[1]
+		self.assertIn(f"export BACKUP_PREFIX={self.cluster.name}/{self.storage[0]}", sent)
+		self.assertNotIn("s3cr3t-value", sent)
 
 	def test_nothing_is_asked_before_the_interval_passes(self):
 		self.cluster.db_set("last_metadata_snapshot_at", frappe.utils.now_datetime())
@@ -164,15 +207,22 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 class IntegrationTestMetadataRestore(IntegrationTestCase):
 	"""A restore is typed in by hand and refused unless it can finish without losing quorum."""
 
-	setUp = IntegrationTestMetadataSnapshot.setUp
 	add_machine = test_object_storage_cluster.IntegrationTestObjectStorageCluster.add_machine
 
-	def held(self, snapshots: list[str]):
-		return patch.object(Setup, "get_metadata_snapshots", return_value=snapshots)
+	def setUp(self):
+		IntegrationTestMetadataSnapshot.setUp(self)
+		self.cluster.db_set(
+			{
+				"metadata_backup_endpoint": "https://s3.example.com/bucket",
+				"metadata_bucket_access_key": "GK123",
+			}
+		)
+		self.backed_up = patch.object(Setup, "has_metadata_backup_of", return_value=True)
+		self.has_backup = self.backed_up.start()
+		self.addCleanup(patch.stopall)
 
 	def test_one_machine_is_restored_alone(self):
 		with (
-			self.held([SNAPSHOT]),
 			patch.object(Setup, "healthy_nodes", return_value=set(self.storage)),
 			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
 		):
@@ -181,7 +231,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.storage[0]])
 
 	def test_the_whole_cluster_is_every_machine(self):
-		with self.held([SNAPSHOT]), patch.object(ObjectStorageCluster, "_restore_metadata") as restore:
+		with patch.object(ObjectStorageCluster, "_restore_metadata") as restore:
 			self.cluster.restore_metadata_snapshot(SNAPSHOT)
 
 		snapshot, machines = restore.run_as_workflow.call_args.args
@@ -205,7 +255,6 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 			return set(self.storage) if "10.0.0.2" in garage.url else set()
 
 		with (
-			self.held([SNAPSHOT]),
 			patch.object(Setup, "healthy_nodes", autospec=True, side_effect=healthy_nodes),
 			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
 		):
@@ -222,32 +271,61 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, self.storage[1]):
 			frappe.get_doc("Object Storage Cluster", self.cluster.name).restore_metadata_snapshot(SNAPSHOT)
 
-	def test_only_a_name_the_node_lists_is_restored(self):
-		for name in ("latest", f"{SNAPSHOT}/../..", "../db.lmdb", ""):
-			with (
-				self.subTest(name=name),
-				self.held([SNAPSHOT]),
-				patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
-				self.assertRaisesRegex(frappe.ValidationError, "not on every machine"),
-			):
-				self.cluster.restore_metadata_snapshot(name)
-
-			restore.run_as_workflow.assert_not_called()
-
 	def test_a_cluster_that_never_served_has_nothing_to_restore(self):
 		self.cluster.db_set("activated_on", None)
 
 		with self.assertRaisesRegex(frappe.ValidationError, "served"):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT)
 
-	def test_a_machine_without_the_snapshot_refuses_the_restore(self):
-		held = {self.storage[0]: [SNAPSHOT], self.storage[1]: ["2026-10-23T04:00:00Z"]}
+	def test_a_machine_without_its_backup_refuses_the_restore(self):
+		self.has_backup.side_effect = lambda machine, _: machine["name"] != self.storage[1]
+
 		with (
-			patch.object(
-				Setup, "get_metadata_snapshots", side_effect=lambda row: held.get(row["name"], [SNAPSHOT])
-			),
 			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
-			self.assertRaisesRegex(frappe.ValidationError, "2026-10-23T04:00:00Z"),
+			self.assertRaisesRegex(frappe.ValidationError, self.storage[1]),
+		):
+			self.cluster.restore_metadata_snapshot(SNAPSHOT)
+
+		restore.run_as_workflow.assert_not_called()
+
+	def test_the_bucket_is_asked_for_the_machines_own_backup(self):
+		set_encrypted_password(
+			self.cluster.doctype, self.cluster.name, "s3cr3t-value", "metadata_bucket_secret_key"
+		)
+		self.cluster.reload()
+		garage = Setup(self.cluster)
+		machine = garage.machine(self.storage[0])
+		missing = ClientError({"Error": {"Code": "404"}}, "HeadObject")
+		self.backed_up.stop()
+
+		with patch("cargo.object_storage.doctype.object_storage_cluster.setup.boto3.client") as client:
+			self.assertTrue(garage.has_metadata_backup_of(machine, SNAPSHOT))
+			client.return_value.head_object.side_effect = missing
+			self.assertFalse(garage.has_metadata_backup_of(machine, SNAPSHOT))
+
+		client.return_value.head_object.assert_called_with(
+			Bucket="bucket", Key=f"{self.cluster.name}/{self.storage[0]}/{SNAPSHOT}/db.lmdb"
+		)
+		self.assertEqual(client.call_args.kwargs["endpoint_url"], "https://s3.example.com")
+
+	def test_backups_are_fetched_before_any_machine_stops(self):
+		steps = MagicMock()
+		with (
+			patch.object(ObjectStorageCluster, "fetch_metadata_snapshots", steps.fetch),
+			patch.object(ObjectStorageCluster, "stop_garage_on_machines", steps.stop),
+			patch.object(ObjectStorageCluster, "swap_in_metadata_snapshot", steps.swap),
+			patch.object(ObjectStorageCluster, "repair_metadata_tables", steps.repair),
+		):
+			self.cluster._restore_metadata(SNAPSHOT, self.storage)
+
+		self.assertEqual([name for name, *_ in steps.mock_calls], ["fetch", "stop", "swap", "repair"])
+
+	def test_a_restore_needs_a_backup_bucket(self):
+		self.cluster.db_set("metadata_backup_endpoint", None)
+
+		with (
+			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
+			self.assertRaisesRegex(frappe.ValidationError, "Metadata Backup Endpoint"),
 		):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT)
 

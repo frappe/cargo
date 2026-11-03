@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import frappe
 from frappe.utils import get_datetime, now_datetime
@@ -47,13 +47,17 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 	"""Ask every node for a snapshot. Stamped even when some refuse: retrying before the interval
 	would rotate away the good nodes' older snapshot."""
 	garage = cluster.garage_setup
+	# Garage's own format, so one name covers every node of this run.
+	# The snapshot name that garage uses is temporary and we replace it with our name
+	# While uploading it to offsite, since garage has no admin API returning the snapshot names.
+	name = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 	refused = garage.create_metadata_snapshot().get("error") or {}
+	machines = dict(garage.get_layout_nodes()) if refused else {}
 	if garage.has_metadata_backup:
-		upload_metadata_snapshots(cluster)
+		upload_metadata_snapshots(cluster, name, skip={machines.get(node_id) for node_id in refused})
 	cluster.db_set("last_metadata_snapshot_at", now_datetime())
 
 	if refused:
-		machines = dict(garage.get_layout_nodes())
 		frappe.log_error(
 			title=f"{cluster.name}: some nodes did not snapshot their metadata",
 			message="\n".join(
@@ -62,11 +66,16 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 		)
 
 
-def upload_metadata_snapshots(cluster: ObjectStorageCluster) -> None:
-	"""One node failing to upload keeps its local snapshots and does not stop the others."""
+def upload_metadata_snapshots(cluster: ObjectStorageCluster, name: str, skip: set[str | None]) -> None:
+	"""A node that refused this run is skipped: its newest snapshot is an older one. One node
+	failing to upload keeps its local snapshots and does not stop the others."""
 	garage = cluster.garage_setup
 	for machine in garage.machines:
+		# In case the snapshot was refused skip the upload.
+		if machine["name"] in skip:
+			continue
+
 		try:
-			garage.upload_metadata_snapshots(machine)
+			garage.upload_metadata_snapshots(machine, name)
 		except Exception:
 			frappe.log_error(title=f"{machine['name']}: could not upload metadata snapshots")
