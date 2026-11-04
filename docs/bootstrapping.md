@@ -40,8 +40,6 @@ JWKS_URL=https://atlas.example.com/api/atlas/jwks.json \
 ATLAS_URL=https://atlas.example.com \
 ATLAS_TOKEN=... \
 ATLAS_TENANT_ID=0 \
-PROXY_URL=https://proxy.example.com \
-PROXY_TOKEN=... \
 WILDCARD_DOMAIN=example.com \
 CARGO_URL=https://cargo.example.com \
 CENTRAL_WEBHOOK_SECRET=not-configured \
@@ -63,8 +61,6 @@ The installation contract has these values:
 | `ATLAS_URL` | Atlas base URL. |
 | `ATLAS_TOKEN` | Encrypted bearer token for the Atlas tenant API. |
 | `ATLAS_TENANT_ID` | Atlas tenant. The regional Cargo service uses `0`. |
-| `PROXY_URL` | Regional Proxy control API URL. |
-| `PROXY_TOKEN` | Encrypted token restricted to site names with the `-svc` suffix. |
 | `WILDCARD_DOMAIN` | Regional wildcard domain used for public service routes. |
 | `JWKS_URL` | Atlas merged JSON Web Key Set route. |
 | `CARGO_URL` | Public Cargo URL through the Proxy. |
@@ -76,7 +72,7 @@ The installation contract has these values:
 
 The script creates a `frappe` system user, installs Pilot, creates the bench and site, installs Cargo, deploys the workload, and restarts its workers. The Cargo install hook writes the configuration to Cargo Settings and completes the Frappe setup wizard.
 
-Cargo Settings stores `atlas_token`, `proxy_token`, and `central_webhook_secret` as encrypted Password fields. Cargo reads these values with `get_password` when it makes an authenticated request.
+Cargo Settings stores `atlas_token` and `central_webhook_secret` as encrypted Password fields. Cargo reads these values with `get_password` when it makes an authenticated request.
 
 Set `CI` to make the install hook skip configuration. Use this only when CI installs the app without service endpoints.
 
@@ -86,9 +82,9 @@ The Cargo site and Pilot administration site listen on plain HTTP port 80 inside
 
 The existing regional wildcard DNS record covers `cargo.<wildcard-domain>` and `cargo-pilot.<wildcard-domain>`. Do not create direct A records for these domains.
 
-## Object storage routes
+## Service domains
 
-Cargo maps `s3-svc.<wildcard-domain>` and `s3-admin-svc.<wildcard-domain>` to the active object storage gateway mesh address before it marks the cluster Active. A Proxy failure marks the cluster Failed so that setup can retry.
+The object storage gateway and the datum host each get a public IPv4 from Atlas and run Caddy, which obtains and renews TLS certificates itself. Point DNS A records at that address before setup: `s3-svc` and `s3-admin-svc` at the gateway, `telemetry-svc` and `telemetry-read-svc` at the datum host. Setup marks the service Active only once its domains answer over HTTPS, and Failed with the address to point DNS at when they do not.
 
 Cargo permits only one Active Object Storage Cluster. Other cluster records can remain for archival history, but setup stops while another cluster is Active.
 
@@ -97,8 +93,6 @@ A host builds its own cluster when the site config holds `default_storage_cluste
 ## Authentication
 
 Cargo calls Atlas with `Authorization: Bearer <atlas_token>` and `X-Tenant-ID: 0`. The token has audience `atlas-admin:<region-id>`, subject `cargo`, scope `*`, tenant `0`, and a 365-day lifetime.
-
-The Proxy token has audience `atlas-proxy:<region-id>`, subject `cargo`, scope `site:*`, a `constraints.site.suffix` value of `-svc`, no tenant claim, and a 365-day lifetime. Cargo also refuses to call the Proxy for a site name without this suffix.
 
 Cargo installs datum with `DATUM_JWKS_URL` and `DATUM_REGION_ID` from Cargo Settings, written to `/etc/datum.env`. Datum verifies against the same merged key set Cargo does, and requires the audience `atlas-datum:<region-id>`, so a pilot in another region cannot write to this region's telemetry. Without either variable datum answers 401 to everything, and the installer refuses to run.
 

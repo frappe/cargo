@@ -18,8 +18,6 @@
   "atlas_url",
   "atlas_token",
   "atlas_tenant_id",
-  "proxy_url",
-  "proxy_token",
   "wildcard_domain",
   "image_build_tab",
   "release_tracking_section",
@@ -141,21 +139,6 @@
    "fieldname": "jwks_url",
    "fieldtype": "Data",
    "label": "JWKS URL",
-   "reqd": 1
-  },
-  {
-   "description": "Proxy control API URL for this region.",
-   "fieldname": "proxy_url",
-   "fieldtype": "Data",
-   "label": "Proxy URL",
-   "options": "URL",
-   "reqd": 1
-  },
-  {
-   "description": "Restricted bearer token for the Proxy control API.",
-   "fieldname": "proxy_token",
-   "fieldtype": "Password",
-   "label": "Proxy Token",
    "reqd": 1
   },
   {
@@ -358,7 +341,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 16:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

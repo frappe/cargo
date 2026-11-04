@@ -8,7 +8,6 @@ SETTINGS = {
 	"atlas_url": "http://atlas.test",
 	"cargo_url": "http://cargo.test",
 	"jwks_url": "http://atlas.test/api/atlas/jwks.json",
-	"proxy_url": "http://proxy.test",
 	"wildcard_domain": "example.test",
 	"region_id": 1,
 	"region": "test-region",
@@ -23,7 +22,6 @@ SETTINGS = {
 SECRETS = {
 	"atlas_token": "test-atlas-token",
 	"central_webhook_secret": "test-webhook-secret",
-	"proxy_token": "test-proxy-token",
 }
 FRAPPE_BRANCHES = ("version-16", "develop")
 SIGNUP_APPS = ("erpnext", "hrms", "helpdesk", "gameplan", "raven", "builder")

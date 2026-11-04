@@ -88,8 +88,6 @@ docker exec \
 	-e REGION_ID=1 \
 	-e ATLAS_TOKEN=e2e-atlas-token \
 	-e ATLAS_TENANT_ID=0 \
-	-e PROXY_URL=http://proxy.invalid \
-	-e PROXY_TOKEN=e2e-proxy-token \
 	-e WILDCARD_DOMAIN=e2e.invalid \
 	"$NAME" bash /opt/cargo-src/setup.sh
 

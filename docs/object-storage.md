@@ -19,7 +19,7 @@ Each machine of a cluster is a **Machine**, named after the cluster and its role
 
 ## Requirements
 
-Cargo Settings must carry `region`, `wildcard_domain`, `atlas_url`, `atlas_token`, `central_url`, `central_webhook_secret`, `proxy_url`, and `proxy_token`. A cluster cannot be inserted without the Central values, because it wires its own webhook when it is created.
+Cargo Settings must carry `region`, `wildcard_domain`, `atlas_url`, `atlas_token`, `central_url`, and `central_webhook_secret`. A cluster cannot be inserted without the Central values, because it wires its own webhook when it is created.
 
 Each new machine boots from the Ubuntu system image that Atlas serves when the machine is requested, so a retired image does not block new nodes.
 
