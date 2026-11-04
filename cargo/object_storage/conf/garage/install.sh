@@ -38,6 +38,8 @@ cat > "$GARAGE_CONFIG" <<GARAGE_TOML
 metadata_dir = "$METADATA_DIR"
 data_dir     = "$DATA_DIR"
 db_engine    = "lmdb"
+# Images and snapshots are large and read in order; bigger blocks mean fewer RPCs per read.
+block_size   = 10485760
 
 replication_factor = $REPLICATION_FACTOR
 consistency_mode   = "consistent"
