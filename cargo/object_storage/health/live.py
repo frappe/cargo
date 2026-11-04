@@ -239,7 +239,7 @@ def increase_disk_size_if_required():
 	if not connected.peers:
 		return
 
-	running = {node.name for node in cluster.garage_nodes if node.status == "Running"}
+	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
 	if running - connected.machines:
 		cluster.setup()
 		return

@@ -21,7 +21,8 @@ from frappe.utils.password import (
 	set_encrypted_password,
 )
 
-from cargo.client_models import GATEWAY, PROXY, STORAGE
+from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
+from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
 from cargo.object_storage.doctype.object_storage_cluster.proxy import Proxy
@@ -515,7 +516,7 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 
 
 class IntegrationTestProxyRouting(IntegrationTestCase):
-	"""Caddy on the proxy node is the last step: a cluster is ready only once it serves, and
+	"""Caddy on the gateway is the last step: a cluster is ready only once it serves, and
 	setting up again is how a failed one is retried."""
 
 	def setUp(self):
@@ -531,8 +532,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		self.vm_ids: dict[str, str] = {}
 		self.gateway = self.add_machine(GATEWAY)
 		self.storage = self.add_machine(STORAGE)
-		self.proxy_machine = self.add_machine(PROXY)
-		frappe.db.set_value("Machine", self.proxy_machine, "public_ipv4", "203.0.113.10")
+		frappe.db.set_value("Machine", self.gateway, "public_ipv4", "203.0.113.10")
 		self.cluster.reload()
 
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
@@ -562,15 +562,6 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 
 		installed.assert_called_once()
 		self.assertEqual(self.cluster.status, "Active")
-
-	def test_garage_is_never_installed_on_the_proxy(self):
-		with (
-			patch.object(Setup, "healthy_nodes", return_value=set()),
-			patch.object(ObjectStorageCluster, "start_setup_on_machine", return_value=False) as installed,
-		):
-			self.cluster._setup()
-
-		self.assertNotIn(self.proxy_machine, [c.args[0].name for c in installed.call_args_list])
 
 	def test_a_caddy_failure_fails_the_cluster_and_says_why(self):
 		with self.everything_joined(caddy={"side_effect": RuntimeError("caddy validate failed")}):
@@ -627,24 +618,32 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 
 		flow.run_as_workflow.assert_not_called()
 
-	def test_setup_is_refused_without_a_running_proxy(self):
-		frappe.db.set_value("Machine", self.proxy_machine, "status", "Terminated")
-
-		self.refused_setup("running proxy node")
-
-	def test_setup_is_refused_before_the_proxy_has_a_public_address(self):
-		frappe.db.set_value("Machine", self.proxy_machine, "public_ipv4", None)
+	def test_setup_is_refused_before_the_gateway_has_a_public_address(self):
+		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
 
 		self.refused_setup("public IPv4")
 
-	def test_a_live_cluster_without_a_proxy_stays_active(self):
+	def test_a_live_cluster_whose_gateway_has_no_public_address_stays_active(self):
 		"""Its traffic still flows the old way, so a refused setup must not fail it."""
 		self.cluster.mark_cluster_status("Active")
-		frappe.db.set_value("Machine", self.proxy_machine, "status", "Terminated")
+		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
 
-		self.refused_setup("running proxy node")
+		self.refused_setup("public IPv4")
 
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
+
+	def test_only_the_gateway_asks_atlas_for_a_public_address(self):
+		with (
+			patch("cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.base_image_id"),
+			patch.object(MachineDoc, "request") as request,
+			patch.object(ObjectStorageCluster, "save"),
+		):
+			self.cluster.add_node(GATEWAY, cpu_millicores=1000, ram_gb=1, disk_gb=10)
+			self.cluster.add_node(STORAGE, cpu_millicores=1000, ram_gb=1, disk_gb=10)
+
+		gateway_call, storage_call = request.call_args_list
+		self.assertTrue(gateway_call.kwargs["has_public_ipv4"])
+		self.assertFalse(storage_call.kwargs["has_public_ipv4"])
 
 	def test_steps_that_install_over_ssh_outlast_the_ssh_calls_they_make(self):
 		"""The worker's default is 300s against SSH's 600s, so an unmarked step would be

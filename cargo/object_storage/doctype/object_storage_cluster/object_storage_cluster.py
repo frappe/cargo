@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import time
 import typing
 from functools import cached_property
 
@@ -42,8 +41,6 @@ MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
 # Fetches run one machine after another: a gateway and up to four storage nodes.
 FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 MIN_SCRAPE_SECONDS = 60
-PROXY_PROBE_ATTEMPTS = 6
-PROXY_PROBE_INTERVAL_SECONDS = 10
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -344,12 +341,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def check_if_proxy_is_configured(self) -> bool:
-		"""Whether the cluster answers on its public domain. Caddy obtains its certificate after
-		it starts, so the probe is given a minute."""
-		for _attempt in range(PROXY_PROBE_ATTEMPTS):
-			if self.proxy.is_serving:
-				return True
-			time.sleep(PROXY_PROBE_INTERVAL_SECONDS)
+		"""Whether the cluster answers on its public domain with a certificate Caddy obtained."""
+		if self.proxy.wait_until_serving():
+			return True
 
 		self.mark_cluster_status(
 			"Failed",

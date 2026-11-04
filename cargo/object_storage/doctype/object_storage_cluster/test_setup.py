@@ -5,8 +5,9 @@ from unittest.mock import PropertyMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from cargo.client_models import GATEWAY, PROXY, STORAGE
-from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage.doctype.object_storage_cluster.setup import CONF, Setup
+from cargo.ssh import script
 from cargo.testing import SETTINGS, use_test_settings
 
 
@@ -21,37 +22,27 @@ def machine(role: str) -> dict:
 	}
 
 
-class IntegrationTestGarageMachines(IntegrationTestCase):
-	"""Garage runs on the gateway and storage nodes only."""
+class IntegrationTestGarageInstall(IntegrationTestCase):
+	"""Garage listens on the node's mesh address only, never on a gateway's public one."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
 		self.setup = Setup(frappe.get_doc({"doctype": "Object Storage Cluster"}).insert())
 
-	def add_machine(self, role: str) -> str:
-		return (
-			frappe.get_doc(
-				{
-					"doctype": "Machine",
-					"reference_doctype": self.setup.cluster.doctype,
-					"reference_name": self.setup.cluster.name,
-					"role": role,
-					"vm_id": f"vm-{role}-{frappe.generate_hash(length=8)}",
-					"disk_size_gb": 20,
-					"address": "fdaa:1::5",
-					"status": "Running",
-				}
-			)
-			.insert()
-			.name
-		)
+	def test_garage_binds_to_the_mesh_address_only(self):
+		cluster = self.setup.cluster
+		environment = self.setup.install_environment(machine(GATEWAY))
 
-	def test_the_proxy_node_is_not_a_garage_machine(self):
-		gateway, storage = self.add_machine(GATEWAY), self.add_machine(STORAGE)
-		self.add_machine(PROXY)
+		self.assertEqual(environment["RPC_BIND_ADDR"], f"[fdaa:1::5]:{cluster.rpc_port}")
+		self.assertEqual(environment["S3_BIND_ADDR"], f"[fdaa:1::5]:{cluster.s3_port}")
+		self.assertEqual(environment["ADMIN_BIND_ADDR"], f"[fdaa:1::5]:{cluster.admin_port}")
 
-		self.assertEqual([row["name"] for row in self.setup.machines], [gateway, storage])
+	def test_the_install_script_binds_no_wildcard_address(self):
+		body = script(*CONF, "install.sh")
+
+		self.assertNotIn("[::]", body)
+		self.assertIn('api_bind_addr = "$S3_BIND_ADDR"', body)
 
 	def test_garage_is_not_told_any_domain(self):
 		"""Buckets are addressed by path, so Garage has no hostname to strip one from."""

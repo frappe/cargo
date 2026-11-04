@@ -21,7 +21,7 @@ METRIC_INPUTS='"host"'
 IS_GARAGE_NODE=false
 if [ "$ROLE" = "gateway" ] || [ "$ROLE" = "storage" ]; then
 	IS_GARAGE_NODE=true
-	: "${GARAGE_ADMIN_PORT:?GARAGE_ADMIN_PORT is required on a Garage node}"
+	: "${GARAGE_ADMIN_ADDRESS:?GARAGE_ADMIN_ADDRESS is required on a Garage node}"
 	: "${GARAGE_METRICS_TOKEN:?GARAGE_METRICS_TOKEN is required on a Garage node}"
 	: "${GARAGE_SCRAPE_SECONDS:?GARAGE_SCRAPE_SECONDS is required on a Garage node}"
 	METRIC_INPUTS='"host", "garage_metrics"'
@@ -96,7 +96,7 @@ if [ "$IS_GARAGE_NODE" = true ]; then
 
 [sources.garage_scrape]
 type = "prometheus_scrape"
-endpoints = ["http://127.0.0.1:$GARAGE_ADMIN_PORT/metrics"]
+endpoints = ["http://$GARAGE_ADMIN_ADDRESS/metrics"]
 scrape_interval_secs = $GARAGE_SCRAPE_SECONDS
 auth.strategy = "bearer"
 auth.token = "\${GARAGE_METRICS_TOKEN}"

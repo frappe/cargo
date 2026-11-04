@@ -88,7 +88,8 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 		self.cluster.db_set("metrics_scrape_seconds", 120)
 		sent = self.sent_to(self.gateway)[1]
 
-		self.assertIn(f"export GARAGE_ADMIN_PORT={self.cluster.admin_port}", sent)
+		self.assertIn("export GARAGE_ADMIN_ADDRESS=", sent)
+		self.assertIn(f":{self.cluster.admin_port}", sent)
 		self.assertIn("export GARAGE_METRICS_TOKEN=cluster-metrics-token", sent)
 		self.assertIn("export GARAGE_SCRAPE_SECONDS=120", sent)
 

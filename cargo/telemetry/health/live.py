@@ -5,16 +5,11 @@ import typing
 import frappe
 import requests
 
-from cargo.atlas_client import host_port
-from cargo.telemetry.doctype.datum_server.datum_server import (
-	TELEMETRY_READ_SITE_NAME,
-	TELEMETRY_WRITE_SITE_NAME,
-)
+from cargo.telemetry.doctype.datum_server.proxy import TELEMETRY_READ_SITE_NAME, TELEMETRY_WRITE_SITE_NAME
 
 if typing.TYPE_CHECKING:
 	from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 
-ROUTING_PORT = 80
 INSIGHTS_USER = "insights"
 READ_PROBE = "SELECT 1 FROM datum.samples LIMIT 1"
 PING_TIMEOUT = 10
@@ -37,17 +32,15 @@ def ping_host_machine() -> None:
 
 def get_unreachable_reason(server: DatumServer) -> str | None:
 	"""Why datum or ClickHouse on the host does not answer, or None when both do. Goes through
-	the host's own nginx, the route the proxy takes, and reads as Insights does."""
-	address = frappe.db.get_value("Machine", server.machine, "address")
+	the public domains and Caddy, the route pilots take, and reads as Insights does."""
 	try:
-		request_host(server, address, TELEMETRY_WRITE_SITE_NAME, "GET", "/health")
+		request_host(server, TELEMETRY_WRITE_SITE_NAME, "GET", "/health")
 	except requests.RequestException as error:
 		return f"datum did not answer: {error}"
 
 	try:
 		request_host(
 			server,
-			address,
 			TELEMETRY_READ_SITE_NAME,
 			"POST",
 			"/",
@@ -65,18 +58,17 @@ def get_unreachable_reason(server: DatumServer) -> str | None:
 
 def request_host(
 	server: DatumServer,
-	address: str,
 	site_name: str,
 	method: str,
 	path: str,
 	headers: dict | None = None,
 	**kwargs,
 ) -> requests.Response:
-	"""One request to a subdomain the host's nginx routes. Raises unless it succeeds."""
+	"""One request to a subdomain Caddy serves. Raises unless it succeeds."""
 	response = requests.request(
 		method,
-		f"http://{host_port(address, ROUTING_PORT)}{path}",
-		headers={"Host": f"{site_name}.{server.wildcard_domain}", **(headers or {})},
+		f"https://{site_name}.{server.wildcard_domain}{path}",
+		headers=headers,
 		timeout=PING_TIMEOUT,
 		**kwargs,
 	)

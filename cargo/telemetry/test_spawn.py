@@ -119,6 +119,7 @@ class SpawnTestCase(IntegrationTestCase):
 				"disk_size_gb": CONFIG[TELEMETRY]["disk_gb"],
 				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
 				"address": "fdaa:1::7",
+				"public_ipv4": "203.0.113.7",
 				"status": status,
 			}
 		).insert()

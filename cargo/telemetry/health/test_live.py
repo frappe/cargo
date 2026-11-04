@@ -11,7 +11,7 @@ from cargo.testing import use_test_settings
 
 
 class IntegrationTestPingHostMachine(IntegrationTestCase):
-	"""Reading the datum host through its own nginx, and what its status says after."""
+	"""Reading the datum host through its public domains, and what its status says after."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -69,7 +69,7 @@ class IntegrationTestPingHostMachine(IntegrationTestCase):
 		self.assertIn("datum did not answer", self.server.error)
 
 	def test_clickhouse_failing_a_read_marks_it_unreachable(self):
-		"""The SIGILL case: nginx is up and datum answers, ClickHouse behind it does not."""
+		"""The SIGILL case: Caddy is up and datum answers, ClickHouse behind it does not."""
 		self.ping(self.response(), self.response(502))
 
 		self.assertEqual(self.server.status, "Unreachable")
@@ -99,15 +99,13 @@ class IntegrationTestPingHostMachine(IntegrationTestCase):
 			request.assert_not_called()
 			self.assertEqual(self.server.status, status)
 
-	def test_it_reads_through_nginx_as_the_insights_user(self):
+	def test_it_reads_through_the_public_domains_as_the_insights_user(self):
 		request = self.ping()
 		datum, clickhouse = request.call_args_list
 		domain = self.server.wildcard_domain
 
-		self.assertEqual(datum.args, ("GET", "http://[fdaa:1::5]:80/health"))
-		self.assertEqual(datum.kwargs["headers"]["Host"], f"telemetry-svc.{domain}")
-		self.assertEqual(clickhouse.args, ("POST", "http://[fdaa:1::5]:80/"))
-		self.assertEqual(clickhouse.kwargs["headers"]["Host"], f"telemetry-read-svc.{domain}")
+		self.assertEqual(datum.args, ("GET", f"https://telemetry-svc.{domain}/health"))
+		self.assertEqual(clickhouse.args, ("POST", f"https://telemetry-read-svc.{domain}/"))
 		self.assertEqual(clickhouse.kwargs["headers"]["X-ClickHouse-User"], "insights")
 		self.assertEqual(clickhouse.kwargs["data"], live.READ_PROBE)
 		self.assertEqual(clickhouse.kwargs["timeout"], live.PING_TIMEOUT)
