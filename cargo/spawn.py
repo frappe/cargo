@@ -18,8 +18,8 @@ if typing.TYPE_CHECKING:
 
 # Without these nothing can be built, set up, or reported to Central. The same for every
 # service: they all rent from Atlas, answer under the region's domain, and report in.
-REQUIRED_SETTINGS = ("region", "wildcard_domain", "atlas_url", "central_url", "proxy_url")
-REQUIRED_SECRETS = ("atlas_token", "central_webhook_secret", "proxy_token")
+REQUIRED_SETTINGS = ("region", "wildcard_domain", "atlas_url", "central_url")
+REQUIRED_SECRETS = ("atlas_token", "central_webhook_secret")
 
 
 def has_required_settings() -> bool:

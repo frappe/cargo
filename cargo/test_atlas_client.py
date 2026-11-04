@@ -66,8 +66,25 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertNotIn("is_termination_protected", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
+		self.assertNotIn("public_ipv4", body)
 		self.assertTrue(body["ipv4_internet_access"])
 		self.assertNotIn("egress", body)
+
+	def test_create_asks_atlas_to_pick_a_public_ipv4_when_wanted(self):
+		with self.call(response(201, {"id": "vm-9"})) as request:
+			self.client.create_vm(
+				image_id="ubuntu-24.04",
+				cpu_millicores=1000,
+				memory_mib=1024,
+				disk_mib=10240,
+				public_key="ssh-ed25519 AAAA",
+				hostname="OSC-0001-proxy-0001",
+				has_public_ipv4=True,
+			)
+
+		body = request.call_args.kwargs["json"]
+		self.assertEqual(body["public_ipv4"], "auto")
+		self.assertTrue(body["ipv4_internet_access"])
 
 	def test_create_sends_tags_and_placement_rules(self):
 		rules = [
@@ -114,6 +131,30 @@ class UnitTestAtlasClient(UnitTestCase):
 			)
 
 		self.assertTrue(request.call_args.kwargs["json"]["is_termination_protected"])
+
+	def test_attaching_a_public_ip_puts_the_versioned_route(self):
+		for version, route in (("IPv4", "public-ipv4"), ("IPv6", "public-ipv6")):
+			with self.subTest(version=version), self.call(response(202, {"id": "vm-1"})) as request:
+				self.client.attach_public_ip("vm-1", version)
+
+			method, url = request.call_args.args
+			self.assertEqual(method, "PUT")
+			self.assertEqual(url, f"https://atlas.test/api/atlas/virtual-machines/vm-1/{route}")
+			self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "auto"})
+
+	def test_a_reserved_allocation_is_attached_by_id(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.attach_public_ip("vm-1", "IPv4", "alloc-7")
+
+		self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "alloc-7"})
+
+	def test_detaching_a_public_ip_deletes_the_versioned_route(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.detach_public_ip("vm-1", "IPv6")
+
+		method, url = request.call_args.args
+		self.assertEqual(method, "DELETE")
+		self.assertEqual(url, "https://atlas.test/api/atlas/virtual-machines/vm-1/public-ipv6")
 
 	def test_protecting_a_machine_patches_the_vm(self):
 		with self.call(response(202, {"id": "vm-1"})) as request:

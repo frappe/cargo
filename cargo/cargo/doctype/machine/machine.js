@@ -7,6 +7,7 @@ frappe.ui.form.on("Machine", {
 
 		add_power_buttons(frm);
 		add_resize_buttons(frm);
+		add_public_ip_buttons(frm);
 	},
 });
 
@@ -140,5 +141,81 @@ function ask_for_disk(frm) {
 			}),
 		__("Grow Disk"),
 		__("Grow")
+	);
+}
+
+const PUBLIC_IP_FIELDS = { IPv4: "public_ipv4", IPv6: "public_ipv6" };
+
+function add_public_ip_buttons(frm) {
+	const attached = Object.keys(PUBLIC_IP_FIELDS).filter((v) => frm.doc[PUBLIC_IP_FIELDS[v]]);
+	const detached = Object.keys(PUBLIC_IP_FIELDS).filter((v) => !attached.includes(v));
+
+	if (detached.length) {
+		frm.add_custom_button(__("Attach"), () => ask_to_attach(frm, detached), __("Public IP"));
+	}
+	if (attached.length) {
+		frm.add_custom_button(__("Detach"), () => ask_to_detach(frm, attached), __("Public IP"));
+	}
+}
+
+function version_field(versions) {
+	return {
+		fieldname: "version",
+		label: __("IP Version"),
+		fieldtype: "Select",
+		options: versions.join("\n"),
+		default: versions[0],
+		reqd: 1,
+	};
+}
+
+function ask_to_attach(frm, versions) {
+	frappe.prompt(
+		[
+			version_field(versions),
+			{
+				fieldname: "public_ip",
+				label: __("Reserved Allocation ID"),
+				description: __("Leave empty for Atlas to pick an address."),
+				fieldtype: "Data",
+			},
+		],
+		(values) =>
+			frm.call("attach_public_ip", values).then(() => {
+				frappe.show_alert({
+					message: __(
+						"Asked Atlas to attach a public {0}. It shows here once attached.",
+						[values.version]
+					),
+					indicator: "blue",
+				});
+				frm.reload_doc();
+			}),
+		__("Attach Public IP"),
+		__("Attach")
+	);
+}
+
+function ask_to_detach(frm, versions) {
+	frappe.prompt(
+		[
+			{
+				fieldtype: "HTML",
+				options: `<p class="text-muted">${__(
+					"Anything this machine serves on the address, such as its Caddy domains, stops answering."
+				)}</p>`,
+			},
+			version_field(versions),
+		],
+		(values) =>
+			frm.call("detach_public_ip", values).then(() => {
+				frappe.show_alert({
+					message: __("Asked Atlas to detach the public {0}.", [values.version]),
+					indicator: "blue",
+				});
+				frm.reload_doc();
+			}),
+		__("Detach Public IP"),
+		__("Detach")
 	);
 }

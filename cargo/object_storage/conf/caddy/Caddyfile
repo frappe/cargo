@@ -1,0 +1,27 @@
+# Caddy passes Host through unchanged, which S3 needs: it signs Host into every request.
+# Bodies stream both ways with no size cap. Buckets are addressed by path only, so a bucket
+# in the hostname matches no site here.
+s3-svc.${WILDCARD_DOMAIN} {
+	# Garage sets CORS only per bucket, with an owner key, so Caddy answers for every bucket.
+	# The signature still authorises each request; CORS only lets the browser send it.
+	@preflight method OPTIONS
+	handle @preflight {
+		header Access-Control-Allow-Origin "${CORS_ORIGIN}"
+		header Access-Control-Allow-Methods "GET, HEAD, PUT"
+		header Access-Control-Allow-Headers "Content-Type"
+		header Access-Control-Max-Age 3600
+		respond 204
+	}
+
+	handle {
+		reverse_proxy ${S3_UPSTREAM} {
+			flush_interval -1
+			header_down Access-Control-Allow-Origin "${CORS_ORIGIN}"
+			header_down Access-Control-Expose-Headers "ETag"
+		}
+	}
+}
+
+s3-admin-svc.${WILDCARD_DOMAIN} {
+	reverse_proxy ${ADMIN_UPSTREAM}
+}

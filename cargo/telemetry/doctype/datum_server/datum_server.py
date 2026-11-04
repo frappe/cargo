@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import typing
+from functools import cached_property
 
 import frappe
 from frappe import _
@@ -12,10 +13,16 @@ from frappe.utils import cint
 
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.auth import generate_machine_token
+from cargo.caddy import require_public
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY, NodeSpec
-from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
+from cargo.telemetry.doctype.datum_server.proxy import (
+	DATUM_PORT,
+	TELEMETRY_READ_SITE_NAME,
+	TELEMETRY_WRITE_SITE_NAME,
+	Proxy,
+)
 from cargo.telemetry.vector import datum_refresh_script, install_script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
@@ -27,9 +34,6 @@ if typing.TYPE_CHECKING:
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
-DATUM_PORT = 8000
-TELEMETRY_WRITE_SITE_NAME = "telemetry-svc"
-TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 SETUP_TIMEOUT = 30 * 60
 MAX_PORT = 65535
 CLICKHOUSE_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\.\d+")
@@ -147,6 +151,7 @@ class DatumServer(WorkflowBuilder):
 			),
 			base_image=base_image_id(),
 			is_termination_protected=True,
+			has_public_ipv4=True,
 		)
 		self.machine = machine.name
 		self.save()
@@ -172,10 +177,10 @@ class DatumServer(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def setup(self) -> None:
-		"""Install datum on this host's machine, and route to it once it answers."""
-		machine_status = frappe.db.get_value("Machine", self.machine, "status")
-		if machine_status != "Running":
-			frappe.throw(_("Machine must be running to set up datum."), frappe.ValidationError)
+		"""Install datum on this host's machine, and route to it once it answers. Refused before
+		anything changes when the host cannot take public traffic yet."""
+		machine = frappe.get_doc("Machine", self.machine) if self.machine else None
+		require_public(machine, _("datum host"))
 
 		self.setup_log = None
 		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
@@ -323,39 +328,41 @@ class DatumServer(WorkflowBuilder):
 		elif self.status == "Updating":
 			self.mark("Unreachable", _("The update stopped before it finished. See the Setup Log."))
 
-	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
-	def configure_routing(self) -> bool:
-		"""Put nginx on port 80 in front of datum and ClickHouse."""
-		from cargo.cargo.doctype.machine.machine import Machine
+	@cached_property
+	def proxy(self) -> Proxy:
+		return Proxy(self)
 
-		machine: Machine = frappe.get_doc("Machine", self.machine)
+	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
+	def install_caddy(self) -> bool:
+		"""Caddy on the host, in front of datum and ClickHouse. Run on every setup, so setting
+		up again is also how a failed one is retried."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				run_over_ssh(
-					machine.address,
-					script("telemetry", "conf", "nginx", "install.sh", environment=self.nginx_environment()),
-					machine.get_password("ssh_private_key"),
-					timeout=SETUP_TIMEOUT,
-					on_output=log.write,
-				)
+				self.proxy.install(on_output=log.write)
 			except Exception:
 				frappe.log_error(
-					title=f"{self.name} could not be routed to",
+					title=f"{self.name} proxy setup failed",
 					message=frappe.get_traceback(with_context=True),
 				)
-				self.mark("Failed", "nginx did not come up. See the Setup Log.")
+				self.mark("Failed", _("Caddy did not come up. See the Setup Log, then set up again."))
 				return False
 
 		return True
 
-	def nginx_environment(self) -> dict[str, str]:
-		"""What the host needs to route its two subdomains."""
-		return {
-			"WILDCARD_DOMAIN": self.wildcard_domain,
-			"DATUM_PORT": DATUM_PORT,
-			"CLICKHOUSE_PORT": self.clickhouse_port,
-			"TRUSTED_PROXIES": "127.0.0.1 ::1 fd00::/8",
-		}
+	@task
+	def check_if_proxy_is_configured(self) -> bool:
+		"""Whether the host answers on its public domains with a certificate Caddy obtained."""
+		if self.proxy.wait_until_serving():
+			return True
+
+		public_ipv4 = frappe.db.get_value("Machine", self.machine, "public_ipv4")
+		self.mark(
+			"Failed",
+			_("{0} does not answer over HTTPS. Point DNS for {1} at {2}, then set up again.").format(
+				self.service_endpoint, ", ".join(self.proxy_domains), public_ipv4
+			),
+		)
+		return False
 
 	@property
 	def wildcard_domain(self) -> str:
@@ -374,22 +381,8 @@ class DatumServer(WorkflowBuilder):
 
 	@property
 	def service_endpoint(self) -> str:
-		"""The URL pilots ship metrics and logs to, served by nginx on this host."""
+		"""The URL pilots ship metrics and logs to, served by Caddy on this host."""
 		return f"https://{TELEMETRY_WRITE_SITE_NAME}.{self.wildcard_domain}"
-
-	@task
-	def publish_proxy_routes(self) -> bool:
-		"""Point this region's telemetry domain at the host."""
-		try:
-			client = ProxyClient.from_settings()
-			machine_address = frappe.db.get_value("Machine", self.machine, "address")
-			for domain in self.proxy_domains:
-				client.map_domain(domain, machine_address)
-		except (ProxyError, frappe.ValidationError) as error:
-			self.mark("Failed", _("Proxy route setup failed: {0}").format(str(error)))
-			return False
-
-		return True
 
 	@flow
 	def _setup(self) -> None:
@@ -398,11 +391,10 @@ class DatumServer(WorkflowBuilder):
 
 		self.commit = self.get_datum_commit()
 
-		if not self.configure_routing():
+		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
 			return
 
-		if self.publish_proxy_routes():
-			self.mark("Active")
+		self.mark("Active")
 
 	def sync_machines(self) -> None:
 		"""What this host's machine changing status means for it. `sync_all_machines` calls

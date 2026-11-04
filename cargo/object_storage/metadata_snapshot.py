@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 import frappe
 from frappe.utils import get_datetime, now_datetime
 
-from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import get_running_workflow
 from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT
+from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_workflow
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (

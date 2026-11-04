@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 import frappe
 from frappe import _
@@ -11,6 +11,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, now_datetime
 
 from cargo.atlas_client import (
+	AUTO_PUBLIC_IP,
 	DEAD_STATES,
 	MIB_PER_GB,
 	PAUSED_STATE,
@@ -18,6 +19,7 @@ from cargo.atlas_client import (
 	STOPPED_STATE,
 	AtlasError,
 	AtlasNotFound,
+	IPVersion,
 )
 from cargo.client_models import NodeSpec, PlacementRule
 from cargo.ssh import create_keypair
@@ -47,6 +49,8 @@ class Machine(Document):
 		error: DF.SmallText | None
 		is_termination_protected: DF.Check
 		last_synced_at: DF.Datetime | None
+		public_ipv4: DF.Data | None
+		public_ipv6: DF.Data | None
 		ram_gb: DF.Int
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
@@ -76,6 +80,7 @@ class Machine(Document):
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
 		is_termination_protected: bool = False,
+		has_public_ipv4: bool = False,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
 		row rolled back, so nothing is left claiming a VM that was never made."""
@@ -97,7 +102,9 @@ class Machine(Document):
 			}
 		).insert(ignore_permissions=True)
 
-		machine.vm_id = machine.build(spec, base_image, tags=tags, placement_rules=placement_rules)
+		machine.vm_id = machine.build(
+			spec, base_image, tags=tags, placement_rules=placement_rules, has_public_ipv4=has_public_ipv4
+		)
 		machine.record("Pending")
 		return machine
 
@@ -107,6 +114,7 @@ class Machine(Document):
 		base_image: str,
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
+		has_public_ipv4: bool = False,
 	) -> str:
 		"""Ask Atlas to build this machine, and return the id it goes by."""
 		from cargo.atlas_client import AtlasClient
@@ -124,6 +132,7 @@ class Machine(Document):
 				tags=tags,
 				placement_rules=placement_rules,
 				is_termination_protected=bool(self.is_termination_protected),
+				has_public_ipv4=has_public_ipv4,
 			)
 		except Exception:
 			frappe.log_error(
@@ -199,6 +208,8 @@ class Machine(Document):
 			self.status,
 			self.error,
 			self.address,
+			self.public_ipv4,
+			self.public_ipv6,
 			self.cpu_millicores,
 			self.ram_gb,
 			self.disk_size_gb,
@@ -227,7 +238,10 @@ class Machine(Document):
 		if state != RUNNING_STATE:
 			return self.status, None
 
-		self.address = payload.get("network", {}).get("mesh_ipv6")
+		network = payload.get("network", {})
+		self.address = network.get("mesh_ipv6")
+		self.public_ipv4 = network.get("public_ipv4")
+		self.public_ipv6 = network.get("public_ipv6")
 		if not self.address:
 			return "Broken", "Atlas reported no mesh address"
 
@@ -256,6 +270,34 @@ class Machine(Document):
 			AtlasClient.from_settings().set_power_state(self.vm_id, action)
 		except AtlasError as exception:
 			frappe.throw(_("Atlas would not {0} this machine: {1}").format(action, str(exception)))
+
+	@frappe.whitelist()
+	def attach_public_ip(self, version: IPVersion, public_ip: str = AUTO_PUBLIC_IP) -> None:
+		"""Ask Atlas for a public IPv4 or IPv6 address. The sync records it once Atlas attaches it."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		if version not in get_args(IPVersion):
+			frappe.throw(_("Unknown IP version {0}.").format(version))
+
+		try:
+			AtlasClient.from_settings().attach_public_ip(self.vm_id, version, public_ip or AUTO_PUBLIC_IP)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not attach a public {0}: {1}").format(version, str(exception)))
+
+	@frappe.whitelist()
+	def detach_public_ip(self, version: IPVersion) -> None:
+		"""Ask Atlas to release this machine's public IPv4 or IPv6 address."""
+		from cargo.atlas_client import AtlasClient
+
+		self.check_permission("write")
+		if version not in get_args(IPVersion):
+			frappe.throw(_("Unknown IP version {0}.").format(version))
+
+		try:
+			AtlasClient.from_settings().detach_public_ip(self.vm_id, version)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not detach the public {0}: {1}").format(version, str(exception)))
 
 	@frappe.whitelist()
 	def set_termination_protection(self, enabled: bool) -> None:

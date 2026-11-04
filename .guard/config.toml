@@ -1,4 +1,4 @@
-ignore_patterns = ["tools/fake_atlas/**", "tools/fake_proxy/**"]
+ignore_patterns = ["tools/fake_atlas/**"]
 instructions = """
 Cargo is a Frappe app that provisions and configures the machines behind Frappe Cloud's shared services. Resolve framework behaviour against frappe/frappe rather than guessing: whitelisted methods, DocType controllers and hooks, autoname and naming series, get_password and Password-field encryption, frappe.enqueue and background jobs, and validate_auth in frappe/auth.py all have exact semantics there.
 

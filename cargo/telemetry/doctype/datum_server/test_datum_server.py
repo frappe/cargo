@@ -10,16 +10,17 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
 
 from cargo.client_models import TELEMETRY
-from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.telemetry.doctype.datum_server.datum_server import (
-	DATUM_PORT,
 	REGION_HEADER,
 	SOURCE,
 	SOURCE_HEADER,
 	WEBHOOK_NAME,
 	DatumServer,
 )
+from cargo.telemetry.doctype.datum_server.proxy import Proxy
 from cargo.testing import SETTINGS, use_test_settings
+
+PUBLIC_IPV4 = "203.0.113.20"
 
 
 class IntegrationTestDatumServer(IntegrationTestCase):
@@ -332,7 +333,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 
 
 class IntegrationTestTelemetryRouting(IntegrationTestCase):
-	"""A host is Active only once the region's telemetry domain points at it."""
+	"""A host is Active only once its public domains answer through Caddy."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -355,83 +356,44 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 				"disk_size_gb": 20,
 				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
 				"address": "fdaa:1::9",
+				"public_ipv4": PUBLIC_IPV4,
 				"status": "Running",
 			}
 		).insert()
 		self.server.db_set("machine", self.machine.name)
 		self.server.reload()
 
-	def proxy(self, **behaviour):
-		client = Mock(**behaviour)
-
-		return patch.object(ProxyClient, "from_settings", return_value=client), client
-
-	def test_a_proxy_that_refuses_leaves_the_reason_on_the_host(self):
-		patched, _client = self.proxy(map_domain=Mock(side_effect=ProxyError("proxy unreachable")))
-		with patched:
-			self.assertFalse(self.server.publish_proxy_routes())
-
-		self.server.reload()
-		self.assertEqual(self.server.status, "Failed")
-		self.assertIn("proxy unreachable", self.server.error)
-
-	def test_a_region_with_no_domain_publishes_nothing(self):
-		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
-		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
-		patched, client = self.proxy()
-
-		with patched:
-			self.assertFalse(self.server.publish_proxy_routes())
-
-		client.map_domain.assert_not_called()
-		self.server.reload()
-		self.assertEqual(self.server.status, "Failed")
-
-	def test_both_domains_are_pointed_at_this_host(self):
-		patched, client = self.proxy()
-		with patched:
-			self.assertTrue(self.server.publish_proxy_routes())
-
-		domain = SETTINGS["wildcard_domain"]
-		self.assertEqual(
-			[call.args for call in client.map_domain.call_args_list],
-			[
-				(f"telemetry-svc.{domain}", self.machine.address),
-				(f"telemetry-read-svc.{domain}", self.machine.address),
-			],
-		)
-
-	def steps(self, installed=True, routed=True, published=True):
+	def steps(self, installed=True, routed=True, serving=True):
 		return (
 			patch.multiple(
 				DatumServer,
 				start_setup_on_machine=Mock(return_value=installed),
 				get_datum_commit=Mock(return_value="c" * 40),
 			),
-			patch.object(DatumServer, "configure_routing", return_value=routed),
-			patch.object(DatumServer, "publish_proxy_routes", return_value=published),
+			patch.object(DatumServer, "install_caddy", return_value=routed),
+			patch.object(DatumServer, "check_if_proxy_is_configured", return_value=serving),
 		)
 
 	def test_an_install_that_failed_is_never_routed_to(self):
-		install, routing, publishing = self.steps(installed=False)
-		with install, routing as configured, publishing as published:
+		install, caddy, probe = self.steps(installed=False)
+		with install, caddy as installed_caddy, probe as probed:
 			self.server._setup()
 
-		configured.assert_not_called()
-		published.assert_not_called()
+		installed_caddy.assert_not_called()
+		probed.assert_not_called()
 
-	def test_a_host_nginx_would_not_serve_is_never_published(self):
-		install, routing, publishing = self.steps(routed=False)
-		with install, routing, publishing as published:
+	def test_a_host_caddy_would_not_serve_is_never_probed(self):
+		install, caddy, probe = self.steps(routed=False)
+		with install, caddy, probe as probed:
 			self.server._setup()
 
-		published.assert_not_called()
+		probed.assert_not_called()
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Active")
 
 	def test_setup_records_the_commit_it_installed(self):
-		install, routing, publishing = self.steps()
-		with install, routing, publishing:
+		install, caddy, probe = self.steps()
+		with install, caddy, probe:
 			self.server._setup()
 
 		self.server.reload()
@@ -453,55 +415,60 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.assertEqual(self.server.branch, "main")
 
 	def test_a_host_is_active_once_every_step_lands(self):
-		install, routing, publishing = self.steps()
-		with install, routing, publishing:
+		install, caddy, probe = self.steps()
+		with install, caddy, probe:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Active")
 
-	def test_a_host_whose_routes_failed_is_not_active(self):
-		install, routing, publishing = self.steps(published=False)
-		with install, routing, publishing:
+	def test_a_host_that_does_not_answer_publicly_is_not_active(self):
+		install, caddy, probe = self.steps(serving=False)
+		with install, caddy, probe:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Active")
 
-	def test_nginx_is_told_both_ports_and_who_may_name_the_client(self):
-		environment = self.server.nginx_environment()
-
-		self.assertEqual(environment["DATUM_PORT"], DATUM_PORT)
-		self.assertEqual(environment["CLICKHOUSE_PORT"], self.server.clickhouse_port)
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
-		self.assertIn("fd00::/8", environment["TRUSTED_PROXIES"])
-
-	def test_a_region_with_no_domain_is_never_routed(self):
-		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
-		frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
-			self.server.nginx_environment()
-
-	def test_the_nginx_script_is_the_one_run(self):
-		with patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh") as ran:
-			self.assertTrue(self.server.configure_routing())
-
-		sent = ran.call_args.args[1]
-		self.assertIn("server_name telemetry-svc.${WILDCARD_DOMAIN}", sent)
-		self.assertIn("server_name telemetry-read-svc.${WILDCARD_DOMAIN}", sent)
-		self.assertIn(f"export DATUM_PORT={DATUM_PORT}", sent)
-
-	def test_a_host_nginx_refuses_says_so(self):
-		with patch(
-			"cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh",
-			side_effect=RuntimeError("nginx -t failed"),
-		):
-			self.assertFalse(self.server.configure_routing())
+	def test_a_host_caddy_refuses_says_so(self):
+		with patch.object(Proxy, "install", side_effect=RuntimeError("caddy validate failed")):
+			self.assertFalse(self.server.install_caddy())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
-		self.assertIn("nginx", self.server.error)
+		self.assertIn("Caddy", self.server.error)
+
+	def test_a_host_that_never_answers_names_the_dns_to_point(self):
+		with patch.object(Proxy, "wait_until_serving", return_value=False):
+			self.assertFalse(self.server.check_if_proxy_is_configured())
+
+		self.server.reload()
+		self.assertEqual(self.server.status, "Failed")
+		self.assertIn(f"telemetry-read-svc.{SETTINGS['wildcard_domain']}", self.server.error)
+		self.assertIn(PUBLIC_IPV4, self.server.error)
+
+	def test_setup_is_refused_before_the_host_has_a_public_address(self):
+		frappe.db.set_value("Machine", self.machine.name, "public_ipv4", None)
+
+		with (
+			patch.object(DatumServer, "_setup") as flow,
+			self.assertRaisesRegex(frappe.ValidationError, "public IPv4"),
+		):
+			self.server.setup()
+
+		flow.run_as_workflow.assert_not_called()
+		self.assertNotEqual(frappe.db.get_single_value("Datum Server", "status"), "Setting Up")
+
+	def test_the_host_asks_atlas_for_a_public_address(self):
+		self.server.db_set("machine", None)
+		with (
+			patch("cargo.telemetry.doctype.datum_server.datum_server.base_image_id"),
+			patch("cargo.cargo.doctype.machine.machine.Machine.request") as request,
+		):
+			request.return_value.name = self.machine.name
+			self.server.create_telemetry_node(cpu_millicores=1000, ram_gb=2, disk_gb=20)
+
+		self.assertTrue(request.call_args.kwargs["has_public_ipv4"])
 
 
 class IntegrationTestDatumUpdate(IntegrationTestCase):

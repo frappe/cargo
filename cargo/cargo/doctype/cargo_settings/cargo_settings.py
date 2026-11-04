@@ -41,8 +41,6 @@ class CargoSettings(Document):
 		metadata_snapshot_interval_hours: DF.Float
 		one_click_repository_branch: DF.Data | None
 		one_click_repository_url: DF.Data | None
-		proxy_token: DF.Password
-		proxy_url: DF.Data
 		region: DF.Data
 		region_id: DF.Int
 		signup_apps: DF.Table[SignupApp]

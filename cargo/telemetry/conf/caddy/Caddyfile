@@ -1,0 +1,31 @@
+# A pilot ships whatever it has buffered, so a batch is as big as its outage was long:
+# Caddy sets no body limit and streams it through.
+telemetry-svc.${WILDCARD_DOMAIN} {
+	reverse_proxy ${DATUM_UPSTREAM}
+}
+
+telemetry-read-svc.${WILDCARD_DOMAIN} {
+	# A query always carries SQL, in ?query= or a POST body, so a bare GET or HEAD of / is
+	# ClickHouse's landing page.
+	@landing {
+		path /
+		method GET HEAD
+		not query query=*
+	}
+	handle @landing {
+		respond 404
+	}
+
+	# Only queries and the health check. ClickHouse's own UIs (/play, /dashboard, /binary,
+	# /merges) stay internal.
+	@allowed path / /ping
+	handle @allowed {
+		reverse_proxy ${CLICKHOUSE_UPSTREAM} {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

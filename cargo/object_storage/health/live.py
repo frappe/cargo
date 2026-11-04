@@ -220,9 +220,7 @@ def increase_disk_size_if_required():
 		GrowStorageNodeDisks,
 		add_storage_node,
 	)
-	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
-		get_running_workflow,
-	)
+	from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_workflow
 
 	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
 	if not cluster_name:

@@ -6,7 +6,8 @@ import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.doctype.object_storage_cluster.setup import NGINX_CONF, Setup
+from cargo.object_storage.doctype.object_storage_cluster.setup import CONF, Setup
+from cargo.ssh import script
 from cargo.testing import SETTINGS, use_test_settings
 
 
@@ -21,44 +22,27 @@ def machine(role: str) -> dict:
 	}
 
 
-class IntegrationTestGatewayNginx(IntegrationTestCase):
-	"""The gateway answers on port 80 by subdomain, in front of Garage's own ports."""
+class IntegrationTestGarageInstall(IntegrationTestCase):
+	"""Garage listens on the node's mesh address only, never on a gateway's public one."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
 		self.setup = Setup(frappe.get_doc({"doctype": "Object Storage Cluster"}).insert())
 
-	def test_the_subdomains_hang_off_the_configured_domain(self):
-		environment = self.setup.nginx_environment()
+	def test_garage_binds_to_the_mesh_address_only(self):
+		cluster = self.setup.cluster
+		environment = self.setup.install_environment(machine(GATEWAY))
 
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
-		self.assertEqual(environment["S3_PORT"], self.setup.cluster.s3_port)
-		self.assertEqual(environment["ADMIN_PORT"], self.setup.cluster.admin_port)
+		self.assertEqual(environment["RPC_BIND_ADDR"], f"[fdaa:1::5]:{cluster.rpc_port}")
+		self.assertEqual(environment["S3_BIND_ADDR"], f"[fdaa:1::5]:{cluster.s3_port}")
+		self.assertEqual(environment["ADMIN_BIND_ADDR"], f"[fdaa:1::5]:{cluster.admin_port}")
 
-	def test_only_the_mesh_and_this_machine_may_name_the_client(self):
-		proxies = self.setup.nginx_environment()["TRUSTED_PROXIES"].split()
+	def test_the_install_script_binds_no_wildcard_address(self):
+		body = script(*CONF, "install.sh")
 
-		self.assertIn("fd00::/8", proxies)
-		self.assertNotIn("0.0.0.0/0", proxies)
-		self.assertNotIn("::/0", proxies)
-
-	def test_a_gateway_cannot_be_routed_without_a_domain(self):
-		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
-			Setup(self.setup.cluster).nginx_environment()
-
-	def test_s3_accepts_browser_calls_from_the_central_origin_only(self):
-		frappe.db.set_single_value("Cargo Settings", "central_url", "https://central.test/dashboard")
-
-		self.assertEqual(self.setup.nginx_environment()["CORS_ORIGIN"], "https://central.test")
-
-	def test_a_gateway_cannot_be_routed_without_a_central_url(self):
-		frappe.db.set_single_value("Cargo Settings", "central_url", "")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Central URL"):
-			self.setup.nginx_environment()
+		self.assertNotIn("[::]", body)
+		self.assertIn('api_bind_addr = "$S3_BIND_ADDR"', body)
 
 	def test_garage_is_not_told_any_domain(self):
 		"""Buckets are addressed by path, so Garage has no hostname to strip one from."""
@@ -66,30 +50,6 @@ class IntegrationTestGatewayNginx(IntegrationTestCase):
 
 		self.assertNotIn("WILDCARD_DOMAIN", environment)
 		self.assertNotIn("BASE_DOMAIN", environment)
-
-	def test_the_nginx_script_is_the_one_run(self):
-		with patch.object(Setup, "run") as run:
-			self.setup.setup_nginx_on_machine(machine(GATEWAY))
-
-		self.assertIn("server_name s3-svc.${WILDCARD_DOMAIN};", run.call_args.args[1])
-		self.assertNotIn("*.s3-svc", run.call_args.args[1])
-		self.assertIn("server_name s3-admin-svc.${WILDCARD_DOMAIN}", run.call_args.args[1])
-		self.assertIn(f"export WILDCARD_DOMAIN={SETTINGS['wildcard_domain']}", run.call_args.args[1])
-		self.assertIn(
-			'add_header Access-Control-Allow-Origin   "${CORS_ORIGIN}" always;', run.call_args.args[1]
-		)
-
-	def test_nginx_is_refused_on_a_storage_node(self):
-		with (
-			patch.object(Setup, "run") as run,
-			self.assertRaisesRegex(frappe.ValidationError, "Only the gateway"),
-		):
-			self.setup.setup_nginx_on_machine(machine(STORAGE))
-
-		run.assert_not_called()
-
-	def test_the_script_ships_with_the_app(self):
-		self.assertTrue(os.path.isfile(frappe.get_app_path("cargo", *NGINX_CONF)))
 
 
 class IntegrationTestStaleRoles(IntegrationTestCase):
