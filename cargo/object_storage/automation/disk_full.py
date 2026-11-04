@@ -10,9 +10,7 @@ import frappe
 from frappe import _
 
 from cargo.client_models import STORAGE
-from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
-	ensure_no_running_workflow,
-)
+from cargo.object_storage.doctype.object_storage_cluster.utils import ensure_no_running_workflow
 from cargo.object_storage.health.live import history_file
 
 if typing.TYPE_CHECKING:

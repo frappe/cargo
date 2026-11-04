@@ -5,8 +5,8 @@ from unittest.mock import PropertyMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.doctype.object_storage_cluster.setup import NGINX_CONF, Setup
+from cargo.client_models import GATEWAY, PROXY, STORAGE
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 from cargo.testing import SETTINGS, use_test_settings
 
 
@@ -21,44 +21,37 @@ def machine(role: str) -> dict:
 	}
 
 
-class IntegrationTestGatewayNginx(IntegrationTestCase):
-	"""The gateway answers on port 80 by subdomain, in front of Garage's own ports."""
+class IntegrationTestGarageMachines(IntegrationTestCase):
+	"""Garage runs on the gateway and storage nodes only."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
 		self.setup = Setup(frappe.get_doc({"doctype": "Object Storage Cluster"}).insert())
 
-	def test_the_subdomains_hang_off_the_configured_domain(self):
-		environment = self.setup.nginx_environment()
+	def add_machine(self, role: str) -> str:
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Machine",
+					"reference_doctype": self.setup.cluster.doctype,
+					"reference_name": self.setup.cluster.name,
+					"role": role,
+					"vm_id": f"vm-{role}-{frappe.generate_hash(length=8)}",
+					"disk_size_gb": 20,
+					"address": "fdaa:1::5",
+					"status": "Running",
+				}
+			)
+			.insert()
+			.name
+		)
 
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
-		self.assertEqual(environment["S3_PORT"], self.setup.cluster.s3_port)
-		self.assertEqual(environment["ADMIN_PORT"], self.setup.cluster.admin_port)
+	def test_the_proxy_node_is_not_a_garage_machine(self):
+		gateway, storage = self.add_machine(GATEWAY), self.add_machine(STORAGE)
+		self.add_machine(PROXY)
 
-	def test_only_the_mesh_and_this_machine_may_name_the_client(self):
-		proxies = self.setup.nginx_environment()["TRUSTED_PROXIES"].split()
-
-		self.assertIn("fd00::/8", proxies)
-		self.assertNotIn("0.0.0.0/0", proxies)
-		self.assertNotIn("::/0", proxies)
-
-	def test_a_gateway_cannot_be_routed_without_a_domain(self):
-		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
-			Setup(self.setup.cluster).nginx_environment()
-
-	def test_s3_accepts_browser_calls_from_the_central_origin_only(self):
-		frappe.db.set_single_value("Cargo Settings", "central_url", "https://central.test/dashboard")
-
-		self.assertEqual(self.setup.nginx_environment()["CORS_ORIGIN"], "https://central.test")
-
-	def test_a_gateway_cannot_be_routed_without_a_central_url(self):
-		frappe.db.set_single_value("Cargo Settings", "central_url", "")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Central URL"):
-			self.setup.nginx_environment()
+		self.assertEqual([row["name"] for row in self.setup.machines], [gateway, storage])
 
 	def test_garage_is_not_told_any_domain(self):
 		"""Buckets are addressed by path, so Garage has no hostname to strip one from."""
@@ -66,30 +59,6 @@ class IntegrationTestGatewayNginx(IntegrationTestCase):
 
 		self.assertNotIn("WILDCARD_DOMAIN", environment)
 		self.assertNotIn("BASE_DOMAIN", environment)
-
-	def test_the_nginx_script_is_the_one_run(self):
-		with patch.object(Setup, "run") as run:
-			self.setup.setup_nginx_on_machine(machine(GATEWAY))
-
-		self.assertIn("server_name s3-svc.${WILDCARD_DOMAIN};", run.call_args.args[1])
-		self.assertNotIn("*.s3-svc", run.call_args.args[1])
-		self.assertIn("server_name s3-admin-svc.${WILDCARD_DOMAIN}", run.call_args.args[1])
-		self.assertIn(f"export WILDCARD_DOMAIN={SETTINGS['wildcard_domain']}", run.call_args.args[1])
-		self.assertIn(
-			'add_header Access-Control-Allow-Origin   "${CORS_ORIGIN}" always;', run.call_args.args[1]
-		)
-
-	def test_nginx_is_refused_on_a_storage_node(self):
-		with (
-			patch.object(Setup, "run") as run,
-			self.assertRaisesRegex(frappe.ValidationError, "Only the gateway"),
-		):
-			self.setup.setup_nginx_on_machine(machine(STORAGE))
-
-		run.assert_not_called()
-
-	def test_the_script_ships_with_the_app(self):
-		self.assertTrue(os.path.isfile(frappe.get_app_path("cargo", *NGINX_CONF)))
 
 
 class IntegrationTestStaleRoles(IntegrationTestCase):

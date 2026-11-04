@@ -22,10 +22,6 @@ from cargo.telemetry.vector import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
-NGINX_CONF = ("object_storage", "conf", "nginx", "install.sh")
-# Who may say where a request came from. The proxy reaches the gateway over the mesh, and a
-# unique-local address cannot arrive from the internet, so no client can forge the header.
-TRUSTED_PROXIES = ("127.0.0.1", "::1", "fd00::/8")
 GIGABYTE = 1000**3
 # As many as Garage keeps on a node.
 KEEP_METADATA_BACKUPS = 2
@@ -63,13 +59,14 @@ class Setup(Client):
 
 	@cached_property
 	def machines(self) -> list[MachineRow]:
-		"""Every machine that has booted, gateway first: the rest reach the cluster through it."""
+		"""Every Garage machine that has booted, gateway first: the rest reach the cluster through it."""
 		machines = frappe.get_all(
 			"Machine",
 			filters={
 				"reference_doctype": self.cluster.doctype,
 				"reference_name": self.cluster.name,
 				"status": "Running",
+				"role": ("in", (GATEWAY, STORAGE)),
 			},
 			fields=["name", "role", "zone", "address", "disk_size_gb", "vm_id"],
 			order_by="creation",
@@ -154,15 +151,6 @@ class Setup(Client):
 			frappe.throw(_(f"This cluster has no {', '.join(missing)}. Mint its credentials first."))
 
 		return found
-
-	@cached_property
-	def wildcard_domain(self) -> str:
-		"""The domain the gateway's subdomains hang off."""
-		domain = frappe.db.get_single_value("Cargo Settings", "wildcard_domain")
-		if not domain:
-			frappe.throw(_("Set a Wildcard Domain in Cargo Settings before setting up a gateway."))
-
-		return domain
 
 	def install_environment(self, machine: MachineRow) -> dict[str, str]:
 		"""What a node needs to write its own garage.toml and unit."""
@@ -397,38 +385,6 @@ class Setup(Client):
 			self.assign_roles(roles)
 
 		return [role["id"] for role in roles]
-
-	def setup_nginx_on_machine(
-		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
-	) -> None:
-		"""Put nginx on the gateway's port 80 routing to s3 and admin api."""
-		if machine["role"] != GATEWAY:
-			frappe.throw(
-				_("{0} is a {1} node. Only the gateway routes traffic.").format(
-					machine["name"], machine["role"]
-				)
-			)
-
-		self.run(machine, script(*NGINX_CONF, environment=self.nginx_environment()), on_output)
-
-	def nginx_environment(self) -> dict[str, str]:
-		"""What the gateway needs to route its two subdomains."""
-		return {
-			"WILDCARD_DOMAIN": self.wildcard_domain,
-			"S3_PORT": self.cluster.s3_port,
-			"ADMIN_PORT": self.cluster.admin_port,
-			"TRUSTED_PROXIES": " ".join(TRUSTED_PROXIES),
-			"CORS_ORIGIN": self.central_origin,
-		}
-
-	@property
-	def central_origin(self) -> str:
-		"""The origin the Central dashboard runs on, the one origin S3 accepts browser calls from."""
-		url = urlsplit(frappe.db.get_single_value("Cargo Settings", "central_url") or "")
-		if not (url.scheme and url.netloc):
-			frappe.throw(_("Central URL must be set in Cargo Settings."))
-
-		return f"{url.scheme}://{url.netloc}"
 
 	def apply_staged_layout(self) -> None:
 		"""One version for everything staged, stale roles dropped with it. Garage refuses a

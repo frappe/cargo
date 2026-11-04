@@ -6,7 +6,7 @@ import hashlib
 import hmac
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from unittest.mock import PropertyMock, patch
 
 import frappe
 from frappe.integrations.doctype.webhook.webhook import (
@@ -21,18 +21,18 @@ from frappe.utils.password import (
 	set_encrypted_password,
 )
 
-from cargo.client_models import GATEWAY, STORAGE
+from cargo.client_models import GATEWAY, PROXY, STORAGE
 from cargo.object_storage.client import Client
-from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
+from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
+from cargo.object_storage.doctype.object_storage_cluster.proxy import Proxy
+from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
+from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	CLUSTER_SECRETS,
 	REGION_HEADER,
 	SOURCE,
 	SOURCE_HEADER,
-	ObjectStorageCluster,
 	configure_storage_cluster_webhook,
 )
-from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
-from cargo.proxy_client import ProxyClient, ProxyError
 from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings
 
@@ -168,7 +168,7 @@ class IntegrationTestClusterCredentials(IntegrationTestCase):
 			self.cluster.reveal_admin_token()
 
 
-class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
+class IntegrationTestSingleActiveCluster(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
@@ -178,32 +178,6 @@ class IntegrationTestClusterProxyRoutes(IntegrationTestCase):
 		frappe.db.set_value("Machine", self.gateway, "address", "fdaa:1::10")
 
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
-
-	def test_the_two_service_domains_map_to_the_gateway(self):
-		client = MagicMock()
-		with patch.object(ProxyClient, "from_settings", return_value=client):
-			published = self.cluster.publish_proxy_routes()
-
-		self.assertTrue(published)
-		self.assertEqual(
-			client.map_domain.call_args_list,
-			[
-				call("s3-svc.example.test", "fdaa:1::10"),
-				call("s3-admin-svc.example.test", "fdaa:1::10"),
-			],
-		)
-
-	def test_a_proxy_failure_marks_the_cluster_failed(self):
-		client = MagicMock()
-		client.map_domain.side_effect = ProxyError("proxy unavailable")
-		with (
-			patch.object(ProxyClient, "from_settings", return_value=client),
-			patch.object(self.cluster, "mark_cluster_status") as mark_status,
-		):
-			published = self.cluster.publish_proxy_routes()
-
-		self.assertFalse(published)
-		mark_status.assert_called_once_with("Failed", "Proxy route setup failed: proxy unavailable")
 
 	def test_a_second_active_cluster_is_refused(self):
 		# A site that already serves has its own Active cluster, which would be refused first.
@@ -540,9 +514,9 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 		self.assertEqual(self.webhook_of(cluster).get_password("webhook_secret"), "rotated")
 
 
-class IntegrationTestGatewayRouting(IntegrationTestCase):
-	"""nginx on the gateway is a step of its own: a cluster is ready only once it succeeds,
-	and setting up again is how a failed one is retried."""
+class IntegrationTestProxyRouting(IntegrationTestCase):
+	"""Caddy on the proxy node is the last step: a cluster is ready only once it serves, and
+	setting up again is how a failed one is retried."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -557,67 +531,81 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 		self.vm_ids: dict[str, str] = {}
 		self.gateway = self.add_machine(GATEWAY)
 		self.storage = self.add_machine(STORAGE)
+		self.proxy_machine = self.add_machine(PROXY)
+		frappe.db.set_value("Machine", self.proxy_machine, "public_ipv4", "203.0.113.10")
 		self.cluster.reload()
 
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
 	@contextmanager
-	def everything_joined(self, nginx=None):
+	def everything_joined(self, caddy=None, serving=True):
 		"""Garage up on every node, so the flow has nothing to install and goes straight to
-		routing and verification."""
+		verification and the proxy."""
 		joined = {self.gateway, self.storage}
 		with (
 			patch.object(Setup, "healthy_nodes", return_value=joined),
 			patch.object(Setup, "get_connected_nodes"),
 			patch.object(Setup, "apply_staged_layout"),
-			patch.object(Setup, "setup_nginx_on_machine", **(nginx or {})) as routed,
-			patch.object(ObjectStorageCluster, "publish_proxy_routes", return_value=True) as self.published,
+			patch.object(Proxy, "install", **(caddy or {})) as installed,
+			patch.object(Proxy, "is_serving", new_callable=PropertyMock, return_value=serving) as self.probe,
+			patch("time.sleep"),
 		):
-			yield routed
+			yield installed
 
 	def run_flow(self):
 		self.cluster._setup()
 		self.cluster.reload()
 
-	def test_a_cluster_is_ready_only_once_the_gateway_routes(self):
-		with self.everything_joined() as routed:
+	def test_a_cluster_is_ready_only_once_the_proxy_serves(self):
+		with self.everything_joined() as installed:
 			self.run_flow()
 
-		routed.assert_called_once()
-		self.assertEqual(routed.call_args.args[0]["name"], self.gateway)
+		installed.assert_called_once()
 		self.assertEqual(self.cluster.status, "Active")
 
-	def test_a_routing_failure_fails_the_cluster_and_says_why(self):
-		with self.everything_joined(nginx={"side_effect": RuntimeError("nginx -t failed")}):
+	def test_garage_is_never_installed_on_the_proxy(self):
+		with (
+			patch.object(Setup, "healthy_nodes", return_value=set()),
+			patch.object(ObjectStorageCluster, "start_setup_on_machine", return_value=False) as installed,
+		):
+			self.cluster._setup()
+
+		self.assertNotIn(self.proxy_machine, [c.args[0].name for c in installed.call_args_list])
+
+	def test_a_caddy_failure_fails_the_cluster_and_says_why(self):
+		with self.everything_joined(caddy={"side_effect": RuntimeError("caddy validate failed")}):
 			self.run_flow()
 
 		self.assertEqual(self.cluster.status, "Failed")
-		self.assertIn("nginx", self.cluster.error)
+		self.assertIn("Caddy", self.cluster.error)
 		self.assertIn("set up again", self.cluster.error)
+		self.probe.assert_not_called()
 
-	def test_the_proxy_gets_no_routes_to_a_gateway_that_cannot_take_them(self):
-		with self.everything_joined(nginx={"side_effect": RuntimeError("nginx -t failed")}):
+	def test_a_proxy_that_never_answers_names_the_dns_to_point(self):
+		with self.everything_joined(serving=False):
 			self.run_flow()
 
-		self.published.assert_not_called()
+		self.assertEqual(self.cluster.status, "Failed")
+		self.assertIn("s3-svc.example.test", self.cluster.error)
+		self.assertIn("203.0.113.10", self.cluster.error)
 
-	def test_routes_are_published_once_the_gateway_is_ready(self):
-		with self.everything_joined():
+	def test_a_certificate_that_lands_late_still_counts(self):
+		with self.everything_joined() as installed:
+			self.probe.side_effect = [False, False, True]
 			self.run_flow()
 
-		self.published.assert_called_once()
+		installed.assert_called_once()
+		self.assertEqual(self.cluster.status, "Active")
 
-	def test_setting_up_again_retries_routing_even_with_every_node_joined(self):
-		"""Garage joined before nginx ran, so no node is left to install: routing must be
-		re-applied anyway, not skipped as already done."""
-		with self.everything_joined(nginx={"side_effect": RuntimeError("apt mirror down")}):
+	def test_setting_up_again_retries_the_proxy_even_with_every_node_joined(self):
+		with self.everything_joined(caddy={"side_effect": RuntimeError("apt mirror down")}):
 			self.run_flow()
 		self.assertEqual(self.cluster.status, "Failed")
 
-		with self.everything_joined() as routed:
+		with self.everything_joined() as installed:
 			self.run_flow()
 
-		routed.assert_called_once()
+		installed.assert_called_once()
 		self.assertEqual(self.cluster.status, "Active")
 
 	def test_setting_up_a_fully_joined_cluster_runs_the_flow_not_a_shortcut(self):
@@ -633,7 +621,7 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 	def test_steps_that_install_over_ssh_outlast_the_ssh_calls_they_make(self):
 		"""The worker's default is 300s against SSH's 600s, so an unmarked step would be
 		killed partway through an install SSH would still have let finish."""
-		for method in ("start_setup_on_machine", "configure_gateway_routing"):
+		for method in ("start_setup_on_machine", "install_caddy"):
 			step = ObjectStorageCluster.__dict__[method]
 			with self.subTest(method=method):
 				self.assertEqual(step._queue, "long")
@@ -646,16 +634,3 @@ class IntegrationTestGatewayRouting(IntegrationTestCase):
 			patch.object(Setup, "install_metrics_exporter", side_effect=RuntimeError("vector refused")),
 		):
 			self.assertFalse(self.cluster.start_setup_on_machine(frappe.get_doc("Machine", self.gateway)))
-
-	def test_installing_garage_no_longer_touches_nginx(self):
-		with (
-			patch.object(Setup, "run"),
-			patch.object(Setup, "node_identifier", return_value="id@[fdaa:1::5]:3901"),
-			patch.object(Setup, "connect_nodes"),
-			patch.object(Setup, "stage_role"),
-			patch.object(Setup, "setup_nginx_on_machine") as routed,
-		):
-			setup = self.cluster.garage_setup
-			setup.setup_machine(setup.machine(self.gateway))
-
-		routed.assert_not_called()

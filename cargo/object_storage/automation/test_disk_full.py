@@ -267,7 +267,7 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 
 	def running_workflow(self):
 		return patch(
-			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.get_running_workflow",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
 			return_value="workflow-1",
 		)
 
@@ -386,7 +386,7 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 
 	def test_a_running_workflow_does_nothing(self):
 		with patch(
-			"cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster.get_running_workflow",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
 			return_value="workflow-1",
 		):
 			grow, add_node = self.run_job([self.usage(used_gb=85)])
