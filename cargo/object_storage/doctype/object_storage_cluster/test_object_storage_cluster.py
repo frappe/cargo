@@ -34,6 +34,7 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	SOURCE,
 	SOURCE_HEADER,
 	configure_storage_cluster_webhook,
+	ensure_no_other_cluster_serving_or_setting_up,
 )
 from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings
@@ -190,6 +191,14 @@ class IntegrationTestSingleActiveCluster(IntegrationTestCase):
 
 		with self.assertRaisesRegex(frappe.ValidationError, self.cluster.name):
 			other_cluster.save()
+
+	def test_a_cluster_cannot_set_up_while_another_sets_up(self):
+		frappe.db.set_value("Object Storage Cluster", {"status": "Setting Up"}, "status", "Draft")
+		self.cluster.db_set("status", "Setting Up")
+		other_cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+		with self.assertRaisesRegex(frappe.ValidationError, f"{self.cluster.name} is Setting Up"):
+			ensure_no_other_cluster_serving_or_setting_up(other_cluster)
 
 
 class IntegrationTestLiveClusterRelease(IntegrationTestCase):

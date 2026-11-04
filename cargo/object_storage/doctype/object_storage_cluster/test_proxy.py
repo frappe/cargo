@@ -20,6 +20,10 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		use_test_settings()
 		frappe.db.set_single_value("Cargo Settings", "central_url", "https://central.test/dashboard")
+		# Other suites commit clusters that serve or set up, which would block publishing DNS here.
+		frappe.db.set_value(
+			"Object Storage Cluster", {"status": ("in", ("Active", "Setting Up"))}, "status", "Draft"
+		)
 		self.cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
 		self.gateway = self.add_machine(GATEWAY, GATEWAY_ADDRESS, public_ipv4=PUBLIC_IPV4)
 
@@ -68,7 +72,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 			self.proxy().environment
 
 	def test_the_caddyfile_runs_on_the_gateway(self):
-		with patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
 			self.proxy().install()
 
 		address, sent = run.call_args.args[:2]
@@ -89,6 +93,18 @@ class IntegrationTestProxy(IntegrationTestCase):
 			self.proxy().install()
 
 		run.assert_not_called()
+
+	def test_dns_is_not_published_while_another_cluster_sets_up(self):
+		"""Two setups that both passed the form check must not both point DNS at their gateway."""
+		frappe.get_doc({"doctype": "Object Storage Cluster"}).insert().db_set("status", "Setting Up")
+
+		with (
+			patch("cargo.caddy.AtlasClient") as atlas,
+			self.assertRaisesRegex(frappe.ValidationError, "is Setting Up"),
+		):
+			self.proxy().install()
+
+		atlas.from_settings.assert_not_called()
 
 	def test_a_stopped_gateway_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "status", "Stopped")

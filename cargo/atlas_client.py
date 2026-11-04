@@ -91,6 +91,10 @@ class AtlasClient:
 
 		return payload
 
+	def set_dns_record(self, name: str, address: str) -> None:
+		"""Point a regional service name at an address. Atlas picks A or AAAA and a 300 second TTL."""
+		self.call("PUT", f"/dns-records/{name}", {"address": address})
+
 	def replace_vm_metadata(self, machine_id: str, metadata: dict[str, str]) -> None:
 		"""Replace the VM's whole metadata map. Atlas drops every key left out."""
 		self.call("PUT", f"/virtual-machines/{machine_id}/metadata", {"metadata": metadata})

@@ -177,6 +177,14 @@ class UnitTestAtlasClient(UnitTestCase):
 			request.call_args.kwargs["json"], {"metadata": {"role": "storage", "datum-credential": "token"}}
 		)
 
+	def test_a_dns_record_is_put_by_name(self):
+		with self.call(response(204)) as request:
+			self.client.set_dns_record("internal-s3-svc.example.test", "fdaa:1::7")
+
+		self.assertEqual(request.call_args.args[0], "PUT")
+		self.assertTrue(request.call_args.args[1].endswith("/dns-records/internal-s3-svc.example.test"))
+		self.assertEqual(request.call_args.kwargs["json"], {"address": "fdaa:1::7"})
+
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):
 			self.client.create_vm(

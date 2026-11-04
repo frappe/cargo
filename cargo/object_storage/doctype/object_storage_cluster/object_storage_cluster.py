@@ -348,9 +348,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		self.mark_cluster_status(
 			"Failed",
-			_("{0} does not answer over HTTPS. Point DNS for {1} at {2}, then set up again.").format(
-				self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4
-			),
+			_(
+				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
+			).format(self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4),
 		)
 		return False
 

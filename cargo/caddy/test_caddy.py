@@ -7,7 +7,9 @@ from frappe.tests import UnitTestCase
 
 from cargo.caddy import PROBE_ATTEMPTS, Caddy, answers
 
-MACHINE = SimpleNamespace(address="fdaa:1::7", get_password=lambda _fieldname: "private-key")
+MACHINE = SimpleNamespace(
+	address="fdaa:1::7", public_ipv4="203.0.113.7", get_password=lambda _fieldname: "private-key"
+)
 
 
 ENVIRONMENT = {
@@ -21,6 +23,7 @@ ENVIRONMENT = {
 class SiteCaddy(Caddy):
 	caddyfile = ("object_storage", "conf", "caddy", "Caddyfile")
 	machine = MACHINE
+	domains = ("s3-svc.example.test", "s3-admin-svc.example.test")
 
 	def __init__(self, environment: dict[str, str] | None = None) -> None:
 		self.variables = environment or ENVIRONMENT
@@ -48,8 +51,25 @@ class UnitTestCaddy(UnitTestCase):
 		with self.assertRaises(KeyError):
 			SiteCaddy({"WILDCARD_DOMAIN": "example.test"}).render()
 
+	def test_install_publishes_public_and_internal_records_first(self):
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			atlas.from_settings.return_value.set_dns_record.side_effect = lambda *_: run.assert_not_called()
+			SiteCaddy().install()
+
+		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
+		self.assertEqual(
+			published,
+			[
+				("s3-svc.example.test", "203.0.113.7"),
+				("internal-s3-svc.example.test", "fdaa:1::7"),
+				("s3-admin-svc.example.test", "203.0.113.7"),
+				("internal-s3-admin-svc.example.test", "fdaa:1::7"),
+			],
+		)
+		run.assert_called_once()
+
 	def test_install_sends_the_rendered_caddyfile_to_the_machine(self):
-		with patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
 			SiteCaddy().install()
 
 		address, sent, key = run.call_args.args
@@ -59,7 +79,7 @@ class UnitTestCaddy(UnitTestCase):
 
 	def test_nginx_from_an_earlier_setup_is_stopped_before_caddy_starts(self):
 		"""Earlier setups left nginx enabled on port 80, which Caddy needs for its certificates."""
-		with patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
 			SiteCaddy().install()
 
 		sent = run.call_args.args[1]

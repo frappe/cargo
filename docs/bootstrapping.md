@@ -84,7 +84,7 @@ The existing regional wildcard DNS record covers `cargo.<wildcard-domain>` and `
 
 ## Service domains
 
-The object storage gateway and the datum host each get a public IPv4 from Atlas and run Caddy, which obtains and renews TLS certificates itself. Point DNS A records at that address before setup: `s3-svc` and `s3-admin-svc` at the gateway, `telemetry-svc` and `telemetry-read-svc` at the datum host. Setup marks the service Active only once its domains answer over HTTPS, and Failed with the address to point DNS at when they do not.
+The object storage gateway and the datum host each get a public IPv4 from Atlas and run Caddy, which obtains and renews TLS certificates itself. Before it installs Caddy, setup asks Atlas to point `s3-svc` and `s3-admin-svc` at the gateway, and `telemetry-svc` and `telemetry-read-svc` at the datum host. Each name gets an A record for the public IPv4, and its `internal-` name gets an AAAA record for the mesh address, which tenant VMs use. Both VMs are privileged, so tenant VMs can reach them over the mesh. Setup marks the service Active only once its domains answer over HTTPS, and Failed when they do not.
 
 Cargo permits only one Active Object Storage Cluster. Other cluster records can remain for archival history, but setup stops while another cluster is Active.
 

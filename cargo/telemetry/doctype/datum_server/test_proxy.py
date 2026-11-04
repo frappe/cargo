@@ -62,7 +62,7 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		self.assertIn("not query query=*", rendered)
 
 	def test_caddy_runs_on_the_datum_host(self):
-		with patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
 			self.proxy().install()
 
 		self.assertEqual(run.call_args.args[0], "fdaa:1::9")
