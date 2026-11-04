@@ -96,15 +96,39 @@ class IntegrationTestProxy(IntegrationTestCase):
 
 		self.assertIsNone(frappe.get_doc("Object Storage Cluster", self.cluster.name).proxy_node)
 
-	def test_serving_means_the_admin_health_check_answers_over_https(self):
-		with patch("requests.get") as get:
-			get.return_value.ok = True
-			self.assertTrue(self.proxy().is_serving)
+	def probe(self, admin_ok: bool = True, s3_status: int = 403):
+		with patch("requests.get") as get, patch("requests.head") as head:
+			get.return_value.ok = admin_ok
+			head.return_value.status_code = s3_status
+			serving = self.proxy().is_serving
 
-		self.assertEqual(get.call_args.args[0], f"https://s3-admin-svc.{SETTINGS['wildcard_domain']}/health")
+		return serving, get, head
+
+	def test_serving_means_both_domains_answer_over_https(self):
+		serving, get, head = self.probe()
+
+		self.assertTrue(serving)
+		domain = SETTINGS["wildcard_domain"]
+		self.assertEqual(get.call_args.args[0], f"https://s3-admin-svc.{domain}/health")
+		self.assertEqual(head.call_args.args[0], f"https://s3-svc.{domain}/")
+
+	def test_s3_refusing_an_unsigned_call_still_counts_as_serving(self):
+		for status in (403, 404):
+			with self.subTest(status=status):
+				self.assertTrue(self.probe(s3_status=status)[0])
+
+	def test_a_gateway_caddy_cannot_reach_is_not_serving(self):
+		self.assertFalse(self.probe(s3_status=502)[0])
+
+	def test_an_unhealthy_admin_api_is_not_serving(self):
+		self.assertFalse(self.probe(admin_ok=False)[0])
 
 	def test_an_unreachable_domain_is_not_serving(self):
 		with patch("requests.get", side_effect=requests.ConnectionError("no route")):
+			self.assertFalse(self.proxy().is_serving)
+
+	def test_an_invalid_certificate_is_not_serving(self):
+		with patch("requests.get", side_effect=requests.exceptions.SSLError("self-signed")):
 			self.assertFalse(self.proxy().is_serving)
 
 	def test_the_script_ships_with_the_app(self):

@@ -73,21 +73,15 @@ class Proxy:
 
 	@property
 	def is_serving(self) -> bool:
-		"""Whether Garage's admin health check answers over public DNS and TLS.
-		Also check the garage s3 health endpoint.
-		"""
+		"""Whether both domains answer over public DNS with a valid certificate."""
+		domain = self.cluster.wildcard_domain
 		try:
-			admin_response = requests.get(
-				f"https://{S3_ADMIN_SITE_NAME}.{self.cluster.wildcard_domain}/health",
-				timeout=PROBE_TIMEOUT_SECONDS,
+			admin = requests.get(
+				f"https://{S3_ADMIN_SITE_NAME}.{domain}/health", timeout=PROBE_TIMEOUT_SECONDS
 			)
-			s3_response = requests.get(
-				f"https://{S3_SITE_NAME}.{self.cluster.wildcard_domain}/health",
-				timeout=PROBE_TIMEOUT_SECONDS,
-			)
-			if not admin_response.ok or not s3_response.ok:
-				return False
+			s3 = requests.head(f"https://{S3_SITE_NAME}.{domain}/", timeout=PROBE_TIMEOUT_SECONDS)
 		except requests.RequestException:
 			return False
 
-		return True
+		# S3 has no health route and refuses an unsigned call; Caddy answers 502 for a dead gateway.
+		return admin.ok and s3.status_code < 500
