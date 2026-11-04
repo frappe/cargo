@@ -53,6 +53,15 @@ class UnitTestCaddy(UnitTestCase):
 		self.assertIn(f"export CADDYFILE={shlex.quote(SiteCaddy().render())}", sent)
 		self.assertIn("caddy validate", sent)
 
+	def test_nginx_from_an_earlier_setup_is_stopped_before_caddy_starts(self):
+		"""Earlier setups left nginx enabled on port 80, which Caddy needs for its certificates."""
+		with patch("cargo.caddy.run_over_ssh") as run:
+			SiteCaddy().install()
+
+		sent = run.call_args.args[1]
+		self.assertIn("systemctl disable --now nginx", sent)
+		self.assertLess(sent.index("disable --now nginx"), sent.index("apt-get install -y caddy"))
+
 	def test_waiting_retries_until_the_certificate_lands(self):
 		with (
 			patch.object(SiteCaddy, "is_serving", new_callable=PropertyMock, side_effect=[False, True]),

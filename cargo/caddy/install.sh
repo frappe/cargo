@@ -6,6 +6,11 @@ set -euo pipefail
 : "${CADDYFILE:?CADDYFILE is required}"
 CADDYFILE_PATH="${CADDYFILE_PATH:-/etc/caddy/Caddyfile}"
 
+# Earlier setups put nginx on port 80; Caddy needs 80 and 443 for itself.
+if systemctl list-unit-files nginx.service > /dev/null 2>&1; then
+	systemctl disable --now nginx
+fi
+
 if ! command -v caddy > /dev/null 2>&1; then
 	apt-get update -y
 	DEBIAN_FRONTEND=noninteractive apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gpg
