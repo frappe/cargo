@@ -80,6 +80,18 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		create.assert_called_once()
 		self.assertIsNotNone(self.last_snapshot())
 
+	def test_stamping_a_snapshot_leaves_the_cluster_unmodified(self):
+		"""A setup step holds the cluster for minutes and saves it after, which a newer
+		`modified` would refuse."""
+		modified = frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified")
+		with patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}):
+			take_metadata_snapshots()
+
+		self.assertIsNotNone(self.last_snapshot())
+		self.assertEqual(
+			frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified"), modified
+		)
+
 	def test_no_upload_without_a_backup_bucket(self):
 		with (
 			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),

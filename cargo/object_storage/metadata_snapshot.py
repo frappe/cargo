@@ -56,7 +56,7 @@ def take_metadata_snapshot(cluster: ObjectStorageCluster) -> None:
 	machines = dict(garage.get_layout_nodes()) if refused else {}
 	if garage.has_metadata_backup:
 		queue_metadata_uploads(cluster, name, skip={machines.get(node_id) for node_id in refused})
-	cluster.db_set("last_metadata_snapshot_at", now_datetime())
+	cluster.db_set("last_metadata_snapshot_at", now_datetime(), update_modified=False)
 
 	if refused:
 		frappe.log_error(

@@ -110,6 +110,16 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 		self.assertIn("could not be reached", finding.reason)
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "health"), CRITICAL)
 
+	def test_recording_health_leaves_the_cluster_unmodified(self):
+		"""A setup step holds the cluster for minutes and saves it after, which a newer
+		`modified` would refuse."""
+		modified = frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified")
+		self.health(error="connection refused").record()
+
+		self.assertEqual(
+			frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified"), modified
+		)
+
 	def test_an_unreachable_gateway_suppresses_every_other_finding(self):
 		"""The rest would be invented from data we never received."""
 		self.assertEqual(len(self.health(error="connection refused").findings()), 1)

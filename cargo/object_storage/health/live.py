@@ -150,7 +150,11 @@ class LiveHealth(Client):
 		"""Write the verdict onto the cluster, and say so loudly when it is Critical."""
 		finding = self.check()
 		if (self.cluster.health, self.cluster.health_reason) != (finding.severity, finding.reason):
-			self.cluster.db_set({"health": finding.severity, "health_reason": finding.reason}, notify=True)
+			self.cluster.db_set(
+				{"health": finding.severity, "health_reason": finding.reason},
+				notify=True,
+				update_modified=False,
+			)
 			if finding.severity == CRITICAL:
 				frappe.log_error(title=f"{self.cluster.name} is critical", message=finding.reason)
 
