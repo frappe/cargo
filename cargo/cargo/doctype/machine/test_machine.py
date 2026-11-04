@@ -240,6 +240,66 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		atlas.from_settings.return_value.set_power_state.assert_not_called()
 
+	def test_attaching_a_public_ip_asks_atlas_and_waits_for_the_sync(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.attach_public_ip("IPv4")
+
+		atlas.from_settings.return_value.attach_public_ip.assert_called_once_with(
+			self.machine.vm_id, "IPv4", "auto"
+		)
+		self.machine.reload()
+		self.assertIsNone(self.machine.public_ipv4)
+
+	def test_a_reserved_allocation_is_passed_through(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.attach_public_ip("IPv6", "alloc-7")
+
+		atlas.from_settings.return_value.attach_public_ip.assert_called_once_with(
+			self.machine.vm_id, "IPv6", "alloc-7"
+		)
+
+	def test_detaching_a_public_ip_asks_atlas(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.detach_public_ip("IPv4")
+
+		atlas.from_settings.return_value.detach_public_ip.assert_called_once_with(self.machine.vm_id, "IPv4")
+
+	def test_an_unknown_ip_version_is_refused(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			for call in (
+				lambda: self.machine.attach_public_ip("IPv5"),
+				lambda: self.machine.detach_public_ip("4"),
+			):
+				with self.assertRaisesRegex(frappe.ValidationError, "Unknown IP version"):
+					call()
+
+		atlas.from_settings.assert_not_called()
+
+	def test_atlas_refusing_an_attach_says_why(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.attach_public_ip.side_effect = AtlasError(
+				"409 ipv4_internet_access_required"
+			)
+			with self.assertRaisesRegex(frappe.ValidationError, "ipv4_internet_access_required"):
+				self.machine.attach_public_ip("IPv4")
+
+	def test_only_a_writer_can_attach_a_public_ip(self):
+		frappe.set_user("Guest")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		with patch("cargo.atlas_client.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
+			self.machine.attach_public_ip("IPv4")
+
+		atlas.from_settings.assert_not_called()
+
+	def test_a_running_machine_records_its_public_ipv6(self):
+		payload = running_vm()
+		payload["network"]["public_ipv6"] = "2001:db8::7/128"
+
+		self.machine.sync(self.client(payload))
+
+		self.assertEqual(self.machine.public_ipv6, "2001:db8::7/128")
+
 	def test_growing_the_disk_asks_atlas_and_waits_for_the_sync_to_record_the_size(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			self.machine.grow_disk(30)

@@ -132,6 +132,30 @@ class UnitTestAtlasClient(UnitTestCase):
 
 		self.assertTrue(request.call_args.kwargs["json"]["is_termination_protected"])
 
+	def test_attaching_a_public_ip_puts_the_versioned_route(self):
+		for version, route in (("IPv4", "public-ipv4"), ("IPv6", "public-ipv6")):
+			with self.subTest(version=version), self.call(response(202, {"id": "vm-1"})) as request:
+				self.client.attach_public_ip("vm-1", version)
+
+			method, url = request.call_args.args
+			self.assertEqual(method, "PUT")
+			self.assertEqual(url, f"https://atlas.test/api/atlas/virtual-machines/vm-1/{route}")
+			self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "auto"})
+
+	def test_a_reserved_allocation_is_attached_by_id(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.attach_public_ip("vm-1", "IPv4", "alloc-7")
+
+		self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "alloc-7"})
+
+	def test_detaching_a_public_ip_deletes_the_versioned_route(self):
+		with self.call(response(202, {"id": "vm-1"})) as request:
+			self.client.detach_public_ip("vm-1", "IPv6")
+
+		method, url = request.call_args.args
+		self.assertEqual(method, "DELETE")
+		self.assertEqual(url, "https://atlas.test/api/atlas/virtual-machines/vm-1/public-ipv6")
+
 	def test_protecting_a_machine_patches_the_vm(self):
 		with self.call(response(202, {"id": "vm-1"})) as request:
 			self.client.set_vm_termination_protection("vm-1", enabled=True)

@@ -12,6 +12,8 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 API_PREFIX = "/api/atlas"
+AUTO_PUBLIC_IP = "auto"
+IPVersion = Literal["IPv4", "IPv6"]
 RUNNING_STATE = "running"
 STOPPED_STATE = "stopped"
 PAUSED_STATE = "paused"
@@ -127,7 +129,7 @@ class AtlasClient:
 		if is_termination_protected:
 			payload["is_termination_protected"] = True
 		if has_public_ipv4:
-			payload["public_ipv4"] = "auto"
+			payload["public_ipv4"] = AUTO_PUBLIC_IP
 
 		created = self.call("POST", "/virtual-machines", payload)
 		if not isinstance(created, dict) or not created.get("id"):
@@ -146,6 +148,15 @@ class AtlasClient:
 	def set_vm_termination_protection(self, vm_id: str, enabled: bool) -> None:
 		"""Set or clear a VM's termination protection. Atlas refuses to terminate a protected VM."""
 		self.call("PATCH", f"/virtual-machines/{vm_id}/termination-protection", {"enabled": enabled})
+
+	def attach_public_ip(self, vm_id: str, version: IPVersion, public_ip: str = AUTO_PUBLIC_IP) -> None:
+		"""Ask Atlas for a public address: one it picks, or a reserved allocation by id. It
+		answers before the address is live."""
+		self.call("PUT", f"/virtual-machines/{vm_id}/public-{version.lower()}", {"public_ip": public_ip})
+
+	def detach_public_ip(self, vm_id: str, version: IPVersion) -> None:
+		"""Release the public address. A reserved allocation stays with the tenant."""
+		self.call("DELETE", f"/virtual-machines/{vm_id}/public-{version.lower()}")
 
 	def set_power_state(self, vm_id: str, action: str) -> None:
 		"""Ask Atlas to start, stop, pause, resume or restart the VM. It answers before the VM gets there."""
