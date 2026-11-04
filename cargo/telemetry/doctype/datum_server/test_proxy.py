@@ -97,4 +97,7 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		self.assertFalse(self.probe(None, Mock(ok=True)))
 
 	def test_the_caddyfile_ships_with_the_app(self):
-		self.assertTrue(os.path.isfile(frappe.get_app_path("cargo", *Proxy.caddyfile)))
+		path = self.proxy().caddyfile_path
+
+		self.assertEqual(path.name, "Caddyfile")
+		self.assertTrue(path.is_file())

@@ -53,8 +53,13 @@ class Caddy:
 	def render(self) -> str:
 		"""The Caddyfile for this service. A variable the template names and the environment
 		lacks raises, rather than writing a site with a hole in it."""
-		template = Path(frappe.get_app_path("cargo", *self.caddyfile)).read_text()
-		return Template(template).substitute(self.environment)
+		return Template(self.caddyfile_path.read_text()).substitute(self.environment)
+
+	@property
+	def caddyfile_path(self) -> Path:
+		"""Joined here, not by `get_app_path`, which lowercases every part: `Caddyfile` is not
+		`caddyfile` on Linux."""
+		return Path(frappe.get_app_path("cargo")).joinpath(*self.caddyfile)
 
 	def wait_until_serving(self) -> bool:
 		"""Caddy obtains its certificates after it starts, so the probe is given a minute."""

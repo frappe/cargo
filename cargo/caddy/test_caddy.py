@@ -40,6 +40,10 @@ class UnitTestCaddy(UnitTestCase):
 		self.assertIn("reverse_proxy [fdaa:1::7]:3900", rendered)
 		self.assertNotIn("${", rendered)
 
+	def test_the_template_path_keeps_its_case(self):
+		"""`get_app_path` lowercases every part, which Linux reads as another file."""
+		self.assertEqual(SiteCaddy().caddyfile_path.name, "Caddyfile")
+
 	def test_a_variable_the_template_needs_and_lacks_raises(self):
 		with self.assertRaises(KeyError):
 			SiteCaddy({"WILDCARD_DOMAIN": "example.test"}).render()
