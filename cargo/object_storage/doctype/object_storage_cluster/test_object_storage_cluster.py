@@ -618,6 +618,34 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		flow.run_as_workflow.assert_called_once()
 		self.assertEqual(self.cluster.status, "Setting Up")
 
+	def refused_setup(self, message: str):
+		with (
+			patch.object(ObjectStorageCluster, "_setup") as flow,
+			self.assertRaisesRegex(frappe.ValidationError, message),
+		):
+			frappe.get_doc("Object Storage Cluster", self.cluster.name).setup()
+
+		flow.run_as_workflow.assert_not_called()
+
+	def test_setup_is_refused_without_a_running_proxy(self):
+		frappe.db.set_value("Machine", self.proxy_machine, "status", "Terminated")
+
+		self.refused_setup("running proxy node")
+
+	def test_setup_is_refused_before_the_proxy_has_a_public_address(self):
+		frappe.db.set_value("Machine", self.proxy_machine, "public_ipv4", None)
+
+		self.refused_setup("public IPv4")
+
+	def test_a_live_cluster_without_a_proxy_stays_active(self):
+		"""Its traffic still flows the old way, so a refused setup must not fail it."""
+		self.cluster.mark_cluster_status("Active")
+		frappe.db.set_value("Machine", self.proxy_machine, "status", "Terminated")
+
+		self.refused_setup("running proxy node")
+
+		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
+
 	def test_steps_that_install_over_ssh_outlast_the_ssh_calls_they_make(self):
 		"""The worker's default is 300s against SSH's 600s, so an unmarked step would be
 		killed partway through an install SSH would still have let finish."""

@@ -50,6 +50,8 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
+	ensure_proxy_is_ready(cluster)
+
 	running_storage_nodes = [node for node in cluster.storage_nodes if node.status == "Running"]
 	if len(running_storage_nodes) != len(cluster.storage_nodes):
 		frappe.throw(
@@ -62,6 +64,20 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 		frappe.throw(
 			_("This cluster has {0} storage nodes, but its replication factor needs {1}.").format(
 				len(running_storage_nodes), cluster.replication_factor
+			)
+		)
+
+
+def ensure_proxy_is_ready(cluster: ObjectStorageCluster) -> None:
+	"""Refuse setup before it changes anything, so a live cluster without a proxy stays Active."""
+	proxy = cluster.proxy_node
+	if not proxy or proxy.status != "Running":
+		frappe.throw(_("This cluster needs a running proxy node before it can be set up."))
+
+	if not proxy.public_ipv4:
+		frappe.throw(
+			_("Proxy node {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
+				proxy.name
 			)
 		)
 
