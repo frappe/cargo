@@ -59,14 +59,13 @@ class Setup(Client):
 
 	@cached_property
 	def machines(self) -> list[MachineRow]:
-		"""Every Garage machine that has booted, gateway first: the rest reach the cluster through it."""
+		"""Every machine that has booted, gateway first: the rest reach the cluster through it."""
 		machines = frappe.get_all(
 			"Machine",
 			filters={
 				"reference_doctype": self.cluster.doctype,
 				"reference_name": self.cluster.name,
 				"status": "Running",
-				"role": ("in", (GATEWAY, STORAGE)),
 			},
 			fields=["name", "role", "zone", "address", "disk_size_gb", "vm_id"],
 			order_by="creation",
@@ -165,9 +164,9 @@ class Setup(Client):
 			"RPC_PUBLIC_ADDR": host_port(machine["address"], cluster.rpc_port),
 			"REGION": cluster.region,
 			"REPLICATION_FACTOR": cluster.replication_factor,
-			"RPC_PORT": cluster.rpc_port,
-			"S3_PORT": cluster.s3_port,
-			"ADMIN_PORT": cluster.admin_port,
+			"RPC_BIND_ADDR": host_port(machine["address"], cluster.rpc_port),
+			"S3_BIND_ADDR": host_port(machine["address"], cluster.s3_port),
+			"ADMIN_BIND_ADDR": host_port(machine["address"], cluster.admin_port),
 			"RPC_SECRET": secrets["rpc_secret"],
 			"ADMIN_TOKEN": secrets["admin_token"],
 			"METRICS_TOKEN": secrets["metrics_token"],
@@ -200,7 +199,7 @@ class Setup(Client):
 		"""Install Vector and the timer that fetches the node's own Datum token. Safe to repeat.
 		Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
 		garage_metrics = {
-			"GARAGE_ADMIN_PORT": self.cluster.admin_port,
+			"GARAGE_ADMIN_ADDRESS": host_port(machine["address"], self.cluster.admin_port),
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
 			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
 		}

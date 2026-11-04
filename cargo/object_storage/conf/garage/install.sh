@@ -13,9 +13,10 @@ set -euo pipefail
 : "${METRICS_TOKEN:?METRICS_TOKEN is required}"
 : "${REGION:?REGION is required}"
 : "${REPLICATION_FACTOR:?REPLICATION_FACTOR is required}"
-: "${RPC_PORT:?RPC_PORT is required}"
-: "${S3_PORT:?S3_PORT is required}"
-: "${ADMIN_PORT:?ADMIN_PORT is required}"
+# The node's mesh address only: a gateway also holds a public IPv4, which Caddy alone serves.
+: "${RPC_BIND_ADDR:?RPC_BIND_ADDR is required}"
+: "${S3_BIND_ADDR:?S3_BIND_ADDR is required}"
+: "${ADMIN_BIND_ADDR:?ADMIN_BIND_ADDR is required}"
 GARAGE_CONFIG="${GARAGE_CONFIG:-/etc/garage.toml}"
 
 install -d -m 700 "$METADATA_DIR" "$DATA_DIR"
@@ -41,7 +42,7 @@ db_engine    = "lmdb"
 replication_factor = $REPLICATION_FACTOR
 consistency_mode   = "consistent"
 
-rpc_bind_addr   = "[::]:$RPC_PORT"
+rpc_bind_addr   = "$RPC_BIND_ADDR"
 rpc_public_addr = "$RPC_PUBLIC_ADDR"
 rpc_secret      = "$RPC_SECRET"
 
@@ -52,10 +53,10 @@ bootstrap_peers = [
 
 [s3_api]
 s3_region     = "$REGION"
-api_bind_addr = "[::]:$S3_PORT"
+api_bind_addr = "$S3_BIND_ADDR"
 
 [admin]
-api_bind_addr = "[::]:$ADMIN_PORT"
+api_bind_addr = "$ADMIN_BIND_ADDR"
 admin_token   = "$ADMIN_TOKEN"
 metrics_token = "$METRICS_TOKEN"
 GARAGE_TOML

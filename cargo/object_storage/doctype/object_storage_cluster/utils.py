@@ -23,13 +23,6 @@ REPORTED_STATUSES = ("Active", "Failed")
 CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 
 
-def can_add_proxy_node(cluster: ObjectStorageCluster) -> None:
-	"""Refuse another proxy while this cluster already has one running."""
-	proxy_node = cluster.proxy_node
-	if proxy_node and proxy_node.status == "Running":
-		frappe.throw(_("This cluster already has a running proxy node."))
-
-
 def can_add_gateway_node(cluster: ObjectStorageCluster) -> None:
 	"""Whether this cluster can add a gateway node."""
 	if cluster.gateway_node:
@@ -50,7 +43,7 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
-	ensure_proxy_is_ready(cluster)
+	ensure_gateway_is_public(cluster)
 
 	running_storage_nodes = [node for node in cluster.storage_nodes if node.status == "Running"]
 	if len(running_storage_nodes) != len(cluster.storage_nodes):
@@ -68,16 +61,12 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 		)
 
 
-def ensure_proxy_is_ready(cluster: ObjectStorageCluster) -> None:
-	"""Refuse setup before it changes anything, so a live cluster without a proxy stays Active."""
-	proxy = cluster.proxy_node
-	if not proxy or proxy.status != "Running":
-		frappe.throw(_("This cluster needs a running proxy node before it can be set up."))
-
-	if not proxy.public_ipv4:
+def ensure_gateway_is_public(cluster: ObjectStorageCluster) -> None:
+	"""Refuse setup before it changes anything, so a live gateway without one stays Active."""
+	if not cluster.gateway_node.public_ipv4:
 		frappe.throw(
-			_("Proxy node {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
-				proxy.name
+			_("Gateway {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
+				cluster.gateway_node.name
 			)
 		)
 
@@ -118,14 +107,14 @@ def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: 
 		machines = [machine]
 	else:
 		ensure_every_machine_runs(cluster)
-		machines = [node.name for node in cluster.garage_nodes]
+		machines = [node.name for node in cluster.all_nodes]
 
 	ensure_snapshot_is_backed_up(cluster, snapshot, machines)
 	return machines
 
 
 def ensure_every_machine_runs(cluster: ObjectStorageCluster) -> None:
-	stopped = [node.name for node in cluster.garage_nodes if node.status != "Running"]
+	stopped = [node.name for node in cluster.all_nodes if node.status != "Running"]
 	if stopped:
 		frappe.throw(
 			_("Every machine must be running to restore the whole cluster. Not running: {0}").format(

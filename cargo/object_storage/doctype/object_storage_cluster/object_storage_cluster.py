@@ -14,13 +14,12 @@ from frappe.utils import now_datetime
 from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
-from cargo.client_models import GATEWAY, PROXY, STORAGE, NodeSpec, PlacementRule, Role
+from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
 from cargo.object_storage.doctype.object_storage_cluster.proxy import PROXY_SITE_NAMES, S3_SITE_NAME, Proxy
 from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT, Setup
 from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	CLUSTER_SECRETS,
 	can_add_gateway_node,
-	can_add_proxy_node,
 	can_add_storage_node,
 	can_release_machines,
 	can_restore_metadata,
@@ -97,12 +96,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return frappe.db.get_single_value("Cargo Settings", "region", cache=True)
 
 	@cached_property
-	def proxy_node(self) -> Machine | None:
-		"""The live machine that takes public traffic for the gateway."""
-		proxies = [frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == PROXY]
-		return next((proxy for proxy in proxies if proxy.status not in DEAD_MACHINE_STATES), None)
-
-	@cached_property
 	def gateway_node(self) -> Machine | None:
 		"""The one machine that has the gateway role."""
 		return next(
@@ -118,11 +111,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 	def all_nodes(self) -> list[Machine]:
 		"""All machines in this cluster."""
 		return [frappe.get_doc("Machine", row.machine) for row in self.machines]
-
-	@cached_property
-	def garage_nodes(self) -> list[Machine]:
-		"""The gateway and storage nodes: every machine that runs Garage."""
-		return [machine for machine in self.all_nodes if machine.role in (GATEWAY, STORAGE)]
 
 	@property
 	def gateway_address(self) -> str:
@@ -159,7 +147,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@property
 	def service_endpoint(self) -> str:
-		"""The S3 URL users reach this cluster at, served by Caddy on the proxy node."""
+		"""The S3 URL users reach this cluster at, served by Caddy on the gateway."""
 		return f"https://{S3_SITE_NAME}.{self.wildcard_domain}"
 
 	def validate(self) -> None:
@@ -203,6 +191,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			tags=tags,
 			placement_rules=placement_rules,
 			is_termination_protected=True,
+			has_public_ipv4=role == GATEWAY,
 		)
 
 		self.append("machines", {"machine": machine.name, "role": role})
@@ -229,13 +218,6 @@ class ObjectStorageCluster(WorkflowBuilder):
 				within=(settings.storage_node_spread_within or "").strip(),
 			)
 		]
-
-	@frappe.whitelist()
-	def add_proxy_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
-		"""Can add a proxy node to this cluster? Throws if not."""
-		can_add_proxy_node(self)
-
-		self.add_node(PROXY, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
@@ -279,7 +261,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			if not was_successful and machine_doc.role == STORAGE:
 				failed_storage_node_setup.append(machine_doc.name)
 
-			if len(self.garage_nodes) - len(failed_storage_node_setup) < self.replication_factor:
+			if len(self.all_nodes) - len(failed_storage_node_setup) < self.replication_factor:
 				self.mark_cluster_status(
 					"Failed",
 					_(
@@ -295,7 +277,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not self.verify_connected_nodes():
 			return
 
-		# The proxy last: it only routes to a gateway ready to take its traffic.
+		# Caddy last: it only routes to a gateway ready to take its traffic.
 		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
 			return
 
@@ -306,7 +288,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Gateway first: every other node reaches the cluster through its admin API, so one
 		set up before it has nothing to join."""
 		healthy_nodes = self.garage_setup.healthy_nodes()
-		machines_to_setup = [machine for machine in self.garage_nodes if machine.name not in healthy_nodes]
+		machines_to_setup = [machine for machine in self.all_nodes if machine.name not in healthy_nodes]
 
 		return [
 			machine.name for machine in sorted(machines_to_setup, key=lambda machine: machine.role != GATEWAY)
@@ -340,7 +322,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
 	def install_caddy(self) -> bool:
-		"""Caddy on the proxy node, in front of the gateway. Run on every setup, so setting up
+		"""Caddy on the gateway, in front of Garage. Run on every setup, so setting up
 		again is also how a failed one is retried."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -372,7 +354,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.mark_cluster_status(
 			"Failed",
 			_("{0} does not answer over HTTPS. Point DNS for {1} at {2}, then set up again.").format(
-				self.service_endpoint, ", ".join(self.proxy_domains), self.proxy_node.public_ipv4
+				self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4
 			),
 		)
 		return False

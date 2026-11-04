@@ -1,6 +1,6 @@
 #!/bin/bash
-# Runs over SSH on a cluster's proxy node. Caddy serves s3-svc and s3-admin-svc over public
-# TLS, obtaining and renewing certificates itself, and forwards to Garage on the gateway.
+# Runs over SSH on a cluster's gateway. Caddy serves s3-svc and s3-admin-svc over public TLS,
+# obtaining and renewing certificates itself, and forwards to Garage on the mesh address.
 set -euo pipefail
 
 : "${WILDCARD_DOMAIN:?WILDCARD_DOMAIN is required}"
