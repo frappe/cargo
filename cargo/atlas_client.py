@@ -95,6 +95,10 @@ class AtlasClient:
 		"""Point a regional service name at an address. Atlas picks A or AAAA and a 300 second TTL."""
 		self.call("PUT", f"/dns-records/{name}", {"address": address})
 
+	def set_vm_firewall(self, vm_id: str, firewall: dict[str, Any]) -> None:
+		"""Replace the VM's whole firewall. Atlas answers before Metal applies it."""
+		self.call("PATCH", f"/virtual-machines/{vm_id}/network", {"firewall": firewall})
+
 	def replace_vm_metadata(self, machine_id: str, metadata: dict[str, str]) -> None:
 		"""Replace the VM's whole metadata map. Atlas drops every key left out."""
 		self.call("PUT", f"/virtual-machines/{machine_id}/metadata", {"metadata": metadata})

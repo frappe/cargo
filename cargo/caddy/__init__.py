@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import time
 import typing
 from collections.abc import Callable
@@ -20,6 +21,7 @@ INSTALL_SCRIPT = ("caddy", "install.sh")
 PROBE_TIMEOUT_SECONDS = 10
 PROBE_ATTEMPTS = 6
 PROBE_INTERVAL_SECONDS = 10
+ANYWHERE = ["0.0.0.0/0", "::/0"]
 
 
 class Caddy:
@@ -45,8 +47,10 @@ class Caddy:
 		raise NotImplementedError
 
 	def install(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Publish DNS, install Caddy and write the Caddyfile. Safe to repeat: certificates are kept."""
+		"""Apply the firewall, publish DNS, install Caddy and write the Caddyfile. Safe to repeat:
+		certificates are kept."""
 		machine = self.machine
+		self.apply_firewall(machine)
 		self.publish_dns(machine)
 		run_over_ssh(
 			machine.address,
@@ -55,6 +59,22 @@ class Caddy:
 			timeout=SSH_TIMEOUT,
 			on_output=on_output,
 		)
+
+	def apply_firewall(self, machine: Machine) -> None:
+		"""Admit HTTP, HTTPS and ICMP from anywhere, and everything from tenant-0 VMs in the region,
+		as Atlas does for its proxy. Atlas reaches SSH through the host."""
+		tenant_network = ipaddress.IPv6Network(f"{machine.address}/64", strict=False)
+		firewall = {
+			"enabled": True,
+			"inbound": [
+				{"protocol": "any", "cidrs": [str(tenant_network)]},
+				{"protocol": "icmp", "cidrs": ANYWHERE},
+				{"protocol": "tcp", "ports": "80", "cidrs": ANYWHERE},
+				{"protocol": "tcp", "ports": "443", "cidrs": ANYWHERE},
+			],
+			"outbound": [{"protocol": "any", "cidrs": ANYWHERE}],
+		}
+		AtlasClient.from_settings().set_vm_firewall(machine.vm_id, firewall)
 
 	def publish_dns(self, machine: Machine) -> None:
 		"""Point each domain at the public IPv4 for Let's Encrypt and the internet, and its

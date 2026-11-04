@@ -8,7 +8,10 @@ from frappe.tests import UnitTestCase
 from cargo.caddy import PROBE_ATTEMPTS, Caddy, answers
 
 MACHINE = SimpleNamespace(
-	address="fdaa:1::7", public_ipv4="203.0.113.7", get_password=lambda _fieldname: "private-key"
+	vm_id="vm-7",
+	address="fdaa:1::7",
+	public_ipv4="203.0.113.7",
+	get_password=lambda _fieldname: "private-key",
 )
 
 
@@ -67,6 +70,19 @@ class UnitTestCaddy(UnitTestCase):
 			],
 		)
 		run.assert_called_once()
+
+	def test_install_admits_the_web_and_tenant_zero_vms_first(self):
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			atlas.from_settings.return_value.set_vm_firewall.side_effect = lambda *_: run.assert_not_called()
+			SiteCaddy().install()
+
+		vm_id, firewall = atlas.from_settings.return_value.set_vm_firewall.call_args.args
+		self.assertEqual(vm_id, "vm-7")
+		self.assertTrue(firewall["enabled"])
+		self.assertIn({"protocol": "any", "cidrs": ["fdaa:1::/64"]}, firewall["inbound"])
+		self.assertIn(
+			{"protocol": "tcp", "ports": "443", "cidrs": ["0.0.0.0/0", "::/0"]}, firewall["inbound"]
+		)
 
 	def test_install_sends_the_rendered_caddyfile_to_the_machine(self):
 		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:

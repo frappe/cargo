@@ -104,7 +104,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 		):
 			self.proxy().install()
 
-		atlas.from_settings.assert_not_called()
+		atlas.from_settings.return_value.set_dns_record.assert_not_called()
 
 	def test_a_stopped_gateway_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "status", "Stopped")
