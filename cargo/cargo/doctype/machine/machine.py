@@ -47,6 +47,7 @@ class Machine(Document):
 		error: DF.SmallText | None
 		is_termination_protected: DF.Check
 		last_synced_at: DF.Datetime | None
+		public_ipv4: DF.Data | None
 		ram_gb: DF.Int
 		reference_doctype: DF.Link
 		reference_name: DF.DynamicLink
@@ -76,6 +77,7 @@ class Machine(Document):
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
 		is_termination_protected: bool = False,
+		has_public_ipv4: bool = False,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
 		row rolled back, so nothing is left claiming a VM that was never made."""
@@ -97,7 +99,9 @@ class Machine(Document):
 			}
 		).insert(ignore_permissions=True)
 
-		machine.vm_id = machine.build(spec, base_image, tags=tags, placement_rules=placement_rules)
+		machine.vm_id = machine.build(
+			spec, base_image, tags=tags, placement_rules=placement_rules, has_public_ipv4=has_public_ipv4
+		)
 		machine.record("Pending")
 		return machine
 
@@ -107,6 +111,7 @@ class Machine(Document):
 		base_image: str,
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
+		has_public_ipv4: bool = False,
 	) -> str:
 		"""Ask Atlas to build this machine, and return the id it goes by."""
 		from cargo.atlas_client import AtlasClient
@@ -124,6 +129,7 @@ class Machine(Document):
 				tags=tags,
 				placement_rules=placement_rules,
 				is_termination_protected=bool(self.is_termination_protected),
+				has_public_ipv4=has_public_ipv4,
 			)
 		except Exception:
 			frappe.log_error(
@@ -199,6 +205,7 @@ class Machine(Document):
 			self.status,
 			self.error,
 			self.address,
+			self.public_ipv4,
 			self.cpu_millicores,
 			self.ram_gb,
 			self.disk_size_gb,
@@ -227,7 +234,9 @@ class Machine(Document):
 		if state != RUNNING_STATE:
 			return self.status, None
 
-		self.address = payload.get("network", {}).get("mesh_ipv6")
+		network = payload.get("network", {})
+		self.address = network.get("mesh_ipv6")
+		self.public_ipv4 = network.get("public_ipv4")
 		if not self.address:
 			return "Broken", "Atlas reported no mesh address"
 

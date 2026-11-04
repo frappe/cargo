@@ -13,6 +13,7 @@
   "column_break_state",
   "status",
   "address",
+  "public_ipv4",
   "last_synced_at",
   "is_termination_protected",
   "storage_section",
@@ -95,6 +96,13 @@
    "read_only": 1
   },
   {
+   "description": "Where the internet reaches this machine. Only a proxy asks Atlas for one.",
+   "fieldname": "public_ipv4",
+   "fieldtype": "Data",
+   "label": "Public IPv4",
+   "read_only": 1
+  },
+  {
    "fieldname": "last_synced_at",
    "fieldtype": "Datetime",
    "label": "Last Synced At",
@@ -168,7 +176,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-21 17:15:03.154868",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Machine",

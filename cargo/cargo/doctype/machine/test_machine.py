@@ -173,6 +173,24 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		self.assertEqual(self.machine.address, MESH_ADDRESS)
 
+	def test_a_running_machine_records_its_public_address(self):
+		payload = running_vm()
+		payload["network"]["public_ipv4"] = "203.0.113.10"
+
+		self.machine.sync(self.client(payload))
+
+		self.assertEqual(self.machine.public_ipv4, "203.0.113.10")
+		self.assertEqual(self.machine.address, MESH_ADDRESS)
+
+	def test_a_public_address_is_asked_for_only_when_requested(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			create_vm = atlas.from_settings.return_value.create_vm
+			create_vm.return_value = {"id": f"vm-{frappe.generate_hash(length=8)}"}
+			spec = NodeSpec(role="proxy", cpu_millicores=1000, ram_gb=1, disk_gb=10)
+			Machine.request(self.cluster, spec, base_image="img-1", has_public_ipv4=True)
+
+		self.assertTrue(create_vm.call_args.kwargs["has_public_ipv4"])
+
 	def test_resizing_asks_atlas_and_waits_for_the_sync_to_record_the_size(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			atlas.from_settings.return_value.get_vm.return_value = {"current_state": "stopped"}

@@ -66,8 +66,25 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertNotIn("is_termination_protected", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
+		self.assertNotIn("public_ipv4", body)
 		self.assertTrue(body["ipv4_internet_access"])
 		self.assertNotIn("egress", body)
+
+	def test_create_asks_atlas_to_pick_a_public_ipv4_when_wanted(self):
+		with self.call(response(201, {"id": "vm-9"})) as request:
+			self.client.create_vm(
+				image_id="ubuntu-24.04",
+				cpu_millicores=1000,
+				memory_mib=1024,
+				disk_mib=10240,
+				public_key="ssh-ed25519 AAAA",
+				hostname="OSC-0001-proxy-0001",
+				has_public_ipv4=True,
+			)
+
+		body = request.call_args.kwargs["json"]
+		self.assertEqual(body["public_ipv4"], "auto")
+		self.assertTrue(body["ipv4_internet_access"])
 
 	def test_create_sends_tags_and_placement_rules(self):
 		rules = [

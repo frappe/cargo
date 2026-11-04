@@ -106,6 +106,7 @@ class AtlasClient:
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
 		is_termination_protected: bool = False,
+		has_public_ipv4: bool = False,
 	) -> dict[str, Any]:
 		"""Ask Atlas for one machine and return the record it made."""
 		payload = {
@@ -125,6 +126,8 @@ class AtlasClient:
 			payload["placement_rules"] = [rule.asdict() for rule in placement_rules]
 		if is_termination_protected:
 			payload["is_termination_protected"] = True
+		if has_public_ipv4:
+			payload["public_ipv4"] = "auto"
 
 		created = self.call("POST", "/virtual-machines", payload)
 		if not isinstance(created, dict) or not created.get("id"):
