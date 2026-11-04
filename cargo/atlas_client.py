@@ -109,6 +109,7 @@ class AtlasClient:
 		placement_rules: list[PlacementRule] | None = None,
 		is_termination_protected: bool = False,
 		has_public_ipv4: bool = False,
+		is_privileged: bool = False,
 	) -> dict[str, Any]:
 		"""Ask Atlas for one machine and return the record it made."""
 		payload = {
@@ -130,6 +131,9 @@ class AtlasClient:
 			payload["is_termination_protected"] = True
 		if has_public_ipv4:
 			payload["public_ipv4"] = AUTO_PUBLIC_IP
+		# Lets tenant VMs reach the service over the mesh. Atlas allows it only for tenant 0.
+		if is_privileged:
+			payload["is_privileged"] = True
 
 		created = self.call("POST", "/virtual-machines", payload)
 		if not isinstance(created, dict) or not created.get("id"):

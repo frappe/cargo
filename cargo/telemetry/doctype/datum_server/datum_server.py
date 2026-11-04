@@ -152,6 +152,7 @@ class DatumServer(WorkflowBuilder):
 			base_image=base_image_id(),
 			is_termination_protected=True,
 			has_public_ipv4=True,
+			is_privileged=True,
 		)
 		self.machine = machine.name
 		self.save()

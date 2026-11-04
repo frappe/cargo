@@ -64,6 +64,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertNotIn("tags", body)
 		self.assertNotIn("placement_rules", body)
 		self.assertNotIn("is_termination_protected", body)
+		self.assertNotIn("is_privileged", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
 		self.assertNotIn("public_ipv4", body)
@@ -80,10 +81,12 @@ class UnitTestAtlasClient(UnitTestCase):
 				public_key="ssh-ed25519 AAAA",
 				hostname="OSC-0001-proxy-0001",
 				has_public_ipv4=True,
+				is_privileged=True,
 			)
 
 		body = request.call_args.kwargs["json"]
 		self.assertEqual(body["public_ipv4"], "auto")
+		self.assertTrue(body["is_privileged"])
 		self.assertTrue(body["ipv4_internet_access"])
 
 	def test_create_sends_tags_and_placement_rules(self):

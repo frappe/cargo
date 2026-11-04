@@ -189,6 +189,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			placement_rules=placement_rules,
 			is_termination_protected=True,
 			has_public_ipv4=role == GATEWAY,
+			is_privileged=role == GATEWAY,
 		)
 
 		self.append("machines", {"machine": machine.name, "role": role})
