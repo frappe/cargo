@@ -490,7 +490,7 @@ def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> 
 			continue
 
 		try:
-			install_order = get_install_order(release, site_image.frappe_version)
+			get_install_order(release, site_image.frappe_version)
 		except frappe.ValidationError:
 			# A requirement has no compatible release yet, so the app cannot be installed.
 			continue
@@ -503,8 +503,7 @@ def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> 
 			"signup_app": signup_app,
 			"app_commit": release.commit,
 		}
-		if not has_prebuilt_assets(image, install_order):
-			continue
+
 		if name := start_image(image):
 			started.append(name)
 
