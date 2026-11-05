@@ -303,7 +303,9 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 		self.assertEqual(report["region"], SETTINGS["region"])
 		self.assertEqual(report["service"], "telemetry")
 		self.assertEqual(report["status"], "Available")
-		self.assertEqual(report["service_endpoint"], f"https://telemetry-svc.{SETTINGS['wildcard_domain']}")
+		self.assertEqual(
+			report["service_endpoint"], f"http://internal-telemetry-svc.{SETTINGS['wildcard_domain']}"
+		)
 
 	def test_the_delivery_names_cargo_as_its_sender(self):
 		"""Central serves one endpoint for every plane, and routes on this header."""
