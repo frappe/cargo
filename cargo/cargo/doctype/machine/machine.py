@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING, Literal
 
 import frappe
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 MachineStatus = Literal["Draft", "Pending", "Running", "Stopped", "Paused", "Broken", "Terminated"]
 DEAD_MACHINE_STATES = ("Broken", "Terminated")
 POWER_ACTIONS = ("start", "stop", "pause", "resume", "restart")
+FirewallRule = dict[str, str | list[str]]
 
 
 class Machine(Document):
@@ -318,6 +320,22 @@ class Machine(Document):
 			)
 
 		self.db_set("is_termination_protected", enabled)
+
+	@property
+	def tenant_network(self) -> str:
+		"""The /64 around this machine's mesh address, which holds the region's tenant-0 VMs."""
+		return str(ipaddress.IPv6Network(f"{self.address}/64", strict=False))
+
+	def set_firewall(self, inbound: list[FirewallRule], outbound: list[FirewallRule]) -> None:
+		"""Replace this VM's whole Atlas firewall. Atlas answers before Metal applies it."""
+		from cargo.atlas_client import AtlasClient
+
+		try:
+			AtlasClient.from_settings().set_vm_firewall(
+				self.vm_id, {"enabled": True, "inbound": inbound, "outbound": outbound}
+			)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not set this machine's firewall: {0}").format(str(exception)))
 
 	@frappe.whitelist()
 	def grow_disk(self, disk_gb: int) -> None:
