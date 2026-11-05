@@ -1,6 +1,6 @@
 import shlex
 from types import SimpleNamespace
-from unittest.mock import PropertyMock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import frappe
 import requests
@@ -8,14 +8,6 @@ from frappe.tests import UnitTestCase
 
 from cargo.atlas_client import AtlasError
 from cargo.caddy import PROBE_ATTEMPTS, Caddy, answers
-
-MACHINE = SimpleNamespace(
-	vm_id="vm-7",
-	address="fdaa:1::7",
-	public_ipv4="203.0.113.7",
-	get_password=lambda _fieldname: "private-key",
-)
-
 
 ENVIRONMENT = {
 	"WILDCARD_DOMAIN": "example.test",
@@ -27,11 +19,22 @@ ENVIRONMENT = {
 
 class SiteCaddy(Caddy):
 	caddyfile = ("object_storage", "conf", "caddy", "Caddyfile")
-	machine = MACHINE
 	domains = ("s3-svc.example.test", "s3-admin-svc.example.test")
 
 	def __init__(self, environment: dict[str, str] | None = None) -> None:
 		self.variables = environment or ENVIRONMENT
+		self.node = SimpleNamespace(
+			vm_id="vm-7",
+			address="fdaa:1::7",
+			tenant_network="fdaa:1::/64",
+			public_ipv4="203.0.113.7",
+			get_password=lambda _fieldname: "private-key",
+			set_firewall=Mock(),
+		)
+
+	@property
+	def machine(self) -> SimpleNamespace:
+		return self.node
 
 	@property
 	def environment(self) -> dict[str, str]:
@@ -74,33 +77,35 @@ class UnitTestCaddy(UnitTestCase):
 		run.assert_called_once()
 
 	def test_install_admits_the_web_and_tenant_zero_vms_first(self):
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
-			atlas.from_settings.return_value.set_vm_firewall.side_effect = lambda *_: run.assert_not_called()
-			SiteCaddy().install()
+		caddy = SiteCaddy()
+		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
+			caddy.machine.set_firewall.side_effect = lambda **_: run.assert_not_called()
+			caddy.install()
 
-		vm_id, firewall = atlas.from_settings.return_value.set_vm_firewall.call_args.args
-		self.assertEqual(vm_id, "vm-7")
-		self.assertTrue(firewall["enabled"])
+		firewall = caddy.machine.set_firewall.call_args.kwargs
 		self.assertIn({"protocol": "any", "cidrs": ["fdaa:1::/64"]}, firewall["inbound"])
 		self.assertIn(
 			{"protocol": "tcp", "ports": "443", "cidrs": ["0.0.0.0/0", "::/0"]}, firewall["inbound"]
 		)
+		self.assertEqual(firewall["outbound"], [{"protocol": "any", "cidrs": ["0.0.0.0/0", "::/0"]}])
 
 	def test_a_caddyfile_that_cannot_render_changes_nothing_in_atlas(self):
+		caddy = SiteCaddy({"WILDCARD_DOMAIN": "example.test"})
 		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
 			with self.assertRaises(KeyError):
-				SiteCaddy({"WILDCARD_DOMAIN": "example.test"}).install()
+				caddy.install()
 
-		atlas.from_settings.return_value.set_vm_firewall.assert_not_called()
+		caddy.machine.set_firewall.assert_not_called()
 		atlas.from_settings.return_value.set_dns_record.assert_not_called()
 		run.assert_not_called()
 
 	def test_updating_dns_publishes_without_installing(self):
+		caddy = SiteCaddy()
 		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
-			SiteCaddy().update_dns_records()
+			caddy.update_dns_records()
 
 		self.assertEqual(atlas.from_settings.return_value.set_dns_record.call_count, 4)
-		atlas.from_settings.return_value.set_vm_firewall.assert_not_called()
+		caddy.machine.set_firewall.assert_not_called()
 		run.assert_not_called()
 
 	def test_atlas_refusing_a_dns_update_says_why(self):

@@ -241,6 +241,27 @@ class IntegrationTestMachine(IntegrationTestCase):
 
 		atlas.from_settings.return_value.set_power_state.assert_not_called()
 
+	def test_a_firewall_sends_the_rules_it_is_given(self):
+		inbound = [{"protocol": "tcp", "ports": "443", "cidrs": ["0.0.0.0/0", "::/0"]}]
+		outbound = [{"protocol": "any", "cidrs": ["0.0.0.0/0", "::/0"]}]
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			self.machine.set_firewall(inbound=inbound, outbound=outbound)
+
+		atlas.from_settings.return_value.set_vm_firewall.assert_called_once_with(
+			self.machine.vm_id, {"enabled": True, "inbound": inbound, "outbound": outbound}
+		)
+
+	def test_a_firewall_atlas_refuses_says_why(self):
+		with patch("cargo.atlas_client.AtlasClient") as atlas:
+			atlas.from_settings.return_value.set_vm_firewall.side_effect = AtlasError("409 vm_busy")
+			with self.assertRaisesRegex(frappe.ValidationError, "vm_busy"):
+				self.machine.set_firewall(inbound=[], outbound=[])
+
+	def test_the_tenant_network_is_the_64_around_the_mesh_address(self):
+		self.machine.address = MESH_ADDRESS
+
+		self.assertEqual(self.machine.tenant_network, "fdaa:1:0:7::/64")
+
 	def test_attaching_a_public_ip_asks_atlas_and_waits_for_the_sync(self):
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			self.machine.attach_public_ip("IPv4")

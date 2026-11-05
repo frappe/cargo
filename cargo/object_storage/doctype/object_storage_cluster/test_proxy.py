@@ -72,7 +72,11 @@ class IntegrationTestProxy(IntegrationTestCase):
 			self.proxy().environment
 
 	def test_the_caddyfile_runs_on_the_gateway(self):
-		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
+		with (
+			patch("cargo.caddy.AtlasClient"),
+			patch("cargo.atlas_client.AtlasClient"),
+			patch("cargo.caddy.run_over_ssh") as run,
+		):
 			self.proxy().install()
 
 		address, sent = run.call_args.args[:2]
@@ -100,6 +104,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 
 		with (
 			patch("cargo.caddy.AtlasClient") as atlas,
+			patch("cargo.atlas_client.AtlasClient"),
 			self.assertRaisesRegex(frappe.ValidationError, "is Setting Up"),
 		):
 			self.proxy().install()
