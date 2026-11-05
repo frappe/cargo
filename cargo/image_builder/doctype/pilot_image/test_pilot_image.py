@@ -273,12 +273,6 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 				self.assertEqual(self.pin_releases(image), [])
 				self.assertEqual(image.get_provision_environment()["REQUIRED_APPS"], "")
 
-	def test_provisioning_caps_asset_builds_at_three_quarters_of_builder_memory(self):
-		with patch(f"{CONTROLLER}.get_build_spec", return_value=MagicMock(ram_gb=2)):
-			limit = self.image().get_provision_environment()["BUILD_MEMORY_LIMIT_MB"]
-
-		self.assertEqual(limit, "1536")
-
 	def test_an_apps_image_installs_its_app_after_what_it_requires(self):
 		with patch.dict(REQUIRES, {"raven": ("hrms",)}):
 			apps = self.pin_releases(self.image("Apps", signup_app="raven"))

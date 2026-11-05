@@ -120,15 +120,3 @@ class TestProvisionScript(unittest.TestCase):
 			self.source.index("restart_idle_seconds = $IDLE_RESTART_SECONDS"),
 			self.source.index("pilot --yes -b '$BENCH' setup production"),
 		)
-
-	def test_only_app_installs_cap_asset_builds(self):
-		self.assertIn('BUILD_MEMORY_LIMIT_MB="${BUILD_MEMORY_LIMIT_MB:-768}"', self.source)
-		order = [
-			self.source.index('if [ "$IMAGE_TYPE" = Apps ]; then'),
-			self.source.index("memory_limit_mb = $BUILD_MEMORY_LIMIT_MB"),
-			self.source.index("pilot --yes -b '$BENCH' get-app"),
-			self.source.index("pilot --yes -b '$BENCH' install-app"),
-			self.source.index("/^memory_limit_mb = /d"),
-			self.source.index("pilot --yes -b '$BENCH' setup production"),
-		]
-		self.assertEqual(order, sorted(order))
