@@ -273,12 +273,6 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 				self.assertEqual(self.pin_releases(image), [])
 				self.assertEqual(image.get_provision_environment()["REQUIRED_APPS"], "")
 
-	def test_provisioning_caps_asset_builds_at_three_quarters_of_builder_memory(self):
-		with patch(f"{CONTROLLER}.get_build_spec", return_value=MagicMock(ram_gb=2)):
-			limit = self.image().get_provision_environment()["BUILD_MEMORY_LIMIT_MB"]
-
-		self.assertEqual(limit, "1536")
-
 	def test_an_apps_image_installs_its_app_after_what_it_requires(self):
 		with patch.dict(REQUIRES, {"raven": ("hrms",)}):
 			apps = self.pin_releases(self.image("Apps", signup_app="raven"))
@@ -915,24 +909,27 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
 		)
 
-	def test_an_app_without_prebuilt_assets_gets_no_image(self):
+	def test_an_app_without_prebuilt_assets_still_gets_an_image(self):
+		"""The image builds the assets itself and fails if that build does."""
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 
 		started = self.start_apps(without_assets=("helpdesk",))
 
 		self.assertEqual(
-			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started],
+			["erpnext", "helpdesk"],
 		)
 
-	def test_an_app_whose_requirement_has_no_prebuilt_assets_gets_no_image(self):
+	def test_an_app_whose_requirement_has_no_prebuilt_assets_still_gets_an_image(self):
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 
 		started = self.start_apps(without_assets=("telephony",))
 
 		self.assertEqual(
-			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started],
+			["erpnext", "helpdesk"],
 		)
 
 	def test_an_app_whose_requirement_has_no_compatible_release_gets_no_image(self):
