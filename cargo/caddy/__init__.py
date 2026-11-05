@@ -11,7 +11,7 @@ import frappe
 import requests
 from frappe import _
 
-from cargo.atlas_client import AtlasClient
+from cargo.atlas_client import AtlasClient, AtlasError
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 
 if typing.TYPE_CHECKING:
@@ -85,6 +85,14 @@ class Caddy:
 		for domain in self.domains:
 			client.set_dns_record(domain, machine.public_ipv4)
 			client.set_dns_record(f"internal-{domain}", machine.address)
+
+	def update_dns_records(self) -> None:
+		"""Publish DNS without a full setup, for an operator whose records drifted or whose
+		machine got a new address."""
+		try:
+			self.publish_dns(self.machine)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not update the DNS records: {0}").format(str(exception)))
 
 	def render(self) -> str:
 		"""The Caddyfile for this service. A variable the template names and the environment

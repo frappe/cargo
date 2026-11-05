@@ -9,6 +9,7 @@ frappe.ui.form.on("Datum Server", {
 		add_machine_button(frm);
 		add_setup_button(frm);
 		add_update_button(frm);
+		add_dns_button(frm);
 		add_reset_attempts_button(frm);
 		add_password_buttons(frm);
 		set_headline(frm);
@@ -143,6 +144,23 @@ function add_update_button(frm) {
 				}),
 			__("Update Datum"),
 			__("Update")
+		);
+	});
+}
+
+// Setup publishes DNS too; this is for records that drifted without a full setup.
+function add_dns_button(frm) {
+	if (!frm.doc.machine || frm.doc.status === "Draft" || is_running(frm)) return;
+
+	frm.add_custom_button(__("Update DNS Records"), () => {
+		frappe.confirm(
+			__(
+				"Point telemetry-svc and telemetry-read-svc and their internal- names at the datum host again?"
+			),
+			() =>
+				frm.call("update_dns_records").then(() =>
+					frappe.show_alert({ message: __("DNS records updated."), indicator: "green" })
+				)
 		);
 	});
 }

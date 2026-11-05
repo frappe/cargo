@@ -2,9 +2,11 @@ import shlex
 from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
+import frappe
 import requests
 from frappe.tests import UnitTestCase
 
+from cargo.atlas_client import AtlasError
 from cargo.caddy import PROBE_ATTEMPTS, Caddy, answers
 
 MACHINE = SimpleNamespace(
@@ -92,6 +94,20 @@ class UnitTestCaddy(UnitTestCase):
 		atlas.from_settings.return_value.set_vm_firewall.assert_not_called()
 		atlas.from_settings.return_value.set_dns_record.assert_not_called()
 		run.assert_not_called()
+
+	def test_updating_dns_publishes_without_installing(self):
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			SiteCaddy().update_dns_records()
+
+		self.assertEqual(atlas.from_settings.return_value.set_dns_record.call_count, 4)
+		atlas.from_settings.return_value.set_vm_firewall.assert_not_called()
+		run.assert_not_called()
+
+	def test_atlas_refusing_a_dns_update_says_why(self):
+		with patch("cargo.caddy.AtlasClient") as atlas:
+			atlas.from_settings.return_value.set_dns_record.side_effect = AtlasError("409 zone_locked")
+			with self.assertRaisesRegex(frappe.ValidationError, "zone_locked"):
+				SiteCaddy().update_dns_records()
 
 	def test_install_sends_the_rendered_caddyfile_to_the_machine(self):
 		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:

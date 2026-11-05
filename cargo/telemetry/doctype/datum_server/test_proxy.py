@@ -78,6 +78,26 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 
 		run.assert_not_called()
 
+	def test_the_server_points_its_names_at_the_datum_host_again(self):
+		domain = SETTINGS["wildcard_domain"]
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			frappe.get_single("Datum Server").update_dns_records()
+
+		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
+		self.assertIn((f"telemetry-svc.{domain}", "203.0.113.20"), published)
+		self.assertIn((f"internal-telemetry-read-svc.{domain}", "fdaa:1::9"), published)
+		run.assert_not_called()
+
+	def test_only_a_writer_can_update_the_dns_records(self):
+		server = frappe.get_single("Datum Server")
+		frappe.set_user("Guest")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		with patch("cargo.caddy.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
+			server.update_dns_records()
+
+		atlas.from_settings.assert_not_called()
+
 	def probe(self, datum: Mock | None, clickhouse: Mock | None) -> bool:
 		domain = SETTINGS["wildcard_domain"]
 		replies = {

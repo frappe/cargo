@@ -106,6 +106,26 @@ class IntegrationTestProxy(IntegrationTestCase):
 
 		atlas.from_settings.return_value.set_dns_record.assert_not_called()
 
+	def test_the_cluster_points_its_names_at_the_gateway_again(self):
+		domain = SETTINGS["wildcard_domain"]
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			frappe.get_doc("Object Storage Cluster", self.cluster.name).update_dns_records()
+
+		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
+		self.assertIn((f"s3-svc.{domain}", PUBLIC_IPV4), published)
+		self.assertIn((f"internal-s3-admin-svc.{domain}", GATEWAY_ADDRESS), published)
+		run.assert_not_called()
+
+	def test_only_a_writer_can_update_the_dns_records(self):
+		cluster = frappe.get_doc("Object Storage Cluster", self.cluster.name)
+		frappe.set_user("Guest")
+		self.addCleanup(frappe.set_user, "Administrator")
+
+		with patch("cargo.caddy.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
+			cluster.update_dns_records()
+
+		atlas.from_settings.assert_not_called()
+
 	def test_a_stopped_gateway_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "status", "Stopped")
 

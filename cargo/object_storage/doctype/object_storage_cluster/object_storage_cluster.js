@@ -113,7 +113,21 @@ function add_cluster_buttons(frm) {
 	if (frm.doc.status === "Draft") return;
 
 	add_release_button(frm);
+	add_dns_button(frm);
 	if (frm.doc.activated_on) add_restore_metadata_button(frm);
+}
+
+// Setup publishes DNS too; this is for records that drifted without a full setup.
+function add_dns_button(frm) {
+	frm.add_custom_button(__("Update DNS Records"), () => {
+		frappe.confirm(
+			__("Point s3-svc and s3-admin-svc and their internal- names at the gateway again?"),
+			() =>
+				frm.call("update_dns_records").then(() =>
+					frappe.show_alert({ message: __("DNS records updated."), indicator: "green" })
+				)
+		);
+	});
 }
 
 // Manual and rare: the snapshot is typed in, and the dialog asks for the name of whatever

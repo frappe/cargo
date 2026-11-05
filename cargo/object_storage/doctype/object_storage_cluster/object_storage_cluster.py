@@ -392,6 +392,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return True
 
 	@frappe.whitelist()
+	def update_dns_records(self) -> None:
+		"""Point the S3 names at the gateway again."""
+		self.check_permission("write")
+		self.proxy.update_dns_records()
+
+	@frappe.whitelist()
 	def reveal_admin_token(self) -> str:
 		"""The garage admin token"""
 		frappe.only_for("System Manager")

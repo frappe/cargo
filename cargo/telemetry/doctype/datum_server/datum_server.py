@@ -166,6 +166,12 @@ class DatumServer(WorkflowBuilder):
 		self.db_set("auto_setup_attempts", 0)
 
 	@frappe.whitelist()
+	def update_dns_records(self) -> None:
+		"""Point the telemetry names at the datum host again."""
+		self.check_permission("write")
+		self.proxy.update_dns_records()
+
+	@frappe.whitelist()
 	def reveal_password(self, fieldname: str) -> str:
 		"""One of the ClickHouse user passwords the install wrote."""
 		frappe.only_for("System Manager")

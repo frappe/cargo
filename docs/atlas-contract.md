@@ -129,7 +129,7 @@ These two machines are created with `is_privileged: true`, so tenant VMs can rea
 
 ## Naming a service — `PUT /dns-records/{name}`
 
-Send `{"address": "..."}`. Atlas picks an A or AAAA record from the address and sets a 300 second TTL. Cargo sends it on every setup, so it must be safe to call twice.
+Send `{"address": "..."}`. Atlas picks an A or AAAA record from the address and sets a 300 second TTL. Cargo sends it on every setup and when an operator selects **Update DNS Records**, so it must be safe to call twice.
 
 For each service domain, such as `s3-svc.<wildcard-domain>`, Cargo points the name at the machine's public IPv4, and `internal-<name>` at its mesh address. Cargo sends these calls after the Caddyfile renders and the firewall is set, and before it installs Caddy.
 
