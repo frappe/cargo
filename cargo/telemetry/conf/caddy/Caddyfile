@@ -4,6 +4,12 @@ telemetry-svc.${WILDCARD_DOMAIN} {
 	reverse_proxy ${DATUM_UPSTREAM}
 }
 
+# Pilots write over the WireGuard mesh, which Atlas routes for internal- names. The explicit
+# http:// keeps Caddy from redirecting to HTTPS, which would send the write over the internet.
+http://internal-telemetry-svc.${WILDCARD_DOMAIN} {
+	reverse_proxy ${DATUM_UPSTREAM}
+}
+
 telemetry-read-svc.${WILDCARD_DOMAIN} {
 	# A query always carries SQL, in ?query= or a POST body, so a bare GET or HEAD of / is
 	# ClickHouse's landing page.
