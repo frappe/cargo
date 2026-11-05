@@ -13,6 +13,7 @@ if typing.TYPE_CHECKING:
 
 API_PREFIX = "/api/atlas"
 AUTO_PUBLIC_IP = "auto"
+ANYWHERE = ["0.0.0.0/0", "::/0"]
 IPVersion = Literal["IPv4", "IPv6"]
 RUNNING_STATE = "running"
 STOPPED_STATE = "stopped"
