@@ -159,7 +159,10 @@ function add_dns_button(frm) {
 			),
 			() =>
 				frm.call("update_dns_records").then(() =>
-					frappe.show_alert({ message: __("DNS records updated."), indicator: "green" })
+					frappe.show_alert({
+						message: __("DNS records updated."),
+						indicator: "green",
+					})
 				)
 		);
 	});

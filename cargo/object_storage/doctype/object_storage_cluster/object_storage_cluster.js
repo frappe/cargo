@@ -124,7 +124,10 @@ function add_dns_button(frm) {
 			__("Point s3-svc and s3-admin-svc and their internal- names at the gateway again?"),
 			() =>
 				frm.call("update_dns_records").then(() =>
-					frappe.show_alert({ message: __("DNS records updated."), indicator: "green" })
+					frappe.show_alert({
+						message: __("DNS records updated."),
+						indicator: "green",
+					})
 				)
 		);
 	});
