@@ -84,6 +84,15 @@ class UnitTestCaddy(UnitTestCase):
 			{"protocol": "tcp", "ports": "443", "cidrs": ["0.0.0.0/0", "::/0"]}, firewall["inbound"]
 		)
 
+	def test_a_caddyfile_that_cannot_render_changes_nothing_in_atlas(self):
+		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+			with self.assertRaises(KeyError):
+				SiteCaddy({"WILDCARD_DOMAIN": "example.test"}).install()
+
+		atlas.from_settings.return_value.set_vm_firewall.assert_not_called()
+		atlas.from_settings.return_value.set_dns_record.assert_not_called()
+		run.assert_not_called()
+
 	def test_install_sends_the_rendered_caddyfile_to_the_machine(self):
 		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
 			SiteCaddy().install()

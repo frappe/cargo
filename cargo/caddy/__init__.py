@@ -47,14 +47,16 @@ class Caddy:
 		raise NotImplementedError
 
 	def install(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Apply the firewall, publish DNS, install Caddy and write the Caddyfile. Safe to repeat:
-		certificates are kept."""
+		"""Render the Caddyfile, apply the firewall, publish DNS, then install Caddy. Rendering
+		goes first so a bad template changes nothing outside Cargo. Safe to repeat: certificates
+		are kept."""
 		machine = self.machine
+		caddyfile = self.render()
 		self.apply_firewall(machine)
 		self.publish_dns(machine)
 		run_over_ssh(
 			machine.address,
-			script(*INSTALL_SCRIPT, environment={"CADDYFILE": self.render()}),
+			script(*INSTALL_SCRIPT, environment={"CADDYFILE": caddyfile}),
 			machine.get_password("ssh_private_key"),
 			timeout=SSH_TIMEOUT,
 			on_output=on_output,
