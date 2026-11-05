@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import time
 import typing
 from collections.abc import Callable
@@ -10,6 +11,7 @@ import frappe
 import requests
 from frappe import _
 
+from cargo.atlas_client import AtlasClient, AtlasError
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 
 if typing.TYPE_CHECKING:
@@ -19,16 +21,21 @@ INSTALL_SCRIPT = ("caddy", "install.sh")
 PROBE_TIMEOUT_SECONDS = 10
 PROBE_ATTEMPTS = 6
 PROBE_INTERVAL_SECONDS = 10
+ANYWHERE = ["0.0.0.0/0", "::/0"]
 
 
 class Caddy:
-	"""Caddy on a service's public machine. A subclass names the machine, the Caddyfile
-	template, what fills it in, and how to tell the service answers."""
+	"""Caddy on a service's public machine. A subclass names the machine, its domains, the
+	Caddyfile template, what fills it in, and how to tell the service answers."""
 
 	caddyfile: tuple[str, ...]
 
 	@property
 	def machine(self) -> Machine:
+		raise NotImplementedError
+
+	@property
+	def domains(self) -> tuple[str, ...]:
 		raise NotImplementedError
 
 	@property
@@ -40,15 +47,52 @@ class Caddy:
 		raise NotImplementedError
 
 	def install(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Install Caddy and write the Caddyfile. Safe to repeat: certificates are kept."""
+		"""Render the Caddyfile, apply the firewall, publish DNS, then install Caddy. Rendering
+		goes first so a bad template changes nothing outside Cargo. Safe to repeat: certificates
+		are kept."""
 		machine = self.machine
+		caddyfile = self.render()
+		self.apply_firewall(machine)
+		self.publish_dns(machine)
 		run_over_ssh(
 			machine.address,
-			script(*INSTALL_SCRIPT, environment={"CADDYFILE": self.render()}),
+			script(*INSTALL_SCRIPT, environment={"CADDYFILE": caddyfile}),
 			machine.get_password("ssh_private_key"),
 			timeout=SSH_TIMEOUT,
 			on_output=on_output,
 		)
+
+	def apply_firewall(self, machine: Machine) -> None:
+		"""Admit HTTP, HTTPS and ICMP from anywhere, and everything from tenant-0 VMs in the region,
+		as Atlas does for its proxy. Atlas reaches SSH through the host."""
+		tenant_network = ipaddress.IPv6Network(f"{machine.address}/64", strict=False)
+		firewall = {
+			"enabled": True,
+			"inbound": [
+				{"protocol": "any", "cidrs": [str(tenant_network)]},
+				{"protocol": "icmp", "cidrs": ANYWHERE},
+				{"protocol": "tcp", "ports": "80", "cidrs": ANYWHERE},
+				{"protocol": "tcp", "ports": "443", "cidrs": ANYWHERE},
+			],
+			"outbound": [{"protocol": "any", "cidrs": ANYWHERE}],
+		}
+		AtlasClient.from_settings().set_vm_firewall(machine.vm_id, firewall)
+
+	def publish_dns(self, machine: Machine) -> None:
+		"""Point each domain at the public IPv4 for Let's Encrypt and the internet, and its
+		`internal-` name at the mesh address for tenant VMs."""
+		client = AtlasClient.from_settings()
+		for domain in self.domains:
+			client.set_dns_record(domain, machine.public_ipv4)
+			client.set_dns_record(f"internal-{domain}", machine.address)
+
+	def update_dns_records(self) -> None:
+		"""Publish DNS without a full setup, for an operator whose records drifted or whose
+		machine got a new address."""
+		try:
+			self.publish_dns(self.machine)
+		except AtlasError as exception:
+			frappe.throw(_("Atlas would not update the DNS records: {0}").format(str(exception)))
 
 	def render(self) -> str:
 		"""The Caddyfile for this service. A variable the template names and the environment

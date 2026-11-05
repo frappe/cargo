@@ -190,6 +190,14 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 		protected = [call.kwargs["is_termination_protected"] for call in client.create_vm.call_args_list]
 		self.assertEqual(protected, [True] * (1 + CONFIG["storage_node_count"]))
 
+	def test_only_the_gateway_is_privileged(self):
+		client = self.atlas()
+		with self.configured():
+			ensure_cluster()
+
+		privileged = [call.kwargs["is_privileged"] for call in client.create_vm.call_args_list]
+		self.assertEqual(privileged, [True] + [False] * CONFIG["storage_node_count"])
+
 	def test_each_node_boots_from_the_image_atlas_serves_now(self):
 		client = self.atlas()
 		images = [f"img-{number}" for number in range(10)]

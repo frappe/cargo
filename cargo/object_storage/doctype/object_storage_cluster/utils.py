@@ -37,7 +37,7 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""Throw unless every machine is Running and storage nodes cover the replication factor."""
-	ensure_no_other_active_cluster(cluster)
+	ensure_no_other_cluster_serving_or_setting_up(cluster)
 	ensure_no_running_workflow(cluster)
 
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
@@ -234,6 +234,19 @@ def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:
 	)
 	if active_cluster:
 		frappe.throw(_("Object Storage Cluster {0} is already Active.").format(active_cluster))
+
+
+def ensure_no_other_cluster_serving_or_setting_up(cluster: ObjectStorageCluster) -> None:
+	"""Setup points the regional DNS records at its gateway, so it needs every other cluster idle.
+	The setup job checks again before it publishes, so two racing setups both fail instead."""
+	other_cluster = frappe.db.get_value(
+		"Object Storage Cluster",
+		{"status": ("in", ("Active", "Setting Up")), "name": ("!=", cluster.name)},
+		["name", "status"],
+		as_dict=True,
+	)
+	if other_cluster:
+		frappe.throw(_("Object Storage Cluster {0} is {1}.").format(other_cluster.name, other_cluster.status))
 
 
 def webhook_name_for(cluster: str) -> str:

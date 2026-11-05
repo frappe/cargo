@@ -152,6 +152,7 @@ class DatumServer(WorkflowBuilder):
 			base_image=base_image_id(),
 			is_termination_protected=True,
 			has_public_ipv4=True,
+			is_privileged=True,
 		)
 		self.machine = machine.name
 		self.save()
@@ -163,6 +164,12 @@ class DatumServer(WorkflowBuilder):
 		"""Give the spawner its setup attempts back, so it tries again by itself."""
 		self.check_permission("write")
 		self.db_set("auto_setup_attempts", 0)
+
+	@frappe.whitelist()
+	def update_dns_records(self) -> None:
+		"""Point the telemetry names at the datum host again."""
+		self.check_permission("write")
+		self.proxy.update_dns_records()
 
 	@frappe.whitelist()
 	def reveal_password(self, fieldname: str) -> str:
@@ -358,9 +365,9 @@ class DatumServer(WorkflowBuilder):
 		public_ipv4 = frappe.db.get_value("Machine", self.machine, "public_ipv4")
 		self.mark(
 			"Failed",
-			_("{0} does not answer over HTTPS. Point DNS for {1} at {2}, then set up again.").format(
-				self.service_endpoint, ", ".join(self.proxy_domains), public_ipv4
-			),
+			_(
+				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
+			).format(self.service_endpoint, ", ".join(self.proxy_domains), public_ipv4),
 		)
 		return False
 

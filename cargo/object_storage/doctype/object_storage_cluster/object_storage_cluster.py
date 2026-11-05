@@ -189,6 +189,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			placement_rules=placement_rules,
 			is_termination_protected=True,
 			has_public_ipv4=role == GATEWAY,
+			is_privileged=role == GATEWAY,
 		)
 
 		self.append("machines", {"machine": machine.name, "role": role})
@@ -347,9 +348,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 		self.mark_cluster_status(
 			"Failed",
-			_("{0} does not answer over HTTPS. Point DNS for {1} at {2}, then set up again.").format(
-				self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4
-			),
+			_(
+				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
+			).format(self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4),
 		)
 		return False
 
@@ -389,6 +390,12 @@ class ObjectStorageCluster(WorkflowBuilder):
 			return False
 
 		return True
+
+	@frappe.whitelist()
+	def update_dns_records(self) -> None:
+		"""Point the S3 names at the gateway again."""
+		self.check_permission("write")
+		self.proxy.update_dns_records()
 
 	@frappe.whitelist()
 	def reveal_admin_token(self) -> str:

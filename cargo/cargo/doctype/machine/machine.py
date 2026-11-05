@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Literal
 
 import frappe
 from frappe import _
@@ -81,6 +81,7 @@ class Machine(Document):
 		placement_rules: list[PlacementRule] | None = None,
 		is_termination_protected: bool = False,
 		has_public_ipv4: bool = False,
+		is_privileged: bool = False,
 	) -> Machine:
 		"""Record a machine and ask Atlas to build it, returning the row. Throws with the
 		row rolled back, so nothing is left claiming a VM that was never made."""
@@ -103,7 +104,12 @@ class Machine(Document):
 		).insert(ignore_permissions=True)
 
 		machine.vm_id = machine.build(
-			spec, base_image, tags=tags, placement_rules=placement_rules, has_public_ipv4=has_public_ipv4
+			spec,
+			base_image,
+			tags=tags,
+			placement_rules=placement_rules,
+			has_public_ipv4=has_public_ipv4,
+			is_privileged=is_privileged,
 		)
 		machine.record("Pending")
 		return machine
@@ -115,6 +121,7 @@ class Machine(Document):
 		tags: dict[str, str] | None = None,
 		placement_rules: list[PlacementRule] | None = None,
 		has_public_ipv4: bool = False,
+		is_privileged: bool = False,
 	) -> str:
 		"""Ask Atlas to build this machine, and return the id it goes by."""
 		from cargo.atlas_client import AtlasClient
@@ -133,6 +140,7 @@ class Machine(Document):
 				placement_rules=placement_rules,
 				is_termination_protected=bool(self.is_termination_protected),
 				has_public_ipv4=has_public_ipv4,
+				is_privileged=is_privileged,
 			)
 		except Exception:
 			frappe.log_error(
@@ -277,8 +285,6 @@ class Machine(Document):
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
-		if version not in get_args(IPVersion):
-			frappe.throw(_("Unknown IP version {0}.").format(version))
 
 		try:
 			AtlasClient.from_settings().attach_public_ip(self.vm_id, version, public_ip or AUTO_PUBLIC_IP)
@@ -291,8 +297,6 @@ class Machine(Document):
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
-		if version not in get_args(IPVersion):
-			frappe.throw(_("Unknown IP version {0}.").format(version))
 
 		try:
 			AtlasClient.from_settings().detach_public_ip(self.vm_id, version)

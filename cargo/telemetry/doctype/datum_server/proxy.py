@@ -33,6 +33,10 @@ class Proxy(Caddy):
 		return require_public(machine, _("datum host"))
 
 	@property
+	def domains(self) -> tuple[str, ...]:
+		return self.server.proxy_domains
+
+	@property
 	def environment(self) -> dict[str, str]:
 		return {
 			"WILDCARD_DOMAIN": self.server.wildcard_domain,

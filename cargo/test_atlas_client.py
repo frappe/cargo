@@ -64,6 +64,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertNotIn("tags", body)
 		self.assertNotIn("placement_rules", body)
 		self.assertNotIn("is_termination_protected", body)
+		self.assertNotIn("is_privileged", body)
 		# No public address is asked for: machines are reached over the mesh.
 		self.assertNotIn("ip_address_id", body)
 		self.assertNotIn("public_ipv4", body)
@@ -80,10 +81,12 @@ class UnitTestAtlasClient(UnitTestCase):
 				public_key="ssh-ed25519 AAAA",
 				hostname="OSC-0001-proxy-0001",
 				has_public_ipv4=True,
+				is_privileged=True,
 			)
 
 		body = request.call_args.kwargs["json"]
 		self.assertEqual(body["public_ipv4"], "auto")
+		self.assertTrue(body["is_privileged"])
 		self.assertTrue(body["ipv4_internet_access"])
 
 	def test_create_sends_tags_and_placement_rules(self):
@@ -173,6 +176,14 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(
 			request.call_args.kwargs["json"], {"metadata": {"role": "storage", "datum-credential": "token"}}
 		)
+
+	def test_a_dns_record_is_put_by_name(self):
+		with self.call(response(204)) as request:
+			self.client.set_dns_record("internal-s3-svc.example.test", "fdaa:1::7")
+
+		self.assertEqual(request.call_args.args[0], "PUT")
+		self.assertTrue(request.call_args.args[1].endswith("/dns-records/internal-s3-svc.example.test"))
+		self.assertEqual(request.call_args.kwargs["json"], {"address": "fdaa:1::7"})
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.call(response(201, {})), self.assertRaises(AtlasError):

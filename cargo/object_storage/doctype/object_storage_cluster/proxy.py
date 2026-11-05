@@ -8,6 +8,9 @@ from frappe import _
 
 from cargo.atlas_client import host_port
 from cargo.caddy import Caddy, answers, require_public
+from cargo.object_storage.doctype.object_storage_cluster.utils import (
+	ensure_no_other_cluster_serving_or_setting_up,
+)
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -31,6 +34,14 @@ class Proxy(Caddy):
 	@property
 	def machine(self) -> Machine:
 		return require_public(self.cluster.gateway_node, _("gateway"))
+
+	@property
+	def domains(self) -> tuple[str, ...]:
+		return self.cluster.proxy_domains
+
+	def publish_dns(self, machine: Machine) -> None:
+		ensure_no_other_cluster_serving_or_setting_up(self.cluster)
+		super().publish_dns(machine)
 
 	@property
 	def environment(self) -> dict[str, str]:
