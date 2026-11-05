@@ -4,6 +4,7 @@
 from unittest.mock import Mock, patch
 
 import frappe
+from frappe.exceptions import FrappeTypeError
 from frappe.tests import IntegrationTestCase
 from frappe.utils import get_datetime
 
@@ -265,12 +266,13 @@ class IntegrationTestMachine(IntegrationTestCase):
 		atlas.from_settings.return_value.detach_public_ip.assert_called_once_with(self.machine.vm_id, "IPv4")
 
 	def test_an_unknown_ip_version_is_refused(self):
+		"""`frappe.whitelist` checks the `IPVersion` literal before the method runs."""
 		with patch("cargo.atlas_client.AtlasClient") as atlas:
 			for call in (
 				lambda: self.machine.attach_public_ip("IPv5"),
 				lambda: self.machine.detach_public_ip("4"),
 			):
-				with self.assertRaisesRegex(frappe.ValidationError, "Unknown IP version"):
+				with self.assertRaises(FrappeTypeError):
 					call()
 
 		atlas.from_settings.assert_not_called()

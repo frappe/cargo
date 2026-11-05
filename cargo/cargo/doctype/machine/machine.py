@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Literal
 
 import frappe
 from frappe import _
@@ -285,8 +285,6 @@ class Machine(Document):
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
-		if version not in get_args(IPVersion):
-			frappe.throw(_("Unknown IP version {0}.").format(version))
 
 		try:
 			AtlasClient.from_settings().attach_public_ip(self.vm_id, version, public_ip or AUTO_PUBLIC_IP)
@@ -299,8 +297,6 @@ class Machine(Document):
 		from cargo.atlas_client import AtlasClient
 
 		self.check_permission("write")
-		if version not in get_args(IPVersion):
-			frappe.throw(_("Unknown IP version {0}.").format(version))
 
 		try:
 			AtlasClient.from_settings().detach_public_ip(self.vm_id, version)
