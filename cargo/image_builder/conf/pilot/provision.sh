@@ -35,6 +35,7 @@ VM_SWAP_SIZE="${VM_SWAP_SIZE:-1G}"
 PROBE_ATTEMPTS="${PROBE_ATTEMPTS:-30}"
 PROBE_DELAY="${PROBE_DELAY:-5}"
 IDLE_RESTART_SECONDS="${IDLE_RESTART_SECONDS:-900}"
+BUILD_MEMORY_LIMIT_MB="${BUILD_MEMORY_LIMIT_MB:-768}"
 # One `app repo branch commit` line per app, in install order: what an app requires comes first.
 REQUIRED_APPS="${REQUIRED_APPS:-}"
 
@@ -212,6 +213,8 @@ if [ "$IMAGE_TYPE" = Site ]; then
 fi
 
 if [ "$IMAGE_TYPE" = Apps ]; then
+	# Size from the declared builder capacity, not transient free RAM after services start.
+	as_bench_user "printf '\n[build]\nmemory_limit_mb = $BUILD_MEMORY_LIMIT_MB\n' >> '$BENCH_PATH/bench.toml'"
 	apps=()
 	# The branch lets Pilot download the assets the app's CI built for the commit.
 	while read -r app repo branch commit; do
@@ -219,6 +222,13 @@ if [ "$IMAGE_TYPE" = Apps ]; then
 		apps+=("$app")
 	done <<< "$REQUIRED_APPS"
 	as_bench_user "pilot --yes -b '$BENCH' install-app '$SITE' ${apps[*]}"
+
+	# A VM booted from the image sizes its builds from its own free memory.
+	as_bench_user "sed -i '/^\[build\]$/,/^\[/ {/^\[build\]$/d; /^memory_limit_mb = /d}' '$BENCH_PATH/bench.toml'"
+	if as_bench_user "grep -q '^memory_limit_mb = ' '$BENCH_PATH/bench.toml'"; then
+		echo "bench.toml still caps asset builds" >&2
+		exit 1
+	fi
 fi
 
 # Atlas captures the warm image five minutes after boot. A lite mode idle restart at that time

@@ -24,6 +24,7 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	PROVISION_TIMEOUT,
 	SSH_READY_TIMEOUT,
 	Builder,
+	get_build_spec,
 )
 from cargo.image_builder.doctype.pilot_image.releases import (
 	FRAPPE_REPO,
@@ -305,6 +306,7 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		"""What provision.sh reads. The bench, site and admin domain are the same for every
 		image, so the script names those itself."""
 		proxy_subnet = f"fdaa:{int(self.build_settings.region_id or 0):x}::/64"
+		build_memory_limit_mb = get_build_spec().ram_gb * 1024 * 3 // 4
 		domain_provider = (
 			script(*DOMAIN_PROVIDER)
 			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.build_settings.wildcard_domain}"))
@@ -319,6 +321,7 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 			"PROXY_SUBNET": proxy_subnet,
 			"DOMAIN_PROVIDER": domain_provider,
 			"IMAGE_TYPE": self.image_type,
+			"BUILD_MEMORY_LIMIT_MB": str(build_memory_limit_mb),
 			"REQUIRED_APPS": "\n".join(
 				f"{app.app} {app.repo} {app.branch} {app.commit}" for app in self.apps
 			),
