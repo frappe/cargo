@@ -909,24 +909,27 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
 		)
 
-	def test_an_app_without_prebuilt_assets_gets_no_image(self):
+	def test_an_app_without_prebuilt_assets_still_gets_an_image(self):
+		"""The image builds the assets itself and fails if that build does."""
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 
 		started = self.start_apps(without_assets=("helpdesk",))
 
 		self.assertEqual(
-			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started],
+			["erpnext", "helpdesk"],
 		)
 
-	def test_an_app_whose_requirement_has_no_prebuilt_assets_gets_no_image(self):
+	def test_an_app_whose_requirement_has_no_prebuilt_assets_still_gets_an_image(self):
 		set_signup_apps(("erpnext", "helpdesk"))
 		self.completed_site()
 
 		started = self.start_apps(without_assets=("telephony",))
 
 		self.assertEqual(
-			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started],
+			["erpnext", "helpdesk"],
 		)
 
 	def test_an_app_whose_requirement_has_no_compatible_release_gets_no_image(self):
