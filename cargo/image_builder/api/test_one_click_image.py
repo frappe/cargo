@@ -22,7 +22,7 @@ ports:
 inputs:
   - {name: domain, label: Domain, type: domain, required: false}
   - {name: admin_email, label: Admin email, type: email, required: true}
-  - {name: admin_password, label: Admin password, type: password, generate: true}
+  - {name: admin_password, label: Admin password, type: password}
 build: {files: []}
 """
 
