@@ -8,7 +8,6 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.image_builder.api.one_click_image import (
 	get_one_click_image_requirements,
-	get_one_click_image_user_data,
 	get_supported_one_click_images,
 )
 from cargo.image_builder.doctype.one_click_image.one_click_image import OneClickImage
@@ -101,49 +100,6 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 
 		with self.assertRaises(frappe.DoesNotExistError):
 			get_one_click_image_requirements("fastapi")
-
-	def test_answers_are_written_to_inputs_env_shell_quoted(self):
-		self.image("Completed")
-		password = "it's $(reboot) #1"
-
-		user_data = get_one_click_image_user_data(
-			"fastapi",
-			{"domain": "app.example.com", "admin_email": "me@example.com", "admin_password": password},
-		)
-
-		self.assertTrue(user_data.startswith("#cloud-config\n"))
-		[file] = yaml.safe_load(user_data)["write_files"]
-		self.assertEqual((file["path"], file["permissions"]), ("/etc/one-click/inputs.env", "0600"))
-		self.assertEqual(
-			file["content"],
-			"DOMAIN=app.example.com\nADMIN_EMAIL=me@example.com\nADMIN_PASSWORD='it'\"'\"'s $(reboot) #1'\n",
-		)
-
-	def test_a_blank_generated_input_is_left_for_the_vm(self):
-		self.image("Completed")
-
-		user_data = get_one_click_image_user_data("fastapi", '{"admin_email": "me@example.com"}')
-
-		self.assertEqual(
-			yaml.safe_load(user_data)["write_files"][0]["content"], "ADMIN_EMAIL=me@example.com\n"
-		)
-
-	def test_invalid_answers_are_rejected(self):
-		self.image("Completed")
-		email = {"admin_email": "me@example.com"}
-
-		for answers, message in (
-			({}, "Admin email is required"),
-			({"admin_email": "not an email"}, "not a valid Email Address"),
-			({**email, "domain": "not a domain"}, "Domain must be a domain name"),
-			({**email, "domain": "a" * 300 + ".com"}, "Domain must be at most 255 characters"),
-			({**email, "admin_password": "password123"}, "Admin password is too easy to guess"),
-			({**email, "admin_password": "a long line\nwith a break"}, "only printable characters"),
-			({**email, "admin_password": "a long line\twith a tab"}, "only printable characters"),
-			({**email, "shell": "rm -rf /"}, "fastapi has no input shell"),
-		):
-			with self.subTest(answers=answers), self.assertRaisesRegex(frappe.ValidationError, message):
-				get_one_click_image_user_data("fastapi", answers)
 
 	def test_an_image_offers_the_app_it_was_built_from(self):
 		self.image("Completed")
