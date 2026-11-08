@@ -6,6 +6,7 @@ import frappe
 from frappe import _
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.development import is_mesh_only_enabled
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 
 if typing.TYPE_CHECKING:
@@ -63,7 +64,7 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 
 def ensure_gateway_is_public(cluster: ObjectStorageCluster) -> None:
 	"""Refuse setup before it changes anything, so a live gateway without one stays Active."""
-	if not cluster.gateway_node.public_ipv4:
+	if not is_mesh_only_enabled() and not cluster.gateway_node.public_ipv4:
 		frappe.throw(
 			_("Gateway {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
 				cluster.gateway_node.name

@@ -37,3 +37,21 @@ class UnitTestDevelopment(UnitTestCase):
 		):
 			Setup.install_metrics_exporter(None, {})
 			run.assert_not_called()
+
+	def test_mesh_gateway_can_enter_setup_without_public_allocation(self):
+		from types import SimpleNamespace
+
+		from cargo.object_storage.doctype.object_storage_cluster.utils import ensure_gateway_is_public
+
+		cluster = SimpleNamespace(gateway_node=SimpleNamespace(name="gateway", public_ipv4=None))
+		with patch(
+			"cargo.object_storage.doctype.object_storage_cluster.utils.is_mesh_only_enabled",
+			return_value=True,
+		):
+			ensure_gateway_is_public(cluster)
+		with patch(
+			"cargo.object_storage.doctype.object_storage_cluster.utils.is_mesh_only_enabled",
+			return_value=False,
+		):
+			with self.assertRaises(frappe.ValidationError):
+				ensure_gateway_is_public(cluster)
