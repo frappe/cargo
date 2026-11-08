@@ -7,6 +7,7 @@ import frappe
 import requests
 
 from cargo.client_models import PlacementRule
+from cargo.development import is_mesh_only_enabled
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -131,14 +132,20 @@ class AtlasClient:
 			"metadata": metadata or {},
 			"ipv4_internet_access": True,
 		}
+		mesh_only = is_mesh_only_enabled()
+		if mesh_only:
+			rules = frappe.conf.get("dev_cargo_placement_rules")
+			if not rules:
+				frappe.throw("Mesh-only Cargo requires explicit host placement rules.")
+			payload["placement_rules"] = rules + [rule.asdict() for rule in placement_rules or []]
 		# Sent only when set: an Atlas without affinity rules rejects unknown fields.
 		if tags:
 			payload["tags"] = tags
-		if placement_rules:
+		if placement_rules and not mesh_only:
 			payload["placement_rules"] = [rule.asdict() for rule in placement_rules]
 		if is_termination_protected:
 			payload["is_termination_protected"] = True
-		if has_public_ipv4:
+		if has_public_ipv4 and not mesh_only:
 			payload["public_ipv4"] = AUTO_PUBLIC_IP
 		# Lets tenant VMs reach the service over the mesh. Atlas allows it only for tenant 0.
 		if is_privileged:

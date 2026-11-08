@@ -14,6 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
+from cargo.development import is_mesh_only_enabled
 from cargo.object_storage.doctype.object_storage_cluster.proxy import PROXY_SITE_NAMES, S3_SITE_NAME, Proxy
 from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT, Setup
 from cargo.object_storage.doctype.object_storage_cluster.utils import (
@@ -188,7 +189,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			tags=tags,
 			placement_rules=placement_rules,
 			is_termination_protected=True,
-			has_public_ipv4=role == GATEWAY,
+			has_public_ipv4=role == GATEWAY and not is_mesh_only_enabled(),
 			is_privileged=role == GATEWAY,
 		)
 

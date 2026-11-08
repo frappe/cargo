@@ -10,6 +10,7 @@ from frappe.utils.file_lock import LockTimeoutError
 
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.client_models import TELEMETRY
+from cargo.development import is_telemetry_disabled
 from cargo.spawn import (
 	has_required_settings,
 	machine_status,
@@ -36,6 +37,9 @@ def ensure_telemetry() -> None:
 	"""Give this region one datum host and keep it moving.
 
 	Off until `default_telemetry_config` is in site config. Scheduled in `hooks.py`."""
+	if is_telemetry_disabled():
+		return
+
 	config = spawn_config(CONFIG_KEY, validate_config)
 	if not config or not has_required_settings():
 		return

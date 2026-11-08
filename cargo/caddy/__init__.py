@@ -11,6 +11,7 @@ import requests
 from frappe import _
 
 from cargo.atlas_client import ANYWHERE, AtlasClient, AtlasError
+from cargo.development import is_mesh_only_enabled
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 
 if typing.TYPE_CHECKING:
@@ -73,7 +74,7 @@ class Caddy:
 		`internal-` name at the mesh address for tenant VMs."""
 		client = AtlasClient.from_settings()
 		for domain in self.domains:
-			client.set_dns_record(domain, machine.public_ipv4)
+			client.set_dns_record(domain, machine.address if is_mesh_only_enabled() else machine.public_ipv4)
 			client.set_dns_record(f"internal-{domain}", machine.address)
 
 	def update_dns_records(self) -> None:
@@ -87,7 +88,12 @@ class Caddy:
 	def render(self) -> str:
 		"""The Caddyfile for this service. A variable the template names and the environment
 		lacks raises, rather than writing a site with a hole in it."""
-		return Template(self.caddyfile_path.read_text()).substitute(self.environment)
+		content = Template(self.caddyfile_path.read_text()).substitute(self.environment)
+		if is_mesh_only_enabled():
+			content = "{\n\tauto_https disable_redirects\n}\n" + content
+			for domain in self.domains:
+				content = content.replace(domain + " {", domain + " {\n\ttls internal")
+		return content
 
 	@property
 	def caddyfile_path(self) -> Path:
@@ -110,7 +116,7 @@ def require_public(machine: Machine | None, label: str) -> Machine:
 	if not machine or machine.status != "Running":
 		frappe.throw(_("The {0} is not running.").format(label))
 
-	if not machine.public_ipv4:
+	if not is_mesh_only_enabled() and not machine.public_ipv4:
 		frappe.throw(_("The {0} ({1}) has no public IPv4 address yet.").format(label, machine.name))
 
 	return machine

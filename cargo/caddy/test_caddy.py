@@ -154,3 +154,18 @@ class UnitTestCaddy(UnitTestCase):
 		for error in (requests.ConnectionError("no route"), requests.exceptions.SSLError("self-signed")):
 			with self.subTest(error=type(error).__name__), patch("requests.request", side_effect=error):
 				self.assertIsNone(answers("https://example.test/health"))
+
+
+class UnitTestMeshCaddy(UnitTestCase):
+	def test_mesh_uses_local_tls_and_mesh_dns(self):
+		with (
+			patch("cargo.caddy.is_mesh_only_enabled", return_value=True),
+			patch("cargo.caddy.AtlasClient") as atlas,
+		):
+			caddy = SiteCaddy()
+			content = caddy.render()
+			self.assertEqual(content.count("tls internal"), 2)
+			self.assertIn("auto_https disable_redirects", content)
+			caddy.publish_dns(caddy.node)
+			for request in atlas.from_settings.return_value.set_dns_record.call_args_list:
+				self.assertEqual(request.args[1], caddy.node.address)

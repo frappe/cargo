@@ -94,3 +94,9 @@ Run the object storage tests:
 ```bash
 bench --site <site> run-tests --module cargo.object_storage.test_spawn
 ```
+
+## Mesh-only development
+
+Set `dev_mesh_only_proxy` only on a developer site with a `.test` wildcard domain. Set `dev_cargo_placement_rules` to explicit Atlas host-affinity rules. Cargo omits public IPv4 requests and adds these rules to every machine request. Gateway DNS uses mesh AAAA addresses. Caddy uses its local CA, without ACME. Distribute the gateway public CA and Static DNS to its clients before health checks or storage requests.
+
+Set `dev_cargo_disable_telemetry` to omit Datum provisioning and Garage metrics exporters. This requires the mesh-only development setting. Keep `pause_scheduler` enabled and execute individual storage operations when working on an isolated development host.

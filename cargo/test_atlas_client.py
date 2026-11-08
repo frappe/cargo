@@ -3,6 +3,7 @@
 
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from cargo.atlas_client import (
@@ -310,3 +311,25 @@ class UnitTestErrorMessage(UnitTestCase):
 
 	def test_an_empty_body_still_says_something(self):
 		self.assertEqual(error_message(None, ""), "unknown error")
+
+
+class UnitTestMeshClient(UnitTestCase):
+	def test_public_request_is_omitted_and_placement_preserved(self):
+		rules = [{"resource": "metal_server", "operator": "has", "tags": {"lab": "owned"}}]
+		with (
+			patch("cargo.atlas_client.is_mesh_only_enabled", return_value=True),
+			patch.dict(frappe.conf, {"dev_cargo_placement_rules": rules}),
+			patch.object(AtlasClient, "call", return_value={"id": "vm-1"}) as request,
+		):
+			AtlasClient("https://atlas.test", "token", 0).create_vm(
+				image_id="image",
+				cpu_millicores=1000,
+				memory_mib=1024,
+				disk_mib=4096,
+				public_key="ssh-ed25519 test",
+				hostname="gateway",
+				has_public_ipv4=True,
+			)
+			payload = request.call_args.args[2]
+			self.assertNotIn("public_ipv4", payload)
+			self.assertEqual(payload["placement_rules"], rules)

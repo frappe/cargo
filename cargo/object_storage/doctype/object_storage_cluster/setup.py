@@ -16,6 +16,7 @@ from frappe.utils.password import get_decrypted_password
 from cargo.atlas_client import AtlasClient, host_port
 from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.development import is_telemetry_disabled
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 from cargo.telemetry.vector import datum_refresh_script, install_script
@@ -198,6 +199,9 @@ class Setup(Client):
 	) -> None:
 		"""Install Vector and the timer that fetches the node's own Datum token. Safe to repeat.
 		Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
+		if is_telemetry_disabled():
+			return
+
 		garage_metrics = {
 			"GARAGE_ADMIN_ADDRESS": host_port(machine["address"], self.cluster.admin_port),
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
