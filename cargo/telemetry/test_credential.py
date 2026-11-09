@@ -48,7 +48,7 @@ class UnitTestRenewDatumToken(UnitTestCase):
 	def test_an_expiring_token_is_replaced_by_one_from_central(self):
 		generate, get, write = self.renew(datum_token(expires_in=60 * 60))
 
-		generate.assert_called_once_with("cargo", "blr")
+		generate.assert_called_once_with("cargo", "blr-cargo-server")
 		self.assertEqual(
 			get.call_args.args[0], "https://central.test/api/method/central.api.cargo.datum_token"
 		)

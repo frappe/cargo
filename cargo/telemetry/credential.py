@@ -72,12 +72,12 @@ def is_token_expiring(token: str) -> bool:
 
 def get_datum_token() -> str:
 	"""Trade a machine token this Cargo signs for its own host at Central for a Datum token.
-	The machine is the region, so the host's rows keep their `cargo:<region>` resource."""
+	One Cargo runs per region, so `cargo:<region>-cargo-server` names this host alone."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 	response = requests.get(
 		f"{settings.central_url.rstrip('/')}/api/method/central.api.cargo.datum_token",
 		headers={
-			"X-Cargo-Machine-Token": generate_machine_token("cargo", settings.region),
+			"X-Cargo-Machine-Token": generate_machine_token("cargo", f"{settings.region}-cargo-server"),
 			"Accept": "application/json",
 		},
 		timeout=(5, 30),
