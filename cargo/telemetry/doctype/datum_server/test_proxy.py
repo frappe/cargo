@@ -57,6 +57,7 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		domain = SETTINGS["wildcard_domain"]
 
 		self.assertIn(f"telemetry-svc.{domain} {{", rendered)
+		self.assertIn(f"http://internal-telemetry-svc.{domain} {{", rendered)
 		self.assertIn(f"telemetry-read-svc.{domain} {{", rendered)
 		self.assertIn("@allowed path / /ping", rendered)
 		self.assertIn("not query query=*", rendered)

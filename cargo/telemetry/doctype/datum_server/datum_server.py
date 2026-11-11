@@ -14,7 +14,7 @@ from frappe.utils import cint
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.auth import generate_machine_token
 from cargo.caddy import require_public
-from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
+from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
 from cargo.telemetry.doctype.datum_server.proxy import (
@@ -136,8 +136,6 @@ class DatumServer(WorkflowBuilder):
 	@frappe.whitelist()
 	def create_telemetry_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> str:
 		"""Add a telemetry node requesting from atlas."""
-		from cargo.cargo.doctype.machine.machine import Machine
-
 		if self.machine:
 			frappe.throw(_("This host already has a machine."), frappe.ValidationError)
 
@@ -188,7 +186,6 @@ class DatumServer(WorkflowBuilder):
 		anything changes when the host cannot take public traffic yet."""
 		machine = frappe.get_doc("Machine", self.machine) if self.machine else None
 		require_public(machine, _("datum host"))
-
 		self.setup_log = None
 		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Setting Up")
@@ -197,8 +194,6 @@ class DatumServer(WorkflowBuilder):
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def start_setup_on_machine(self) -> bool:
 		"""Install datum on the machine. Streams to `setup_log` as it runs."""
-		from cargo.cargo.doctype.machine.machine import Machine
-
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -238,8 +233,6 @@ class DatumServer(WorkflowBuilder):
 
 	def install_metrics_exporter(self, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install Vector on the host and the timer that fetches its own Datum token. Safe to repeat."""
-		from cargo.cargo.doctype.machine.machine import Machine
-
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		key = machine.get_password("ssh_private_key")
@@ -277,8 +270,6 @@ class DatumServer(WorkflowBuilder):
 	def update_on_machine(self, branch: str, commit: str) -> bool:
 		"""Pull datum to `commit`, or the newest of `branch`, and restart it. Streams to
 		`setup_log` as it runs."""
-		from cargo.cargo.doctype.machine.machine import Machine
-
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -307,8 +298,6 @@ class DatumServer(WorkflowBuilder):
 	@task
 	def get_datum_commit(self) -> str:
 		"""The commit datum runs at now."""
-		from cargo.cargo.doctype.machine.machine import Machine
-
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		return run_over_ssh(
 			machine.address,
@@ -367,7 +356,7 @@ class DatumServer(WorkflowBuilder):
 			"Failed",
 			_(
 				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
-			).format(self.service_endpoint, ", ".join(self.proxy_domains), public_ipv4),
+			).format(f"https://{self.proxy_domains[0]}", ", ".join(self.proxy_domains), public_ipv4),
 		)
 		return False
 
@@ -388,8 +377,9 @@ class DatumServer(WorkflowBuilder):
 
 	@property
 	def service_endpoint(self) -> str:
-		"""The URL pilots ship metrics and logs to, served by Caddy on this host."""
-		return f"https://{TELEMETRY_WRITE_SITE_NAME}.{self.wildcard_domain}"
+		"""The URL pilots ship metrics and logs to. Plain HTTP over the WireGuard mesh, which
+		Atlas routes for `internal-` names, so it never crosses the public internet."""
+		return f"http://internal-{TELEMETRY_WRITE_SITE_NAME}.{self.wildcard_domain}"
 
 	@flow
 	def _setup(self) -> None:
