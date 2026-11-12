@@ -41,6 +41,7 @@ def use_test_settings() -> None:
 
 	set_frappe_branches(FRAPPE_BRANCHES)
 	set_signup_apps(SIGNUP_APPS)
+	set_compliance_apps({})
 	frappe.clear_document_cache("Cargo Settings", "Cargo Settings")
 
 
@@ -50,6 +51,23 @@ def set_frappe_branches(branches: tuple[str, ...]) -> None:
 
 def set_signup_apps(apps: tuple[str, ...]) -> None:
 	set_settings_rows("signup_apps", "Signup App", "app", apps)
+
+
+def set_compliance_apps(compliance_apps: dict[str, str]) -> None:
+	"""Replace the compliance apps of each signup app, given as a comma separated list."""
+	frappe.db.delete("Compliance App", {"parenttype": "Cargo Settings", "parentfield": "compliance_apps"})
+	for index, (signup_app, apps) in enumerate(compliance_apps.items(), start=1):
+		frappe.get_doc(
+			{
+				"doctype": "Compliance App",
+				"parent": "Cargo Settings",
+				"parenttype": "Cargo Settings",
+				"parentfield": "compliance_apps",
+				"idx": index,
+				"signup_app": signup_app,
+				"compliance_apps": apps,
+			}
+		).db_insert()
 
 
 def set_settings_rows(parentfield: str, doctype: str, column: str, values: tuple[str, ...]) -> None:

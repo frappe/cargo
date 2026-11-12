@@ -12,8 +12,8 @@ from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, base_image_id
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.pilot_image.apps import (
+	get_apps_image_install_order,
 	get_assets_url,
-	get_install_order,
 	get_latest_compatible_release,
 	get_release_at,
 	get_signup_apps,
@@ -248,7 +248,7 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		self.apps = []
 		if self.image_type == "Apps":
 			release = get_release_at(self.signup_app, self.app_commit)
-			for app in get_install_order(release, self.frappe_version):
+			for app in get_apps_image_install_order(release, self.frappe_version):
 				self.append(
 					"apps",
 					{
@@ -490,9 +490,9 @@ def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> 
 			continue
 
 		try:
-			get_install_order(release, site_image.frappe_version)
+			get_apps_image_install_order(release, site_image.frappe_version)
 		except frappe.ValidationError:
-			# A requirement has no compatible release yet, so the app cannot be installed.
+			# A requirement or compliance app has no compatible release yet, so the app cannot be installed.
 			continue
 
 		image = {
@@ -632,7 +632,7 @@ def get_older_builds_images(frappe_branch: str) -> list[str]:
 
 
 def get_older_apps_images(frappe_branch: str) -> list[str]:
-	"""The finished Apps images of each signup app older than its three newest completed ones.
+	"""The finished Apps images of each signup app older than its newest completed one.
 	Every Apps image is a full disk, so retiring the Site image it booted on leaves it working."""
 	older_images = []
 	for signup_app in get_signup_apps():
@@ -642,14 +642,14 @@ def get_older_apps_images(frappe_branch: str) -> list[str]:
 			filters={**filters, "status": "Completed"},
 			pluck="creation",
 			order_by="creation desc",
-			limit=3,
+			limit=1,
 		)
-		if len(kept) < 3:
+		if not kept:
 			continue
 
 		older_images += frappe.get_all(
 			"Pilot Image",
-			filters={**filters, "status": ("in", ("Completed", "Failed")), "creation": ("<", kept[-1])},
+			filters={**filters, "status": ("in", ("Completed", "Failed")), "creation": ("<", kept[0])},
 			pluck="name",
 		)
 

@@ -18,7 +18,13 @@ from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	start_base_images,
 	start_site_images,
 )
-from cargo.testing import SETTINGS, set_frappe_branches, set_signup_apps, use_test_settings
+from cargo.testing import (
+	SETTINGS,
+	set_compliance_apps,
+	set_frappe_branches,
+	set_signup_apps,
+	use_test_settings,
+)
 from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
@@ -297,6 +303,18 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.pin_releases(image)
 
 		self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
+
+	def test_an_apps_image_installs_the_compliance_apps_of_its_signup_app(self):
+		set_compliance_apps({"helpdesk": "ksa_compliance, hrms", "erpnext": "india_compliance"})
+
+		apps = self.pin_releases(self.image("Apps", signup_app="helpdesk"))
+
+		self.assertEqual(apps, ["telephony", "helpdesk", "ksa_compliance", "erpnext", "hrms"])
+
+	def test_a_compliance_app_already_installed_is_not_pinned_again(self):
+		set_compliance_apps({"hrms": "erpnext"})
+
+		self.assertEqual(self.pin_releases(self.image("Apps", signup_app="hrms")), ["erpnext", "hrms"])
 
 	def test_a_deadlocked_pin_is_pinned_again(self):
 		image = self.image("Apps", signup_app="hrms")
@@ -942,6 +960,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
 		)
 
+	def test_an_app_whose_compliance_app_has_no_compatible_release_gets_no_image(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		set_compliance_apps({"helpdesk": "ksa_compliance"})
+		self.completed_site()
+
+		started = self.start_apps({"ksa_compliance": None})
+
+		self.assertEqual(
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
 	def test_assets_are_looked_up_on_the_release_of_their_branch(self):
 		commit = frappe.generate_hash(length=40)
 		hotfix = AppRelease(
@@ -1031,16 +1060,21 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		)
 		return image
 
-	def test_each_app_keeps_its_three_newest_images(self):
+	def test_each_app_keeps_its_newest_image(self):
 		set_signup_apps(("erpnext",))
 		oldest = self.apps_release(1)
-		newer = [self.apps_release(day) for day in (2, 3, 4)]
+		newest = self.apps_release(2)
 
 		asked = self.retire_older()
 
 		self.assertIn(oldest.name, asked)
-		for image in newer:
-			self.assertNotIn(image.name, asked)
+		self.assertNotIn(newest.name, asked)
+
+	def test_an_app_with_no_completed_image_keeps_its_images(self):
+		set_signup_apps(("erpnext",))
+		failed = self.apps_release(1, status="Failed")
+
+		self.assertNotIn(failed.name, self.retire_older())
 
 	def test_retiring_an_old_build_keeps_the_apps_images_built_on_it(self):
 		"""An Apps image is a full disk, so it outlives the Site image it booted on."""
