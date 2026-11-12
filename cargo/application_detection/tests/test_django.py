@@ -46,6 +46,7 @@ class UnitTestDjango(UnitTestCase):
 		project = Django(self.root)
 		self.assertTrue(project.matches())
 		self.assertEqual(project.root_path, "src")
+		self.assertEqual(project.pre_release_command, "cd src && python manage.py migrate --noinput")
 		self.assertEqual(project.entrypoint, "config.wsgi:app")
 
 	def test_does_not_match_without_secret_key_or_dependency(self):

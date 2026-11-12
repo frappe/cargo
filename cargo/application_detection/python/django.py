@@ -21,7 +21,10 @@ class Django(PythonProject):
 
 	@cached_property
 	def settings_file(self) -> Path | None:
-		return self.project_tree.find("settings.py")
+		settings_file = self.project_tree.find("settings.py")
+		if settings_file and self.get_setting(settings_file, "SECRET_KEY"):
+			return settings_file
+		return None
 
 	@property
 	def root_path(self) -> str:
@@ -45,8 +48,8 @@ class Django(PythonProject):
 		return f"{module}:{attribute}"
 
 	@property
-	def pre_release_command(self):
-		return "python manage.py migrate"
+	def pre_release_command(self) -> str:
+		return f"cd {shlex.quote(self.root_path)} && python manage.py migrate --noinput"
 
 	@property
 	def start_command(self) -> str:

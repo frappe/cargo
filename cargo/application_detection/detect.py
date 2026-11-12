@@ -4,9 +4,10 @@ from cargo.application_detection import BaseProject
 from cargo.application_detection.exceptions import NoSupportedFrameworksFound
 from cargo.application_detection.python.django import Django
 from cargo.application_detection.python.fastapi import FastAPI
+from cargo.application_detection.python.flask import Flask
 
 # Will add more here as they come, fastapi, flask etc.
-SUPPORTED_FRAMEWORKS = {"python": [Django, FastAPI]}
+SUPPORTED_FRAMEWORKS = {"python": [Django, FastAPI, Flask]}
 DECLARED_BUILD_FILES = ("dockerfile", "frappe_cloud_deploy.toml")
 
 

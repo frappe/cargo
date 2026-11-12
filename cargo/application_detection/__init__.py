@@ -67,7 +67,7 @@ class BaseProject(ABC):
 
 	@property
 	@abstractmethod
-	def pre_release_command(self) -> str:
+	def pre_release_command(self) -> str | None:
 		raise NotImplementedError
 
 	@property
