@@ -1080,7 +1080,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		"""An Apps image is a full disk, so it outlives the Site image it booted on."""
 		oldest = self.release(1)
 		apps = self.image("Apps", "Completed", oldest.pilot_version, signup_app="erpnext")
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 
 		asked = self.retire_older()
 
@@ -1110,18 +1110,19 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		return asked
 
-	def test_only_the_newest_release_is_kept(self):
+	def test_only_the_three_newest_releases_are_kept(self):
 		oldest = self.release(1)
-		newest = self.release(2)
+		newer = [self.release(day) for day in (2, 3, 4)]
 
 		asked = self.retire_older()
 
 		self.assertIn(oldest.name, asked)
-		self.assertNotIn(newest.name, asked)
+		for image in newer:
+			self.assertNotIn(image.name, asked)
 
-	def test_each_frappe_branch_keeps_its_own_newest_build(self):
+	def test_each_frappe_branch_keeps_its_own_three_newest_builds(self):
 		oldest = self.release(1)
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 		develop = self.image("Base", "Completed", frappe_branch="develop")
 		frappe.db.set_value("Pilot Image", develop.name, "creation", "2099-01-01", update_modified=False)
 
@@ -1132,15 +1133,18 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_a_new_frappe_commit_counts_as_a_newer_build_of_the_same_release(self):
 		oldest = self.release(1)
-		image = self.image("Base", "Completed", oldest.pilot_version, frappe_commit=NEW_COMMIT)
-		frappe.db.set_value("Pilot Image", image.name, "creation", "2099-01-02", update_modified=False)
+		for day, commit in ((2, NEW_COMMIT), (3, "c" * 40), (4, "d" * 40)):
+			image = self.image("Base", "Completed", oldest.pilot_version, frappe_commit=commit)
+			frappe.db.set_value(
+				"Pilot Image", image.name, "creation", f"2099-01-{day:02d}", update_modified=False
+			)
 
 		self.assertIn(oldest.name, self.retire_older())
 
 	def test_a_newer_release_that_has_not_built_is_not_retired(self):
-		"""It is still being retried, and does not count as the newest."""
+		"""It is still being retried, and does not count as one of the three."""
 		oldest = self.release(1)
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 		unbuilt = self.release(5, status="Failed")
 
 		asked = self.retire_older()
@@ -1150,7 +1154,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_an_old_build_in_progress_is_not_retired(self):
 		building = self.release(1, status="Building")
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 
 		self.assertNotIn(building.name, self.retire_older())
 
@@ -1158,14 +1162,14 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		"""Retrying the Apps image needs that exact Site image."""
 		site = self.release(1, image_type="Site")
 		self.image("Apps", "Failed", site.pilot_version)
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 
 		self.assertNotIn(site.name, self.retire_older())
 
 	def test_an_old_site_image_is_retired_once_its_apps_images_have_built(self):
 		site = self.release(1, image_type="Site")
 		self.image("Apps", "Completed", site.pilot_version)
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 
 		self.assertIn(site.name, self.retire_older())
 
@@ -1223,7 +1227,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_an_older_release_built_again_is_still_retired(self):
 		oldest = self.release(1)
-		self.release(2)
+		[self.release(day) for day in (2, 3, 4)]
 		rebuilt = self.later_image_of(oldest, 5, "Site")
 
 		asked = self.retire_older()

@@ -593,17 +593,17 @@ def retire_older_images() -> list[str]:
 
 
 def get_older_builds_images(frappe_branch: str) -> list[str]:
-	"""The finished Base and Site images of builds older than the newest completed one."""
-	kept = get_builds(frappe_branch, completed_only=True)[:1]
-	if not kept:
+	"""The finished Base and Site images of builds older than the three newest completed ones."""
+	kept = get_builds(frappe_branch, completed_only=True)[:3]
+	if len(kept) < 3:
 		return []
 
-	# A build first seen after this has not completed and is still being retried, so only
-	# builds first seen before the kept one go, with every image they have.
-	newest_kept = kept[0].first_created
+	# A build first seen after these has not completed and is still being retried, so only
+	# builds first seen before the oldest kept one go, with every image they have.
+	oldest_kept = min(build.first_created for build in kept)
 	older_images = []
 	for build in get_builds(frappe_branch):
-		if build.first_created >= newest_kept:
+		if build.first_created >= oldest_kept:
 			continue
 
 		build_filters = {
