@@ -1,0 +1,27 @@
+FROM python:{{ python_version }}-slim
+COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /bin/uv
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 UV_SYSTEM_PYTHON=1 UV_COMPILE_BYTECODE=1
+WORKDIR /app
+{% if package_manager == "uv" %}
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+ENV PATH="/app/.venv/bin:$PATH"
+RUN uv pip install --python /app/.venv/bin/python {{ server_dependency }}
+{% elif package_manager == "poetry" %}
+COPY pyproject.toml poetry.lock ./
+RUN pip install --no-cache-dir poetry \
+	&& poetry config virtualenvs.create false \
+	&& poetry install --only main --no-root
+RUN uv pip install {{ server_dependency }}
+{% elif package_manager == "requirements" %}
+COPY requirements.txt ./
+RUN uv pip install -r requirements.txt {{ server_dependency }}
+{% else %}
+COPY pyproject.toml ./
+RUN uv pip install -r pyproject.toml {{ server_dependency }}
+{% endif %}
+COPY . .
+RUN useradd --create-home app
+USER app
+EXPOSE {{ port }}
+CMD {{ command }}

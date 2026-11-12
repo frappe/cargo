@@ -9,6 +9,7 @@ from cargo.application_detection.python import AppFind, ImportPath, PythonProjec
 class FastAPI(PythonProject):
 	dependency_name = "fastapi"
 	default_run_port = 8000
+	server_dependency = "uvicorn"
 
 	def matches(self) -> bool:
 		return self.dependency_name in self.dependencies and bool(self.fastapi_initialization)

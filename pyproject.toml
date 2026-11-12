@@ -10,6 +10,7 @@ dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
     "boto3~=1.35",  # S3 uploads: Garage's admin API moves no object bytes.
+    "poetry-core>=2",  # Parses Python version constraints in push-to-deploy detection.
 ]
 
 [build-system]

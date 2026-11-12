@@ -10,6 +10,7 @@ from cargo.application_detection.python import PythonProject
 class Django(PythonProject):
 	dependency_name = "django"
 	default_run_port = 8000
+	server_dependency = "gunicorn"
 
 	def matches(self) -> bool:
 		"""Has manage.py, a settings.py that declares SECRET_KEY and a django dependency."""

@@ -9,6 +9,7 @@ from cargo.application_detection.python import AppFind, ImportPath, PythonProjec
 class Flask(PythonProject):
 	dependency_name = "flask"
 	default_run_port = 8000
+	server_dependency = "gunicorn"
 
 	def matches(self) -> bool:
 		return self.dependency_name in self.dependencies and bool(self.flask_initialization)

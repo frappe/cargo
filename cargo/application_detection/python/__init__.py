@@ -1,16 +1,30 @@
 import ast
 import json
 import re
+import shlex
 import subprocess
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+import jinja2
+from poetry.core.constraints.version import Version, parse_constraint
 
 from cargo.application_detection import BaseProject
 from cargo.application_detection.exceptions import EntrypointNotFound
 
 REQUIREMENT_NAME_PATTERN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 IGNORED_DIRECTORIES = {"tests", "test", "docs", "examples", "scripts"}
+DEFAULT_PYTHON_VERSION = "3.12"
+SUPPORTED_PYTHON_VERSIONS = ("3.14", "3.13", "3.12", "3.11", "3.10")
+TEMPLATES = jinja2.Environment(
+	loader=jinja2.FileSystemLoader(Path(__file__).parent),
+	undefined=jinja2.StrictUndefined,
+	keep_trailing_newline=True,
+	trim_blocks=True,
+	lstrip_blocks=True,
+)
+PYTHON_VERSION_PATTERN = re.compile(r"3\.\d+(\.\d+)?")
 
 
 @dataclass
@@ -32,6 +46,8 @@ class ImportPath:
 
 
 class PythonProject(BaseProject):
+	server_dependency: str
+
 	@property
 	def dependencies(self) -> list[str]:
 		"""Package names from requirements.txt and pyproject.toml, lowercased with `-` as the separator."""
@@ -49,6 +65,52 @@ class PythonProject(BaseProject):
 	def get_requirement_names(self, requirements: list[str]) -> list[str]:
 		"""Names from PEP 508 requirement strings, skipping comments and pip options such as `-r`."""
 		return [match.group(1) for line in requirements if (match := REQUIREMENT_NAME_PATTERN.match(line))]
+
+	@property
+	def python_version(self) -> str:
+		""".python-version if it holds a plain CPython version, else the newest supported one pyproject allows."""
+		if (self.path / ".python-version").is_file():
+			version = self.project_tree.readfile(".python-version").strip()
+			if PYTHON_VERSION_PATTERN.fullmatch(version):
+				return version
+		return next(iter(self.allowed_python_versions), DEFAULT_PYTHON_VERSION)
+
+	@property
+	def allowed_python_versions(self) -> list[str]:
+		"""Supported versions inside `requires-python` or Poetry's `python` constraint, newest first."""
+		if not (self.path / "pyproject.toml").is_file():
+			return []
+		pyproject = tomllib.loads(self.project_tree.readfile("pyproject.toml"))
+		poetry_constraint = pyproject.get("tool", {}).get("poetry", {}).get("dependencies", {}).get("python")
+		requirement = pyproject.get("project", {}).get("requires-python") or poetry_constraint
+		if not isinstance(requirement, str):
+			return []
+		try:
+			constraint = parse_constraint(requirement)
+		except ValueError:
+			return []
+		return [version for version in SUPPORTED_PYTHON_VERSIONS if constraint.allows(Version.parse(version))]
+
+	@property
+	def package_manager(self) -> str:
+		if (self.path / "uv.lock").is_file():
+			return "uv"
+		if (self.path / "poetry.lock").is_file():
+			return "poetry"
+		if (self.path / "requirements.txt").is_file():
+			return "requirements"
+		return "pyproject"
+
+	@property
+	def dockerfile(self) -> str:
+		"""Dockerfile for the detected app. Secrets are not baked in; they reach the container as env at runtime."""
+		return TEMPLATES.get_template("Dockerfile.jinja").render(
+			python_version=self.python_version,
+			package_manager=self.package_manager,
+			server_dependency=self.server_dependency,
+			port=self.default_run_port,
+			command=json.dumps(shlex.split(self.start_command)),
+		)
 
 	def find_call(self, pattern: str) -> SemgrepFind | None:
 		"""Shallowest semgrep match for `pattern` outside tests and docs; `filepath` is relative to the root."""

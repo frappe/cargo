@@ -74,3 +74,8 @@ class BaseProject(ABC):
 	@abstractmethod
 	def start_command(self) -> str:
 		raise NotImplementedError
+
+	@property
+	@abstractmethod
+	def dockerfile(self) -> str:
+		raise NotImplementedError
