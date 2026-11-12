@@ -593,17 +593,17 @@ def retire_older_images() -> list[str]:
 
 
 def get_older_builds_images(frappe_branch: str) -> list[str]:
-	"""The finished Base and Site images of builds older than the three newest completed ones."""
-	kept = get_builds(frappe_branch, completed_only=True)[:3]
-	if len(kept) < 3:
+	"""The finished Base and Site images of builds older than the newest completed one."""
+	kept = get_builds(frappe_branch, completed_only=True)[:1]
+	if not kept:
 		return []
 
-	# A build first seen after these has not completed and is still being retried, so only
-	# builds first seen before the oldest kept one go, with every image they have.
-	oldest_kept = min(build.first_created for build in kept)
+	# A build first seen after this has not completed and is still being retried, so only
+	# builds first seen before the kept one go, with every image they have.
+	newest_kept = kept[0].first_created
 	older_images = []
 	for build in get_builds(frappe_branch):
-		if build.first_created >= oldest_kept:
+		if build.first_created >= newest_kept:
 			continue
 
 		build_filters = {
@@ -632,7 +632,7 @@ def get_older_builds_images(frappe_branch: str) -> list[str]:
 
 
 def get_older_apps_images(frappe_branch: str) -> list[str]:
-	"""The finished Apps images of each signup app older than its three newest completed ones.
+	"""The finished Apps images of each signup app older than its newest completed one.
 	Every Apps image is a full disk, so retiring the Site image it booted on leaves it working."""
 	older_images = []
 	for signup_app in get_signup_apps():
@@ -642,14 +642,14 @@ def get_older_apps_images(frappe_branch: str) -> list[str]:
 			filters={**filters, "status": "Completed"},
 			pluck="creation",
 			order_by="creation desc",
-			limit=3,
+			limit=1,
 		)
-		if len(kept) < 3:
+		if not kept:
 			continue
 
 		older_images += frappe.get_all(
 			"Pilot Image",
-			filters={**filters, "status": ("in", ("Completed", "Failed")), "creation": ("<", kept[-1])},
+			filters={**filters, "status": ("in", ("Completed", "Failed")), "creation": ("<", kept[0])},
 			pluck="name",
 		)
 
