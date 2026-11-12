@@ -47,3 +47,40 @@ class UnitTestFlask(UnitTestCase):
 		self.write("app.py", "from flask import Flask\napps = {'main': Flask(__name__)}\n")
 		with self.assertRaises(EntrypointNotFound):
 			Flask(self.root).start_command
+
+	def test_import_path_walks_up_through_packages(self):
+		cases = {
+			"app.py": (".", "app"),
+			"web/app.py": ("web", "app"),
+			"shop/__init__.py": (".", "shop"),
+			"app/main.py": (".", "app.main"),
+			"src/api/app/main.py": ("src", "api.app.main"),
+		}
+		for path in (*cases, "app/__init__.py", "src/api/__init__.py", "src/api/app/__init__.py"):
+			self.write(path)
+		project = Flask(self.root)
+		for path, (root, module) in cases.items():
+			import_path = project.get_import_path(Path(path))
+			self.assertEqual((str(import_path.root), import_path.module), (root, module), path)
+
+	def test_app_in_package_init(self):
+		self.write("shop/__init__.py", "from flask import Flask\napp = Flask(__name__)\n")
+		self.assertEqual(Flask(self.root).start_command, "gunicorn --chdir . 'shop:app' --bind 0.0.0.0:8000")
+
+	def test_import_path_from_imports_without_init_files(self):
+		cases = {
+			("app/main.py", "from db import x\n"): ("app", "main"),
+			("app/main.py", "from .db import x\n"): (".", "app.main"),
+			("app/main.py", "from app.db import x\n"): (".", "app.main"),
+			("app/main.py", "import app.db\n"): (".", "app.main"),
+			("src/api/app/main.py", "from api.db import x\n"): ("src", "api.app.main"),
+			("src/api/app/main.py", "from .db import x\n"): ("src/api", "app.main"),
+			("src/api/app/main.py", "from ..db import x\n"): ("src", "api.app.main"),
+			("src/api/app/main.py", "import os\nimport flask\n"): ("src/api/app", "main"),
+			("src/api/app/main.py", "def broken(:\n"): ("src/api/app", "main"),
+		}
+		project = Flask(self.root)
+		for (path, content), (root, module) in cases.items():
+			self.write(path, content)
+			import_path = project.get_import_path(Path(path))
+			self.assertEqual((str(import_path.root), import_path.module), (root, module), (path, content))

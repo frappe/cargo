@@ -3,7 +3,7 @@ from functools import cached_property
 from pathlib import Path
 
 from cargo.application_detection.exceptions import EntrypointNotFound
-from cargo.application_detection.python import AppFind, PythonProject, SemgrepFind
+from cargo.application_detection.python import AppFind, ImportPath, PythonProject, SemgrepFind
 
 
 class FastAPI(PythonProject):
@@ -25,7 +25,11 @@ class FastAPI(PythonProject):
 
 	@property
 	def root_path(self) -> str:
-		return str(self.fastapi_initialization_file.parent)
+		return str(self.import_path.root)
+
+	@cached_property
+	def import_path(self) -> ImportPath:
+		return self.get_import_path(self.fastapi_initialization_file)
 
 	@cached_property
 	def app(self) -> AppFind:
@@ -33,7 +37,7 @@ class FastAPI(PythonProject):
 
 	@property
 	def entrypoint(self) -> str:
-		return f"{self.fastapi_initialization_file.stem}:{self.app.app_name}"
+		return f"{self.import_path.module}:{self.app.app_name}"
 
 	@property
 	def pre_release_command(self) -> str | None:

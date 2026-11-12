@@ -3,7 +3,7 @@ from functools import cached_property
 from pathlib import Path
 
 from cargo.application_detection.exceptions import EntrypointNotFound
-from cargo.application_detection.python import AppFind, PythonProject, SemgrepFind
+from cargo.application_detection.python import AppFind, ImportPath, PythonProject, SemgrepFind
 
 
 class Flask(PythonProject):
@@ -25,7 +25,11 @@ class Flask(PythonProject):
 
 	@property
 	def root_path(self) -> str:
-		return str(self.flask_initialization_file.parent)
+		return str(self.import_path.root)
+
+	@cached_property
+	def import_path(self) -> ImportPath:
+		return self.get_import_path(self.flask_initialization_file)
 
 	@cached_property
 	def app(self) -> AppFind:
@@ -35,7 +39,7 @@ class Flask(PythonProject):
 	def entrypoint(self) -> str:
 		"""`module:app`, or `module:create_app()` for a factory, which both gunicorn and flask accept."""
 		call = "()" if self.app.is_factory else ""
-		return f"{self.flask_initialization_file.stem}:{self.app.app_name}{call}"
+		return f"{self.import_path.module}:{self.app.app_name}{call}"
 
 	@property
 	def pre_release_command(self) -> str | None:

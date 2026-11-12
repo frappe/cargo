@@ -25,6 +25,12 @@ class AppFind:
 	is_factory: bool  # Initiated via a function
 
 
+@dataclass
+class ImportPath:
+	root: Path
+	module: str
+
+
 class PythonProject(BaseProject):
 	@property
 	def dependencies(self) -> list[str]:
@@ -72,6 +78,37 @@ class PythonProject(BaseProject):
 		return min(
 			matches, key=lambda match: (len(match.filepath.parts), match.filepath, match.lineno), default=None
 		)
+
+	def get_import_path(self, filepath: Path) -> ImportPath:
+		"""Walk up from the file while each folder is a package, then return that folder and the module path."""
+		imported_names, relative_level = self.get_imports(filepath)
+		root = filepath.parent
+		while root.parts and (
+			(self.path / root / "__init__.py").is_file()
+			or imported_names.intersection(root.parts)
+			or len(filepath.parent.parts) - len(root.parts) < relative_level
+		):
+			root = root.parent
+		parts = filepath.relative_to(root).with_suffix("").parts
+		if parts[-1] == "__init__":
+			parts = parts[:-1]
+		return ImportPath(root, ".".join(parts))
+
+	def get_imports(self, filepath: Path) -> tuple[set[str], int]:
+		"""Top-level names the file imports, and the most dots used in a relative import."""
+		try:
+			tree = ast.parse(self.project_tree.readfile(filepath))
+		except (SyntaxError, ValueError):
+			return set(), 0
+		names, relative_level = set(), 0
+		for node in ast.walk(tree):
+			if isinstance(node, ast.Import):
+				names |= {alias.name.split(".")[0] for alias in node.names}
+			elif isinstance(node, ast.ImportFrom) and node.level:
+				relative_level = max(relative_level, node.level)
+			elif isinstance(node, ast.ImportFrom):
+				names.add(node.module.split(".")[0])
+		return names, relative_level
 
 	def get_app(self, find: SemgrepFind | None) -> AppFind:
 		"""Module-level variable or top-level function that holds the call semgrep found."""

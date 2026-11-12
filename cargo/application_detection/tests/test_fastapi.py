@@ -52,3 +52,10 @@ class UnitTestFastAPI(UnitTestCase):
 		self.write("main.py", "from fastapi import FastAPI\napps = [FastAPI()]\n")
 		with self.assertRaises(EntrypointNotFound):
 			FastAPI(self.root).entrypoint
+
+	def test_app_in_package_module(self):
+		self.write("src/api/__init__.py")
+		self.write("src/api/main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+		self.assertEqual(
+			FastAPI(self.root).start_command, "uvicorn --app-dir src api.main:app --host 0.0.0.0 --port 8000"
+		)
