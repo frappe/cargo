@@ -104,6 +104,36 @@ def get_signup_apps() -> list[str]:
 	)
 
 
+def get_compliance_apps(signup_app: str) -> list[str]:
+	"""The compliance apps Cargo Settings lists for `signup_app`."""
+	compliance_apps = frappe.db.get_value(
+		"Compliance App",
+		{"parenttype": "Cargo Settings", "parentfield": "compliance_apps", "signup_app": signup_app},
+		"compliance_apps",
+	)
+	return [app.strip() for app in (compliance_apps or "").split(",") if app.strip()]
+
+
+def get_apps_image_install_order(release: AppRelease, frappe_version: str) -> list[AppRelease]:
+	"""The install order of signup app `release`, then of each compliance app listed for it at
+	its newest compatible release."""
+	install_order = {app.name: app for app in get_install_order(release, frappe_version)}
+	for compliance_app in get_compliance_apps(release.name):
+		compliance_release = get_latest_compatible_release(compliance_app, frappe_version)
+		if not compliance_release:
+			frappe.throw(
+				_("Compliance app {0} of {1} has no compatible release for Frappe {2}.").format(
+					compliance_app, release.name, frappe_version
+				)
+			)
+
+		for app in get_install_order(compliance_release, frappe_version):
+			# Keyed by name, so an app already pinned at the signup app's commit keeps that pin.
+			install_order.setdefault(app.name, app)
+
+	return list(install_order.values())
+
+
 def get_install_order(release: AppRelease, frappe_version: str) -> list[AppRelease]:
 	"""`release` and every app it requires, each after what it requires. A requirement takes
 	its newest compatible release."""

@@ -1,6 +1,6 @@
 {
  "actions": [],
- "creation": "2026-08-28 00:00:00",
+ "creation": "2026-11-04 17:04:42.716761",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -31,6 +31,7 @@
   "last_repository_refresh",
   "signup_apps_section",
   "signup_apps",
+  "compliance_apps",
   "build_machine_spec_section",
   "build_machine_disk_gb",
   "build_machine_cpu",
@@ -97,7 +98,7 @@
    "reqd": 1
   },
   {
-   "description": "Webhook secret that central will authenticate cargo with — for events sent from a document.",
+   "description": "Webhook secret that central will authenticate cargo with \u2014\u00a0for events sent from a document.",
    "fieldname": "central_webhook_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -335,13 +336,19 @@
    "fieldtype": "Datetime",
    "label": "Last Repository Refresh",
    "read_only": 1
+  },
+  {
+   "fieldname": "compliance_apps",
+   "fieldtype": "Table",
+   "label": "Compliance Apps",
+   "options": "Compliance App"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-12 11:39:55.186397",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

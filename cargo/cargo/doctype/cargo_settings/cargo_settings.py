@@ -20,6 +20,7 @@ class CargoSettings(Document):
 
 		from cargo.cargo.doctype.frappe_branch.frappe_branch import FrappeBranch
 		from cargo.cargo.doctype.signup_app.signup_app import SignupApp
+		from cargo.image_builder.doctype.compliance_app.compliance_app import ComplianceApp
 
 		atlas_tenant_id: DF.Int
 		atlas_token: DF.Password
@@ -32,6 +33,7 @@ class CargoSettings(Document):
 		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
 		central_webhook_url: DF.Data | None
+		compliance_apps: DF.Table[ComplianceApp]
 		first_storage_disk_growth_percent: DF.Percent
 		frappe_branches: DF.Table[FrappeBranch]
 		jwks_url: DF.Data

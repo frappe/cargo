@@ -18,7 +18,13 @@ from cargo.image_builder.doctype.pilot_image.pilot_image import (
 	start_base_images,
 	start_site_images,
 )
-from cargo.testing import SETTINGS, set_frappe_branches, set_signup_apps, use_test_settings
+from cargo.testing import (
+	SETTINGS,
+	set_compliance_apps,
+	set_frappe_branches,
+	set_signup_apps,
+	use_test_settings,
+)
 from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
@@ -297,6 +303,18 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.pin_releases(image)
 
 		self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
+
+	def test_an_apps_image_installs_the_compliance_apps_of_its_signup_app(self):
+		set_compliance_apps({"helpdesk": "ksa_compliance, hrms", "erpnext": "india_compliance"})
+
+		apps = self.pin_releases(self.image("Apps", signup_app="helpdesk"))
+
+		self.assertEqual(apps, ["telephony", "helpdesk", "ksa_compliance", "erpnext", "hrms"])
+
+	def test_a_compliance_app_already_installed_is_not_pinned_again(self):
+		set_compliance_apps({"hrms": "erpnext"})
+
+		self.assertEqual(self.pin_releases(self.image("Apps", signup_app="hrms")), ["erpnext", "hrms"])
 
 	def test_a_deadlocked_pin_is_pinned_again(self):
 		image = self.image("Apps", signup_app="hrms")
@@ -937,6 +955,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		self.completed_site()
 
 		started = self.start_apps({"telephony": None})
+
+		self.assertEqual(
+			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
+		)
+
+	def test_an_app_whose_compliance_app_has_no_compatible_release_gets_no_image(self):
+		set_signup_apps(("erpnext", "helpdesk"))
+		set_compliance_apps({"helpdesk": "ksa_compliance"})
+		self.completed_site()
+
+		started = self.start_apps({"ksa_compliance": None})
 
 		self.assertEqual(
 			[frappe.db.get_value("Pilot Image", name, "signup_app") for name in started], ["erpnext"]
