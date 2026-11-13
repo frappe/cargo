@@ -40,7 +40,6 @@ class CargoSettings(Document):
 		last_repository_refresh: DF.Datetime | None
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
-		metadata_snapshot_interval_hours: DF.Float
 		one_click_repository_branch: DF.Data | None
 		one_click_repository_url: DF.Data | None
 		region: DF.Data

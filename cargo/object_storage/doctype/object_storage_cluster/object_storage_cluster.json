@@ -177,10 +177,10 @@
    "reqd": 1
   },
   {
-   "description": "When Cargo last asked every node to snapshot its metadata database. Each node keeps its two newest under snapshots/ in the metadata directory.",
+   "description": "When Cargo last uploaded a node's new metadata snapshot offsite. Garage snapshots every node on its own every 6 hours.",
    "fieldname": "last_metadata_snapshot_at",
    "fieldtype": "Datetime",
-   "label": "Last Metadata Snapshot",
+   "label": "Last Metadata Backup",
    "read_only": 1
   },
   {
@@ -315,7 +315,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-11-03 13:00:24.614681",
+ "modified": "2026-11-13 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Object Storage Cluster",

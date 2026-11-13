@@ -144,7 +144,6 @@ function add_restore_metadata_button(frm) {
 }
 
 function show_restore_metadata_dialog(frm) {
-	const cluster = frm.doc.name;
 	const machines = (frm.doc.machines || []).map((row) => row.machine);
 	const dialog = new frappe.ui.Dialog({
 		title: __("Restore Metadata Snapshot"),
@@ -153,22 +152,14 @@ function show_restore_metadata_dialog(frm) {
 				fieldname: "target",
 				fieldtype: "Select",
 				label: __("Machine"),
-				options: ["", ...machines, cluster].join("\n"),
-				description: __("Pick the cluster name to restore every machine."),
+				options: ["", ...machines].join("\n"),
 				reqd: 1,
 			},
 			{
 				fieldtype: "HTML",
-				depends_on: (doc) => doc.target && doc.target !== cluster,
+				depends_on: (doc) => doc.target,
 				options: `<p class="text-muted">${__(
 					"The machine stops, takes the snapshot as its database, starts, and catches up from the other nodes. Every other storage node must be serving."
-				)}</p>`,
-			},
-			{
-				fieldtype: "HTML",
-				depends_on: (doc) => doc.target === cluster,
-				options: `<p class="text-danger">${__(
-					"This stops the whole cluster, restores every machine back to this snapshot, and then restarts it. Objects, buckets and keys written after it are lost, objects deleted after it come back without their data, and Cargo's bucket records may no longer match Garage. S3 is down until every machine is back."
 				)}</p>`,
 			},
 			{
@@ -189,7 +180,6 @@ function show_restore_metadata_dialog(frm) {
 		],
 		primary_action_label: __("Restore"),
 		primary_action: (values) => {
-			const whole = values.target === cluster;
 			if (values.confirmation !== values.target) {
 				frappe.msgprint(__("The name typed does not match what is being restored."));
 				return;
@@ -198,7 +188,7 @@ function show_restore_metadata_dialog(frm) {
 			dialog.hide();
 			frm.call("restore_metadata_snapshot", {
 				snapshot: values.snapshot.trim(),
-				machine: whole ? null : values.target,
+				machine: values.target,
 			}).then(() => {
 				frappe.show_alert({
 					message: __("Restoring. Follow the Setup Log."),

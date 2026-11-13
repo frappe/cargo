@@ -1,7 +1,7 @@
 #!/bin/bash
-# Runs over SSH on one node. Uploads the newest metadata snapshot to the offsite bucket as NAME
-# and deletes the local copies once the upload succeeds. The bucket keys come from this
-# machine's metadata.
+# Runs over SSH on one node. Uploads one finished metadata snapshot to the offsite bucket under
+# its own name. Garage prunes the local copies itself. The bucket keys come from this machine's
+# metadata.
 set -euo pipefail
 
 : "${METADATA_DIR:?METADATA_DIR is required}"
@@ -9,10 +9,15 @@ set -euo pipefail
 : "${BACKUP_REGION:?BACKUP_REGION is required}"
 : "${BACKUP_PREFIX:?BACKUP_PREFIX is required}"
 : "${TRANSFER_TIMEOUT:?TRANSFER_TIMEOUT is required}"
-: "${NAME:?NAME is required}"
+: "${SNAPSHOT:?SNAPSHOT is required}"
 
 METADATA=http://169.254.169.254/latest
-SNAPSHOTS="$METADATA_DIR/snapshots"
+SOURCE="$METADATA_DIR/snapshots/$SNAPSHOT/db.lmdb"
+
+if [ ! -f "$SOURCE" ]; then
+	echo "$(hostname) has no snapshot $SNAPSHOT" >&2
+	exit 1
+fi
 
 session=$(curl -fsS --max-time 5 -X PUT -H "X-metadata-token-ttl-seconds: 300" "$METADATA/api/token")
 
@@ -31,17 +36,8 @@ read_attribute() {
 access_key=$(read_attribute metadata_bucket_access_key)
 secret_key=$(read_attribute metadata_bucket_secret_key)
 
-newest=$(ls -1 "$SNAPSHOTS" 2>/dev/null | sort | tail -n 1)
-if [ -z "$newest" ]; then
-	echo "$(hostname) has no snapshots to upload"
-	exit 0
-fi
-
-key="$BACKUP_PREFIX/$NAME/db.lmdb"
+key="$BACKUP_PREFIX/$SNAPSHOT/db.lmdb"
 # Keys go through a config on stdin so they never show in the process list.
 curl -fsS --max-time "$TRANSFER_TIMEOUT" --aws-sigv4 "aws:amz:$BACKUP_REGION:s3" -K - \
-	-T "$SNAPSHOTS/$newest/db.lmdb" "${BACKUP_ENDPOINT%/}/$key" <<<"user = \"$access_key:$secret_key\""
-echo "uploaded $newest as $key"
-
-rm -rf "${SNAPSHOTS:?}"/*
-echo "removed local snapshots"
+	-T "$SOURCE" "${BACKUP_ENDPOINT%/}/$key" <<<"user = \"$access_key:$secret_key\""
+echo "uploaded $SNAPSHOT as $key"

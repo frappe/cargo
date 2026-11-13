@@ -25,6 +25,8 @@ CONF = ("object_storage", "conf", "garage")
 GIGABYTE = 1000**3
 # As many as Garage keeps on a node.
 KEEP_METADATA_BACKUPS = 2
+# Each snapshot is a full compacted copy of the metadata database, so its cost grows with it.
+METADATA_SNAPSHOT_INTERVAL = "6h"
 # How long curl may move one snapshot to or from the bucket. SSH gets a little more, for the
 # MMDS key wait, and the whole stays under the long queue's job timeout.
 BACKUP_TRANSFER_TIMEOUT = 1200
@@ -170,6 +172,7 @@ class Setup(Client):
 			"RPC_SECRET": secrets["rpc_secret"],
 			"ADMIN_TOKEN": secrets["admin_token"],
 			"METRICS_TOKEN": secrets["metrics_token"],
+			"METADATA_SNAPSHOT_INTERVAL": METADATA_SNAPSHOT_INTERVAL,
 		}
 
 	def record_peers(self, machine: MachineRow, peers: list[NodeIdentifier]) -> str:
@@ -294,18 +297,27 @@ class Setup(Client):
 
 		return stale
 
-	def upload_metadata_snapshots(
-		self, machine: MachineRow, name: str, on_output: Callable[[str], None] | None = None
+	def get_newest_metadata_snapshot(self, machine: MachineRow) -> str | None:
+		"""The newest snapshot Garage has finished on this machine, if any."""
+		environment = {"METADATA_DIR": self.cluster.metadata_dir}
+		output = self.run(machine, script(*CONF, "newest_metadata_snapshot.sh", environment=environment))
+		# SSH's own warnings share the stream, so the answer is the one marked line.
+		marked = [
+			line.removeprefix("snapshot=") for line in output.splitlines() if line.startswith("snapshot=")
+		]
+		return marked[-1].strip() if marked else None
+
+	def upload_metadata_snapshot(
+		self, machine: MachineRow, snapshot: str, on_output: Callable[[str], None] | None = None
 	) -> str:
-		"""Ship the node's newest snapshot to the bucket as `name`, then delete the local copies."""
 		environment = {
 			"METADATA_DIR": self.cluster.metadata_dir,
-			"NAME": name,
+			"SNAPSHOT": snapshot,
 			**self.get_backup_environment(machine),
 		}
 		return self.run(
 			machine,
-			script(*CONF, "upload_metadata_snapshots.sh", environment=environment),
+			script(*CONF, "upload_metadata_snapshot.sh", environment=environment),
 			on_output,
 			timeout=BACKUP_SSH_TIMEOUT,
 		)

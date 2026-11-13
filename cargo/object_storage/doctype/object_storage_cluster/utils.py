@@ -92,35 +92,19 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 	return joined_machines
 
 
-def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: str | None) -> list[str]:
-	"""Validate a restore and return the machines that should receive the snapshot."""
+def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: str) -> list[str]:
+	"""Validate a restore of one machine. The whole cluster is never restored at once: it loses
+	everything written since the snapshot."""
 	frappe.only_for("System Manager")
 
 	if not cluster.is_live:
 		frappe.throw(_("Only a cluster that has served has metadata to restore."))
 
 	ensure_no_running_workflow(cluster)
-
-	if machine:
-		ensure_machines_belong(cluster, [machine])
-		ensure_peers_serve(cluster, machine)
-		machines = [machine]
-	else:
-		ensure_every_machine_runs(cluster)
-		machines = [node.name for node in cluster.all_nodes]
-
-	ensure_snapshot_is_backed_up(cluster, snapshot, machines)
-	return machines
-
-
-def ensure_every_machine_runs(cluster: ObjectStorageCluster) -> None:
-	stopped = [node.name for node in cluster.all_nodes if node.status != "Running"]
-	if stopped:
-		frappe.throw(
-			_("Every machine must be running to restore the whole cluster. Not running: {0}").format(
-				", ".join(stopped)
-			)
-		)
+	ensure_machines_belong(cluster, [machine])
+	ensure_peers_serve(cluster, machine)
+	ensure_snapshot_is_backed_up(cluster, snapshot, [machine])
+	return [machine]
 
 
 def ensure_snapshot_is_backed_up(cluster: ObjectStorageCluster, snapshot: str, machines: list[str]) -> None:

@@ -17,6 +17,7 @@ set -euo pipefail
 : "${RPC_BIND_ADDR:?RPC_BIND_ADDR is required}"
 : "${S3_BIND_ADDR:?S3_BIND_ADDR is required}"
 : "${ADMIN_BIND_ADDR:?ADMIN_BIND_ADDR is required}"
+: "${METADATA_SNAPSHOT_INTERVAL:?METADATA_SNAPSHOT_INTERVAL is required}"
 GARAGE_CONFIG="${GARAGE_CONFIG:-/etc/garage.toml}"
 
 install -d -m 700 "$METADATA_DIR" "$DATA_DIR"
@@ -38,6 +39,8 @@ cat > "$GARAGE_CONFIG" <<GARAGE_TOML
 metadata_dir = "$METADATA_DIR"
 data_dir     = "$DATA_DIR"
 db_engine    = "lmdb"
+# Garage snapshots on its own clock, offset per node, so no node waits on another's copy.
+metadata_auto_snapshot_interval = "$METADATA_SNAPSHOT_INTERVAL"
 # Images and snapshots are large and read in order; bigger blocks mean fewer RPCs per read.
 block_size   = 10485760
 
