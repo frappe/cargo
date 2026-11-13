@@ -1,4 +1,3 @@
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -7,29 +6,24 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils.password import set_encrypted_password
 
 from cargo.client_models import GATEWAY, STORAGE
-from cargo.object_storage.client import Client
 from cargo.object_storage.doctype.object_storage_cluster import test_object_storage_cluster
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
 from cargo.object_storage.doctype.object_storage_cluster.setup import (
 	BACKUP_SSH_TIMEOUT,
 	BACKUP_TRANSFER_TIMEOUT,
+	METADATA_SNAPSHOT_INTERVAL,
 	Setup,
 )
-from cargo.object_storage.metadata_snapshot import is_snapshot_due, take_metadata_snapshots
+from cargo.object_storage.metadata_snapshot import upload_metadata_snapshot, upload_metadata_snapshots
 from cargo.testing import use_test_settings
 
 SNAPSHOT = "2026-10-23T10:00:00Z"
 
 
-def run_jobs_now():
-	return patch("frappe.enqueue", side_effect=lambda method, queue, timeout, **kwargs: method(**kwargs))
+class IntegrationTestMetadataBackup(IntegrationTestCase):
+	"""Garage snapshots every node on its own clock; Cargo ships each node's newest one offsite."""
 
-
-NOW = datetime(2026, 10, 23, 12, 0, 0)
-
-
-class IntegrationTestMetadataSnapshot(IntegrationTestCase):
-	"""Every node of a live cluster snapshots its metadata on the interval Cargo Settings sets."""
+	add_machine = test_object_storage_cluster.IntegrationTestObjectStorageCluster.add_machine
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -45,94 +39,110 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 				"rpc_secret": "rpc",
 				"admin_token": "admin",
 				"metrics_token": "metrics",
+				"metadata_backup_endpoint": "https://s3.example.com/bucket",
+				"metadata_bucket_access_key": "GK123",
 			}
 		).insert()
 		self.vm_ids: dict[str, str] = {}
 		self.gateway = self.add_machine(GATEWAY)
 		self.storage = [self.add_machine(STORAGE) for _ in range(3)]
 		self.cluster.db_set({"status": "Active", "activated_on": frappe.utils.now_datetime()})
+		set_encrypted_password(
+			self.cluster.doctype, self.cluster.name, "s3cr3t-value", "metadata_bucket_secret_key"
+		)
 		self.cluster.reload()
-		frappe.db.set_single_value("Cargo Settings", "metadata_snapshot_interval_hours", 6)
 
-	add_machine = test_object_storage_cluster.IntegrationTestObjectStorageCluster.add_machine
-
-	def last_snapshot(self):
+	def last_backup(self):
 		return frappe.db.get_value("Object Storage Cluster", self.cluster.name, "last_metadata_snapshot_at")
 
-	def test_a_snapshot_is_due_once_the_interval_has_passed(self):
-		self.assertTrue(is_snapshot_due(None, 6, NOW))
-		self.assertTrue(is_snapshot_due(datetime(2026, 10, 23, 6, 0, 0), 6, NOW))
-		self.assertFalse(is_snapshot_due(datetime(2026, 10, 23, 7, 0, 0), 6, NOW))
-		self.assertTrue(is_snapshot_due(datetime(2026, 10, 23, 11, 30, 0), 0.5, NOW))
+	def test_each_machine_uploads_in_its_own_long_job(self):
+		with patch("frappe.enqueue") as enqueue:
+			upload_metadata_snapshots()
 
-	def test_every_node_is_asked_at_once(self):
-		with patch.object(Client, "call", return_value={"success": {}, "error": {}}) as call:
-			Client(self.cluster).create_metadata_snapshot()
-
-		call.assert_called_once_with("CreateMetadataSnapshot", "POST", params={"node": "*"})
-
-	def test_a_due_cluster_is_snapshotted_and_stamped(self):
-		with patch.object(
-			Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}
-		) as create:
-			take_metadata_snapshots()
-
-		create.assert_called_once()
-		self.assertIsNotNone(self.last_snapshot())
-
-	def test_stamping_a_snapshot_leaves_the_cluster_unmodified(self):
-		"""A setup step holds the cluster for minutes and saves it after, which a newer
-		`modified` would refuse."""
-		modified = frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified")
-		with patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}):
-			take_metadata_snapshots()
-
-		self.assertIsNotNone(self.last_snapshot())
 		self.assertEqual(
-			frappe.db.get_value("Object Storage Cluster", self.cluster.name, "modified"), modified
+			{call.kwargs["machine_name"] for call in enqueue.call_args_list}, {self.gateway, *self.storage}
 		)
+		self.assertEqual({call.kwargs["queue"] for call in enqueue.call_args_list}, {"long"})
+		self.assertTrue(all(call.kwargs["timeout"] > BACKUP_SSH_TIMEOUT for call in enqueue.call_args_list))
+		self.assertTrue(all(call.kwargs["deduplicate"] for call in enqueue.call_args_list))
 
 	def test_no_upload_without_a_backup_bucket(self):
+		self.cluster.db_set("metadata_backup_endpoint", None)
+
+		with patch("frappe.enqueue") as enqueue:
+			upload_metadata_snapshots()
+
+		enqueue.assert_not_called()
+
+	def test_no_upload_while_a_workflow_owns_the_cluster(self):
 		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
-			patch.object(Setup, "upload_metadata_snapshots") as upload,
+			patch("cargo.object_storage.metadata_snapshot.get_running_workflow", return_value="WF-0001"),
+			patch("frappe.enqueue") as enqueue,
 		):
-			take_metadata_snapshots()
+			upload_metadata_snapshots()
+
+		enqueue.assert_not_called()
+
+	def test_a_new_snapshot_is_uploaded_pruned_and_stamped(self):
+		with (
+			patch.object(Setup, "get_newest_metadata_snapshot", return_value=SNAPSHOT),
+			patch.object(Setup, "has_metadata_backup_of", return_value=False),
+			patch.object(Setup, "upload_metadata_snapshot") as upload,
+			patch.object(Setup, "prune_metadata_backups") as prune,
+		):
+			upload_metadata_snapshot(self.cluster.name, self.storage[0])
+
+		self.assertEqual(upload.call_args.args[1], SNAPSHOT)
+		prune.assert_called_once()
+		self.assertIsNotNone(self.last_backup())
+
+	def test_a_snapshot_already_in_the_bucket_is_not_uploaded_again(self):
+		with (
+			patch.object(Setup, "get_newest_metadata_snapshot", return_value=SNAPSHOT),
+			patch.object(Setup, "has_metadata_backup_of", return_value=True),
+			patch.object(Setup, "upload_metadata_snapshot") as upload,
+		):
+			upload_metadata_snapshot(self.cluster.name, self.storage[0])
+
+		upload.assert_not_called()
+		self.assertIsNone(self.last_backup())
+
+	def test_a_node_without_a_finished_snapshot_uploads_nothing(self):
+		with (
+			patch.object(Setup, "get_newest_metadata_snapshot", return_value=None),
+			patch.object(Setup, "upload_metadata_snapshot") as upload,
+		):
+			upload_metadata_snapshot(self.cluster.name, self.storage[0])
 
 		upload.assert_not_called()
 
-	def test_every_machine_uploads_and_one_failure_does_not_stop_the_rest(self):
-		self.cluster.db_set(
-			{
-				"metadata_backup_endpoint": "https://s3.example.com/garage-metadata",
-				"metadata_bucket_access_key": "GK123",
-			}
-		)
+	def test_a_failed_upload_prunes_nothing_and_is_logged(self):
 		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
-			patch.object(
-				Setup, "upload_metadata_snapshots", side_effect=[RuntimeError, None, None, None]
-			) as upload,
-			run_jobs_now(),
-			patch.object(Setup, "prune_metadata_backups"),
+			patch.object(Setup, "get_newest_metadata_snapshot", return_value=SNAPSHOT),
+			patch.object(Setup, "has_metadata_backup_of", return_value=False),
+			patch.object(Setup, "upload_metadata_snapshot", side_effect=RuntimeError),
+			patch.object(Setup, "prune_metadata_backups") as prune,
 			patch("frappe.log_error") as log_error,
 		):
-			take_metadata_snapshots()
+			upload_metadata_snapshot(self.cluster.name, self.storage[0])
 
-		self.assertEqual(upload.call_count, 4)
-		self.assertEqual(len({call.args[1] for call in upload.call_args_list}), 1)
+		prune.assert_not_called()
 		log_error.assert_called_once()
-		self.assertIsNotNone(self.last_snapshot())
+		self.assertIsNone(self.last_backup())
+
+	def test_the_newest_snapshot_is_read_past_ssh_warnings(self):
+		garage = Setup(self.cluster)
+		output = "Warning: Permanently added 'fdaa::7' to the list of known hosts.\nsnapshot=2026-11-13T09:00:04Z\n"
+
+		with patch.object(Setup, "run", return_value=output):
+			self.assertEqual(
+				garage.get_newest_metadata_snapshot(garage.machine(self.storage[0])), "2026-11-13T09:00:04Z"
+			)
+
+		with patch.object(Setup, "run", return_value="Warning: Permanently added 'fdaa::7'.\n"):
+			self.assertIsNone(garage.get_newest_metadata_snapshot(garage.machine(self.storage[0])))
 
 	def test_bucket_keys_go_through_machine_metadata(self):
-		self.cluster.db_set(
-			{
-				"metadata_backup_endpoint": "https://s3.example.com/garage-metadata",
-				"metadata_bucket_access_key": "GK123",
-			}
-		)
-		self.cluster.metadata_bucket_secret_key = "s3cr3t-value"
-		self.cluster.save()
 		garage = Setup(self.cluster)
 		machine = garage.machine(self.storage[0])
 
@@ -140,7 +150,7 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 			patch.object(Setup, "replace_vm_metadata") as replace,
 			patch.object(Setup, "run") as run,
 		):
-			garage.upload_metadata_snapshots(machine, SNAPSHOT)
+			garage.upload_metadata_snapshot(machine, SNAPSHOT)
 
 		self.assertEqual(
 			replace.call_args.args[1],
@@ -148,109 +158,16 @@ class IntegrationTestMetadataSnapshot(IntegrationTestCase):
 		)
 		sent = run.call_args.args[1]
 		self.assertNotIn("s3cr3t-value", sent)
-		self.assertIn(f"{self.cluster.name}/{self.storage[0]}", sent)
-		self.assertEqual(run.call_args.kwargs["timeout"], BACKUP_SSH_TIMEOUT)
-		self.assertIn(f"export TRANSFER_TIMEOUT={BACKUP_TRANSFER_TIMEOUT}", sent)
-		self.assertIn(f"export NAME={SNAPSHOT}", sent)
-
-	def test_each_machine_uploads_in_its_own_long_job(self):
-		self.cluster.db_set(
-			{
-				"metadata_backup_endpoint": "https://s3.example.com/bucket",
-				"metadata_bucket_access_key": "GK123",
-			}
-		)
-		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
-			patch("frappe.enqueue") as enqueue,
-		):
-			take_metadata_snapshots()
-
-		self.assertEqual(enqueue.call_count, 4)
-		self.assertEqual({call.kwargs["queue"] for call in enqueue.call_args_list}, {"long"})
-		self.assertTrue(all(call.kwargs["timeout"] > BACKUP_SSH_TIMEOUT for call in enqueue.call_args_list))
-		self.assertEqual(
-			{call.kwargs["machine_name"] for call in enqueue.call_args_list}, {self.gateway, *self.storage}
-		)
-		self.assertIsNotNone(self.last_snapshot())
-
-	def test_a_refusing_node_does_not_upload_an_older_snapshot_under_this_name(self):
-		self.cluster.db_set(
-			{
-				"metadata_backup_endpoint": "https://s3.example.com/bucket",
-				"metadata_bucket_access_key": "GK123",
-			}
-		)
-		refused = {"success": {}, "error": {"bbb": "Cannot acquire lock"}}
-		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value=refused),
-			patch.object(Setup, "get_layout_nodes", return_value=[("bbb", self.storage[1])]),
-			patch.object(Setup, "upload_metadata_snapshots") as upload,
-			patch.object(Setup, "prune_metadata_backups"),
-			run_jobs_now(),
-			patch("frappe.log_error"),
-		):
-			take_metadata_snapshots()
-
-		uploaded = {call.args[0]["name"] for call in upload.call_args_list}
-		self.assertEqual(uploaded, {self.gateway, self.storage[0], self.storage[2]})
-
-	def test_a_restore_fetches_only_the_machines_own_backup(self):
-		self.cluster.db_set(
-			{
-				"metadata_backup_endpoint": "https://s3.example.com/bucket",
-				"metadata_bucket_access_key": "GK123",
-			}
-		)
-		set_encrypted_password(
-			self.cluster.doctype, self.cluster.name, "s3cr3t-value", "metadata_bucket_secret_key"
-		)
-		self.cluster.reload()
-		garage = Setup(self.cluster)
-
-		with patch.object(Setup, "replace_vm_metadata"), patch.object(Setup, "run") as run:
-			garage.fetch_metadata_snapshot(garage.machine(self.storage[0]), SNAPSHOT)
-
-		sent = run.call_args.args[1]
 		self.assertIn(f"export BACKUP_PREFIX={self.cluster.name}/{self.storage[0]}", sent)
-		self.assertNotIn("s3cr3t-value", sent)
+		self.assertIn(f"export SNAPSHOT={SNAPSHOT}", sent)
+		self.assertIn(f"export TRANSFER_TIMEOUT={BACKUP_TRANSFER_TIMEOUT}", sent)
+		self.assertEqual(run.call_args.kwargs["timeout"], BACKUP_SSH_TIMEOUT)
 
-	def test_nothing_is_asked_before_the_interval_passes(self):
-		self.cluster.db_set("last_metadata_snapshot_at", frappe.utils.now_datetime())
+	def test_garage_is_told_to_snapshot_on_its_own(self):
+		garage = Setup(self.cluster)
+		environment = garage.install_environment(garage.machine(self.storage[0]))
 
-		with patch.object(Setup, "create_metadata_snapshot") as create:
-			take_metadata_snapshots()
-
-		create.assert_not_called()
-
-	def test_a_zero_interval_stops_snapshots(self):
-		frappe.db.set_single_value("Cargo Settings", "metadata_snapshot_interval_hours", 0)
-
-		with patch.object(Setup, "create_metadata_snapshot") as create:
-			take_metadata_snapshots()
-
-		create.assert_not_called()
-
-	def test_no_snapshot_while_a_workflow_owns_the_cluster(self):
-		with (
-			patch("cargo.object_storage.metadata_snapshot.get_running_workflow", return_value="WF-0001"),
-			patch.object(Setup, "create_metadata_snapshot") as create,
-		):
-			take_metadata_snapshots()
-
-		create.assert_not_called()
-
-	def test_a_refusing_node_is_named_and_the_run_still_counts(self):
-		refused = {"success": {"aaa": None}, "error": {"bbb": "Cannot acquire lock"}}
-		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value=refused),
-			patch.object(Setup, "get_layout_nodes", return_value=[("bbb", self.storage[1])]),
-			patch("frappe.log_error") as log_error,
-		):
-			take_metadata_snapshots()
-
-		self.assertIn(f"{self.storage[1]}: Cannot acquire lock", log_error.call_args.kwargs["message"])
-		self.assertIsNotNone(self.last_snapshot())
+		self.assertEqual(environment["METADATA_SNAPSHOT_INTERVAL"], METADATA_SNAPSHOT_INTERVAL)
 
 
 class IntegrationTestMetadataRestore(IntegrationTestCase):
@@ -259,7 +176,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 	add_machine = test_object_storage_cluster.IntegrationTestObjectStorageCluster.add_machine
 
 	def setUp(self):
-		IntegrationTestMetadataSnapshot.setUp(self)
+		IntegrationTestMetadataBackup.setUp(self)
 		self.cluster.db_set(
 			{
 				"metadata_backup_endpoint": "https://s3.example.com/bucket",
@@ -345,18 +262,6 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		)
 		deleted = [call.kwargs["Key"] for call in client.return_value.delete_object.call_args_list]
 		self.assertEqual(deleted, pruned)
-
-	def test_a_failed_upload_prunes_nothing(self):
-		with (
-			patch.object(Setup, "create_metadata_snapshot", return_value={"success": {}, "error": {}}),
-			patch.object(Setup, "upload_metadata_snapshots", side_effect=RuntimeError),
-			run_jobs_now(),
-			patch.object(Setup, "prune_metadata_backups") as prune,
-			patch("frappe.log_error"),
-		):
-			take_metadata_snapshots()
-
-		prune.assert_not_called()
 
 	def test_a_machine_without_its_backup_refuses_the_restore(self):
 		self.has_backup.side_effect = lambda machine, _: machine["name"] != self.storage[1]

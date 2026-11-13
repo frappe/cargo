@@ -291,15 +291,13 @@ scheduler_events = {
 		"*/2 * * * *": [
 			"cargo.object_storage.health.live.increase_disk_size_if_required",
 		],
-		"*/10 * * * *": [
-			"cargo.object_storage.metadata_snapshot.take_metadata_snapshots",
-		],
 		"0 */2 * * *": [
 			"cargo.image_builder.doctype.pilot_image.pilot_image.start_base_images",
 		],
 	},
 	"hourly": [
 		"cargo.object_storage.health.prune_history",
+		"cargo.object_storage.metadata_snapshot.upload_metadata_snapshots",
 		"cargo.image_builder.health.ship_metrics",
 		"cargo.telemetry.credential.renew_datum_token",
 	],

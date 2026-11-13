@@ -1,7 +1,7 @@
 #!/bin/bash
-# Runs over SSH on one node before Garage stops for a restore. Snapshots are deleted once
-# uploaded, so this fetches the node's own backup of SNAPSHOT, never another node's. A missing
-# backup fails here, while every node still serves.
+# Runs over SSH on one node before Garage stops for a restore. Garage keeps only its two newest
+# snapshots, so an older one is fetched from the node's own backup, never another node's. A
+# missing backup fails here, while every node still serves.
 set -euo pipefail
 
 : "${METADATA_DIR:?METADATA_DIR is required}"
