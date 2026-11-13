@@ -23,17 +23,22 @@ def get_supported_one_click_images():
 	):
 		newest.setdefault(image.application, image)
 
-	return [
-		{
-			"application": image.application,
-			"title": frappe.parse_json(image.app_config)["title"],
-			"os_version": image.os_version,
-			"information": image.information,
-			"logo": image.logo,
-			"snapshot_id": image.snapshot_id,
-		}
-		for image in newest.values()
-	]
+	apps = []
+	for image in newest.values():
+		config = frappe.parse_json(image.app_config)
+		apps.append(
+			{
+				"application": image.application,
+				"title": config["title"],
+				"documentation": config.get("documentation"),
+				"os_version": image.os_version,
+				"information": image.information,
+				"logo": image.logo,
+				"snapshot_id": image.snapshot_id,
+			}
+		)
+
+	return apps
 
 
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
@@ -41,7 +46,7 @@ def get_supported_one_click_images():
 @verify_token
 def get_one_click_image_requirements(application: str):
 	"""What Central needs to launch the application's newest image: the inputs to ask the user
-	for, the smallest machine it runs on and the ports to open."""
+	for, the smallest machine it runs on, the ports to open and the guide to link."""
 	image: OneClickImage = frappe.get_last_doc(
 		"One Click Image", {"application": application, "status": "Completed"}
 	)
@@ -50,4 +55,5 @@ def get_one_click_image_requirements(application: str):
 		"inputs": config.get("inputs", []),
 		"minimum_size": config["minimum_size"],
 		"ports": config.get("ports", []),
+		"documentation": config.get("documentation"),
 	}

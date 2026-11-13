@@ -15,6 +15,7 @@ from cargo.image_builder.doctype.one_click_image.one_click_image import OneClick
 APP_CONFIG = """\
 title: FastAPI
 description: A test app.
+documentation: https://docs.example.com/apps/fastapi
 base_image: {os: Ubuntu, os_version: '24.04', minimal: true}
 minimum_size: {cpu_millicores: 500, memory_mib: 512, disk_mib: 5120}
 ports:
@@ -75,6 +76,7 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 				{
 					"application": "fastapi",
 					"title": "FastAPI",
+					"documentation": "https://docs.example.com/apps/fastapi",
 					"os_version": "24.04",
 					"information": "A test app.",
 					"logo": None,
@@ -92,6 +94,7 @@ class IntegrationTestOneClickImageApi(IntegrationTestCase):
 				"inputs": yaml.safe_load(APP_CONFIG)["inputs"],
 				"minimum_size": {"cpu_millicores": 500, "memory_mib": 512, "disk_mib": 5120},
 				"ports": [{"port": 80, "protocol": "tcp"}],
+				"documentation": "https://docs.example.com/apps/fastapi",
 			},
 		)
 
