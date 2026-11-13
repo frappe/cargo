@@ -471,17 +471,15 @@ class ObjectStorageCluster(WorkflowBuilder):
 		self.save()
 
 	@frappe.whitelist()
-	def restore_metadata_snapshot(self, snapshot: str, machine: str | None = None) -> None:
-		"""Roll one machine's metadata, or every machine's, back to a snapshot Garage took. One
-		machine catches up from its peers; the whole cluster loses everything written since."""
+	def restore_metadata_snapshot(self, snapshot: str, machine: str) -> None:
+		"""Roll one machine's metadata back to a snapshot Garage took. It catches up from its
+		peers."""
 		machines = can_restore_metadata(self, snapshot, machine)
 		self._restore_metadata.run_as_workflow(snapshot, machines)
 
 	@flow
 	def _restore_metadata(self, snapshot: str, machines: list[str]) -> None:
 		self.fetch_metadata_snapshots(snapshot, machines)
-		# Every machine stops before any comes back: a restored node would otherwise take the
-		# newer entries straight back from a peer still running on them.
 		self.stop_garage_on_machines(machines)
 		self.swap_in_metadata_snapshot(snapshot, machines)
 		self.repair_metadata_tables(machines)

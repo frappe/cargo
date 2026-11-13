@@ -196,14 +196,6 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 
 		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.storage[0]])
 
-	def test_the_whole_cluster_is_every_machine(self):
-		with patch.object(ObjectStorageCluster, "_restore_metadata") as restore:
-			self.cluster.restore_metadata_snapshot(SNAPSHOT)
-
-		snapshot, machines = restore.run_as_workflow.call_args.args
-		self.assertEqual(snapshot, SNAPSHOT)
-		self.assertEqual(set(machines), {self.gateway, *self.storage})
-
 	def test_one_machine_waits_for_its_peers_to_serve(self):
 		with (
 			patch.object(Setup, "healthy_nodes", return_value={self.storage[0], self.storage[1]}),
@@ -231,17 +223,11 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.gateway])
 		self.assertEqual(asked, ["http://10.0.0.2:3903"])
 
-	def test_the_whole_cluster_needs_every_machine_running(self):
-		frappe.db.set_value("Machine", self.storage[1], "status", "Stopped")
-
-		with self.assertRaisesRegex(frappe.ValidationError, self.storage[1]):
-			frappe.get_doc("Object Storage Cluster", self.cluster.name).restore_metadata_snapshot(SNAPSHOT)
-
 	def test_a_cluster_that_never_served_has_nothing_to_restore(self):
 		self.cluster.db_set("activated_on", None)
 
 		with self.assertRaisesRegex(frappe.ValidationError, "served"):
-			self.cluster.restore_metadata_snapshot(SNAPSHOT)
+			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[0])
 
 	def test_only_the_two_newest_backups_are_kept(self):
 		garage = Setup(self.cluster)
@@ -264,13 +250,14 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		self.assertEqual(deleted, pruned)
 
 	def test_a_machine_without_its_backup_refuses_the_restore(self):
-		self.has_backup.side_effect = lambda machine, _: machine["name"] != self.storage[1]
+		self.has_backup.return_value = False
 
 		with (
+			patch.object(Setup, "healthy_nodes", return_value=set(self.storage)),
 			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
 			self.assertRaisesRegex(frappe.ValidationError, self.storage[1]),
 		):
-			self.cluster.restore_metadata_snapshot(SNAPSHOT)
+			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[1])
 
 		restore.run_as_workflow.assert_not_called()
 
@@ -302,7 +289,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 			patch.object(ObjectStorageCluster, "swap_in_metadata_snapshot", steps.swap),
 			patch.object(ObjectStorageCluster, "repair_metadata_tables", steps.repair),
 		):
-			self.cluster._restore_metadata(SNAPSHOT, self.storage)
+			self.cluster._restore_metadata(SNAPSHOT, [self.storage[0]])
 
 		self.assertEqual([name for name, *_ in steps.mock_calls], ["fetch", "stop", "swap", "repair"])
 
@@ -310,10 +297,11 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		self.cluster.db_set("metadata_backup_endpoint", None)
 
 		with (
+			patch.object(Setup, "healthy_nodes", return_value=set(self.storage)),
 			patch.object(ObjectStorageCluster, "_restore_metadata") as restore,
 			self.assertRaisesRegex(frappe.ValidationError, "Metadata Backup Endpoint"),
 		):
-			self.cluster.restore_metadata_snapshot(SNAPSHOT)
+			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[0])
 
 		restore.run_as_workflow.assert_not_called()
 
