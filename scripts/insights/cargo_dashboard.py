@@ -12,31 +12,15 @@ from workbook import (
 )
 
 GB = {"decimals": 2, "suffix": " GB"}
-MB = {"decimals": 0, "suffix": " MB"}
 
 OVERVIEW = [
 	("reporting", "Reporting", WHOLE),
-	("processes_up", "Processes Up", WHOLE),
 	("cpu_percent", "CPU", PERCENT),
 	("memory_percent", "Memory", PERCENT),
 	("disk_percent", "Disk Used", PERCENT),
 	("disk_free_gb", "Disk Free", GB),
-	("db_connections_percent", "DB Connections", PERCENT),
 	("error_logs_1h", "Error Logs 1h", WHOLE),
 ]
-
-PROCESSES = table(
-	rows=[dimension("service"), dimension("state"), dimension("last_seen", "Datetime", "second")],
-	values=[
-		measure("Up", "up", "min"),
-		measure("CPU %", "cpu_percent"),
-		measure("Memory MB", "memory_mb"),
-		measure("Open FDs", "open_fds"),
-		measure("Restarts 24h", "restarts_24h"),
-		measure("Down Minutes 24h", "down_minutes_24h"),
-	],
-	number_formats={"CPU %": PERCENT, "Memory MB": MB, "Down Minutes 24h": {"decimals": 1}},
-)
 
 ERRORS = table(
 	rows=[
@@ -52,7 +36,7 @@ ERRORS = table(
 
 
 def add_cargo_dashboard(workbook: Workbook) -> None:
-	"""The Cargo VM and site: reachability, disk, machine metrics, bench processes, MariaDB, site uptime and logs."""
+	"""The Cargo VM and site: reachability, disk, machine metrics, site uptime and logs."""
 	dashboard = Dashboard(workbook, "Cargo", "cargo")
 	chart = dashboard.chart
 
@@ -61,7 +45,7 @@ def add_cargo_dashboard(workbook: Workbook) -> None:
 		"cargo-overview",
 		"Cargo Overview",
 		OVERVIEW,
-		"Machine and process readings from the last 5 minutes, error logs from the last hour. Reporting is 0 when Pilot sent nothing for 2 minutes.",
+		"Machine readings from the last 5 minutes, error logs from the last hour. Reporting is 0 when the Cargo VM sent no machine metrics for 2 minutes.",
 	)
 	chart("cargo-readiness", "Atlas Readiness", "Line", line("Ready", "%", PERCENT, "avg", max=100),
 		"Share of Atlas readiness checks the Cargo node passed, per 15 minutes, last 7 days.", width=20, height=10)  # fmt: skip
@@ -84,30 +68,13 @@ def add_cargo_dashboard(workbook: Workbook) -> None:
 	chart("cargo-disk-io", "Disk I/O", "Line", line("MB/s", "MB / s", MB_PER_SECOND),
 		"MB per second read from and written to disk.", width=20, height=10)  # fmt: skip
 
-	dashboard.heading("Processes")
-	chart("cargo-processes", "Processes", "Table", PROCESSES,
-		"Each bench process pilot runs, its latest readings, and how often it went down over the last 24 hours.",
-		width=20, height=9)  # fmt: skip
-	chart("cargo-process-cpu", "Process CPU", "Line", line("CPU", "%", PERCENT),
-		"CPU share per bench process.")  # fmt: skip
-	chart("cargo-process-memory", "Process Memory", "Line", line("RSS", "MB", MB),
-		"Resident memory per bench process. A steady climb is a leak.")  # fmt: skip
-
-	dashboard.heading("Database")
-	chart("cargo-db-connections", "DB Connections", "Line", line("Connections", "connections", WHOLE),
-		"Open MariaDB connections against the limit. Hitting it gives 'Too many connections'.")  # fmt: skip
-	chart("cargo-db-queries", "DB Queries / s", "Line", line("q/s", "queries / s", {"decimals": 1}),
-		"Selects, inserts, updates and deletes per second.")  # fmt: skip
-	chart("cargo-db-locks", "Row Lock Waits / Buffer Pool Misses", "Line", line("Value", "", {"decimals": 2}, "sum"),
-		"Row lock waits per 5 minutes, and the share of buffer pool reads that went to disk.", width=20, height=10)  # fmt: skip
-
 	dashboard.heading("Site")
 	chart("cargo-uptime", "Uptime Check", "Line", line("Sites", "sites", WHOLE),
 		"Sites on the Cargo VM in each state at Pilot's uptime check. Above 0 on 'down' is a failed check.", width=20, height=10)  # fmt: skip
 
 	dashboard.heading("Logs")
 	chart("cargo-error-volume", "Warnings and Errors", "Line", line("Lines", "lines / 15 min", WHOLE, "sum"),
-		"Pilot log lines of the Cargo VM and Cargo Error Logs above info, per 15 minutes, by service and level, last 7 days.", width=20, height=10)  # fmt: skip
+		"Journal lines of the Cargo VM and Cargo Error Logs above info, per 15 minutes, by service and level, last 7 days.", width=20, height=10)  # fmt: skip
 	chart("cargo-errors", "Recent Warnings and Errors", "Table", ERRORS,
 		"Distinct warning and error messages, last 7 days. Job names and timestamps are masked so repeats group.",
 		width=20, height=14)  # fmt: skip
