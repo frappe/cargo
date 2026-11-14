@@ -83,6 +83,22 @@ A run that is under way owns the cluster, so a cluster in Setting Up is never to
 
 The counter clears when the cluster serves, so a fault you fix arms automatic setup again. It is never spent on a cluster that has already served: such a cluster fails because its machines died, and setting up again cannot raise the dead.
 
+## Network protection
+
+Status: planned. Cargo does not implement this yet.
+
+Each Garage machine, the gateway and each storage node, takes the [Atlas host and service VM baseline](https://github.com/frappe/atlas/blob/develop/docs/abuse/protection.md#host-and-service-vm-baseline). `install.sh` writes the sysctl values to a file in `/etc/sysctl.d/` and loads them. Today `install.sh` sets no sysctl value.
+
+Each Garage machine also gets the per-source SYN meter of [Atlas SYN floods](https://github.com/frappe/atlas/blob/develop/docs/abuse/protection.md#syn-floods), as an nft rule:
+
+- New TCP connections over 200 a second, burst 400, from one IPv4 address or one IPv6 /64, are dropped.
+- Sources in the mesh and platform prefix list are exempt. Cargo reaches each machine over the mesh, and benches reach the gateway through the proxy, so this traffic is never dropped.
+- The rule has the `count` and `drop` modes of [Atlas rollout](https://github.com/frappe/atlas/blob/develop/docs/abuse/protection.md#rollout). The mode is `protect_mode` in the site config, with the default `count`. Setup gives it to `install.sh`, so a setup run applies a change.
+- An operator sets `drop` after at least 7 days of counters, and checks for drops of real traffic first.
+- Vector, which Cargo installs on each Garage node, reads the rule counter with an `exec` source (`nft --json list counters`) and sends it to Datum as `atlas_protect_dropped_total`, with `service` = `garage`. See [Atlas counters and alerts](https://github.com/frappe/atlas/blob/develop/docs/abuse/protection.md#counters-and-alerts).
+
+The sysctl baseline has no count mode. It applies on the next setup run.
+
 ## Reporting to Central
 
 The cluster reports itself. A Frappe Webhook fires on Active and on Failed, which are the two states worth a call. Read [what Cargo and Central say to each other](central-contract.md).
