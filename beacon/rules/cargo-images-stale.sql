@@ -11,7 +11,7 @@ FROM (
     SELECT concat(labels['image_type'], ' ', labels['frappe_branch'], if(labels['signup_app'] = '', '', concat(' ', labels['signup_app']))) AS key,
            argMax(value, ts) AS age
     FROM datum.samples_recent
-    WHERE metric = 'cargo_pilot_image_newest_completed_age_seconds' AND ts > now() - INTERVAL 3 HOUR
+    WHERE metric = 'cargo_pilot_image_newest_completed_age_seconds' AND resource_id = 'cargo' AND ts > now() - INTERVAL 3 HOUR
     GROUP BY key
 )
 WHERE age > 2 * 86400

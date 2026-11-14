@@ -13,6 +13,11 @@ FROM (
     SELECT resource_id, argMax(value, ts) = 1 AND max(ts) > now() - INTERVAL 5 MINUTE AS is_up
     FROM datum.samples_recent
     WHERE metric = 'garage_cluster_available' AND ts > now() - INTERVAL 1 HOUR
+      AND resource_id IN (
+          SELECT labels['machine'] FROM datum.samples_recent
+          WHERE metric = 'cargo_machine' AND resource_id = 'cargo' AND labels['role'] IN ('storage', 'gateway')
+            AND labels['machine'] NOT IN {excluded:Array(String)} AND ts > now() - INTERVAL 15 MINUTE
+      )
     GROUP BY resource_id
 )
 HAVING count() > 0 AND value = 0

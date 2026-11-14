@@ -15,6 +15,11 @@ FROM (
     SELECT attributes['sender'] AS sender, attributes['status'] AS status
     FROM datum.logs
     WHERE ts > now() - INTERVAL 15 MINUTE AND product = 'cargo' AND service = 'datum' AND message = 'request refused'
+      AND resource_id IN (
+          SELECT labels['machine'] FROM datum.samples_recent
+          WHERE metric = 'cargo_machine' AND resource_id = 'cargo' AND labels['role'] = 'telemetry'
+            AND labels['machine'] NOT IN {excluded:Array(String)} AND ts > now() - INTERVAL 15 MINUTE
+      )
 )
 GROUP BY sender
 HAVING value >= 10

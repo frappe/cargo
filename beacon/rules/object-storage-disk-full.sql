@@ -13,6 +13,11 @@ FROM (
            argMaxIf(value, ts, metric = 'garage_local_disk_total') AS total
     FROM datum.samples_recent
     WHERE metric IN ('garage_local_disk_avail', 'garage_local_disk_total') AND ts > now() - INTERVAL 15 MINUTE
+      AND resource_id IN (
+          SELECT labels['machine'] FROM datum.samples_recent
+          WHERE metric = 'cargo_machine' AND resource_id = 'cargo' AND labels['role'] IN ('storage', 'gateway')
+            AND labels['machine'] NOT IN {excluded:Array(String)} AND ts > now() - INTERVAL 15 MINUTE
+      )
     GROUP BY machine, volume
 )
 WHERE total > 0 AND avail < 0.1 * total

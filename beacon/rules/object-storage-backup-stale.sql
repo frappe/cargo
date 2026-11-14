@@ -11,7 +11,7 @@ SELECT 'cargo' AS resource_id, cluster AS alert_key, age AS value,
 FROM (
     SELECT labels['cluster'] AS cluster, argMax(value, ts) AS age
     FROM datum.samples_recent
-    WHERE metric = 'cargo_object_storage_metadata_backup_age_seconds' AND ts > now() - INTERVAL 3 HOUR
+    WHERE metric = 'cargo_object_storage_metadata_backup_age_seconds' AND resource_id = 'cargo' AND ts > now() - INTERVAL 3 HOUR
     GROUP BY cluster
 )
 WHERE age > 86400

@@ -11,7 +11,7 @@ FROM (
     SELECT concat(labels['image_type'], ' ', labels['frappe_branch'], if(labels['signup_app'] = '', '', concat(' ', labels['signup_app']))) AS key,
            argMax(labels['status'], ts) AS status, argMax(labels['image'], ts) AS image
     FROM datum.samples_recent
-    WHERE metric = 'cargo_pilot_image_latest' AND ts > now() - INTERVAL 3 HOUR
+    WHERE metric = 'cargo_pilot_image_latest' AND resource_id = 'cargo' AND ts > now() - INTERVAL 3 HOUR
     GROUP BY key
 )
 WHERE status = 'Failed'

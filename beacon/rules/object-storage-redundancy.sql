@@ -15,6 +15,11 @@ FROM (
                argMaxIf(value, ts, metric = 'garage_cluster_storage_nodes_ok') AS healthy
         FROM datum.samples_recent
         WHERE metric IN ('garage_cluster_storage_nodes', 'garage_cluster_storage_nodes_ok') AND ts > now() - INTERVAL 10 MINUTE
+          AND resource_id IN (
+              SELECT labels['machine'] FROM datum.samples_recent
+              WHERE metric = 'cargo_machine' AND resource_id = 'cargo' AND labels['role'] IN ('storage', 'gateway')
+                AND labels['machine'] NOT IN {excluded:Array(String)} AND ts > now() - INTERVAL 15 MINUTE
+          )
         GROUP BY resource_id
     )
     HAVING count() > 0
@@ -24,6 +29,11 @@ FROM (
         SELECT resource_id, argMax(value, ts) AS errored
         FROM datum.samples_recent
         WHERE metric = 'garage_block_resync_errored_blocks' AND ts > now() - INTERVAL 10 MINUTE
+          AND resource_id IN (
+              SELECT labels['machine'] FROM datum.samples_recent
+              WHERE metric = 'cargo_machine' AND resource_id = 'cargo' AND labels['role'] IN ('storage', 'gateway')
+                AND labels['machine'] NOT IN {excluded:Array(String)} AND ts > now() - INTERVAL 15 MINUTE
+          )
         GROUP BY resource_id
     )
     HAVING count() > 0
