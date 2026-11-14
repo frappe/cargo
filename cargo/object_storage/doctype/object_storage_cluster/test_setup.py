@@ -44,6 +44,11 @@ class IntegrationTestGarageInstall(IntegrationTestCase):
 		self.assertNotIn("[::]", body)
 		self.assertIn('api_bind_addr = "$S3_BIND_ADDR"', body)
 
+	def test_garage_does_not_log_every_request(self):
+		body = script(*CONF, "install.sh")
+
+		self.assertIn('"RUST_LOG=garage=info,garage_api_common=warn"', body)
+
 	def test_garage_is_not_told_any_domain(self):
 		"""Buckets are addressed by path, so Garage has no hostname to strip one from."""
 		environment = self.setup.install_environment(machine(STORAGE))
