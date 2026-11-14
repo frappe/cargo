@@ -17,6 +17,8 @@ CURSOR_KEY = "cargo:telemetry:error_log_cursor"
 MAXIMUM_LINES = 1_000
 TRACEBACK_TAIL_CHARACTERS = 1_024
 EXCEPTION_LINE = re.compile(r"^([A-Za-z_][\w.]*)(?::|$)")
+# Frappe cuts the title of an Error Log (`method`) to this length and keeps the full exception in the traceback.
+ERROR_LOG_TITLE_LENGTH = 140
 ERROR_LOG_FIELDS = ["name", "creation", "method", "error", "fingerprint", "trace_id", "metadata"]
 
 
@@ -96,4 +98,6 @@ def is_unhandled(title: str, last_line: str, metadata: dict) -> bool:
 	"""A job or request that raised, as opposed to an error that Cargo logs on purpose."""
 	if metadata.get("type") == "background_job":
 		return title == metadata.get("job_name")
-	return metadata.get("type") == "http_request" and bool(last_line) and last_line.endswith(title)
+	if metadata.get("type") != "http_request" or not last_line:
+		return False
+	return last_line.endswith(title) or (len(title) == ERROR_LOG_TITLE_LENGTH and title in last_line)

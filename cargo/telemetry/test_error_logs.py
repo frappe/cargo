@@ -44,6 +44,20 @@ class IntegrationTestErrorLogPublisher(IntegrationTestCase):
 		self.assertEqual(line["attributes"]["unhandled"], "1")
 		self.assertNotIn("secret", json.dumps(line))
 
+	def test_a_request_error_with_a_long_message_is_unhandled(self):
+		message = "image registry refused the push: " + "x" * 200
+		row = frappe._dict(
+			name="error-2",
+			creation=datetime(2026, 11, 14, 5, 0),
+			method=message[:140],
+			error=f'{message}\nTraceback (most recent call last):\n  File "app.py", line 1\nValueError: {message}\n',
+			fingerprint="f2",
+			trace_id="",
+			metadata=json.dumps({"type": "http_request", "path": "/api/method/cargo.api.push"}),
+		)
+
+		self.assertEqual(to_log_line(row)["attributes"]["unhandled"], "1")
+
 	def test_an_old_iso_cursor_still_finds_new_error_logs(self):
 		frappe.cache.set_value(CURSOR_KEY, "2020-01-01T00:00:00")
 		name = frappe.log_error("Cargo telemetry cursor test").name
