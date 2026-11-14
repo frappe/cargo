@@ -1,6 +1,6 @@
 -- title: Telemetry dropped on machine
 -- severity: Low
--- resource_type: Host, Server
+-- resource_type: Metal Host, Virtual Machine
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/telemetry-dropped.md
 -- interval: 300
 -- pending_for: 0
