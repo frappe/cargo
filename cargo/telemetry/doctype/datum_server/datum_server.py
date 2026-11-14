@@ -17,13 +17,13 @@ from cargo.caddy import require_public
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
+from cargo.telemetry.agent import datum_refresh_script, install_script
 from cargo.telemetry.doctype.datum_server.proxy import (
 	DATUM_PORT,
 	TELEMETRY_READ_SITE_NAME,
 	TELEMETRY_WRITE_SITE_NAME,
 	Proxy,
 )
-from cargo.telemetry.vector import datum_refresh_script, install_script
 from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
 from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
@@ -238,21 +238,23 @@ class DatumServer(WorkflowBuilder):
 		return True
 
 	def install_metrics_exporter(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Install Vector on the host and the timer that fetches its own Datum token. Safe to repeat."""
+		"""Install the Datum agent on the host and the timer that fetches its own Datum token. Safe to repeat."""
 		machine: Machine = frappe.get_doc("Machine", self.machine)
-		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		key = machine.get_password("ssh_private_key")
 
 		# Atlas replaces the whole map, so the role set at creation is sent again.
 		AtlasClient.from_settings().replace_vm_metadata(
 			machine.vm_id,
-			{"role": TELEMETRY, "datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name)},
+			{
+				"role": TELEMETRY,
+				"datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name, machine.vm_id),
+			},
 		)
-		# Vector only installs once the host holds its own Datum token.
+		# The agent only installs once the host holds its own Datum token.
 		run_over_ssh(machine.address, datum_refresh_script(), key, timeout=SETUP_TIMEOUT, on_output=on_output)
 		run_over_ssh(
 			machine.address,
-			install_script(TELEMETRY, machine.name, settings.region),
+			install_script(TELEMETRY),
 			key,
 			timeout=SETUP_TIMEOUT,
 			on_output=on_output,

@@ -14,7 +14,7 @@ FROM (
     SELECT labels['cluster'] AS cluster, argMax(labels['health'], ts) AS health, max(ts) AS last_ts
     FROM datum.samples
     WHERE metric = 'cargo_object_storage_health' AND ts > now() - INTERVAL 14 DAY
-      AND resource_id IN (SELECT DISTINCT resource_id FROM datum.daily_ingestion_stats WHERE date > today() - 14 AND startsWith(resource_id, 'cargo'))
+      AND resource_id = 'cargo'
     GROUP BY cluster
 )
 WHERE health != 'Healthy' OR last_ts < now() - INTERVAL 10 MINUTE

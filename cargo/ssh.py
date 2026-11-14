@@ -144,7 +144,11 @@ def get_live_output(doctype: str, name: str, fieldname: str) -> str:
 def script(*path: str, environment: dict[str, str] | None = None) -> str:
 	"""One of the app's conf scripts, with its arguments exported ahead of it. `path` is
 	relative to the app, e.g. `("object_storage", "conf", "garage", "install.sh")`."""
-	body = Path(frappe.get_app_path("cargo", *path)).read_text()
+	return with_environment(Path(frappe.get_app_path("cargo", *path)).read_text(), environment)
+
+
+def with_environment(body: str, environment: dict[str, str] | None = None) -> str:
+	"""A script with its arguments exported ahead of it."""
 	exports = "\n".join(
 		f"export {key}={shlex.quote(str(value))}" for key, value in (environment or {}).items()
 	)

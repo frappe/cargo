@@ -50,7 +50,7 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 	def test_samples_are_posted_to_datum(self):
 		self.set_cluster(activated_on=now_datetime(), last_metadata_snapshot_at=now_datetime())
 		with (
-			patch("cargo.telemetry.datum.get_metrics_info", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
 			patch("cargo.telemetry.datum.requests.post", return_value=MagicMock()) as post,
 		):
 			ship_metrics()
@@ -63,7 +63,7 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 		with (
 			patch("cargo.object_storage.health.LiveHealth.record", side_effect=RuntimeError("gateway down")),
 			patch("cargo.object_storage.health.frappe.log_error"),
-			patch("cargo.telemetry.datum.get_metrics_info", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
 			patch("cargo.telemetry.datum.requests.post", return_value=MagicMock()) as post,
 		):
 			refresh_health()

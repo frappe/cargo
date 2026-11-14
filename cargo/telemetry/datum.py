@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import requests
 
-from cargo.telemetry.credential import get_metrics_info
+from cargo.telemetry.credential import get_application_credential
 
 REQUEST_TIMEOUT_SECONDS = 30
 
 
 def send_to_datum(path: str, payload: dict) -> None:
-	"""Post to this host's Datum with the host's own credential. Raises `RuntimeError` while the host has no
-	credential, and `requests.RequestException` when Datum is unreachable or refuses the write."""
-	info = get_metrics_info()
+	"""Post to this region's Datum as resource `cargo`. Raises `RuntimeError` while the Datum host is not
+	Active, and `requests.RequestException` when Datum is unreachable or refuses the write."""
+	info = get_application_credential()
 	response = requests.post(
 		info["endpoint"].rstrip("/") + path,
 		headers={"Authorization": f"Bearer {info['token']}"},

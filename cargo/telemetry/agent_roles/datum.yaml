@@ -1,0 +1,64 @@
+# The Datum host: the ClickHouse error log. Datum itself writes refused requests to the journal at warning or error,
+# so the journal lines of the agent carry them.
+sources:
+  clickhouse_errors:
+    type: file
+    include: [/var/log/clickhouse-server/clickhouse-server.err.log]
+    read_from: end
+    # A stack trace follows its line on lines that do not start with a date.
+    multiline:
+      start_pattern: '^\d{4}\.\d{2}\.\d{2} '
+      mode: halt_before
+      condition_pattern: '^\d{4}\.\d{2}\.\d{2} '
+      timeout_ms: 1000
+
+transforms:
+  logs_clickhouse:
+    type: remap
+    inputs: [clickhouse_errors]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      levels = {"Fatal": "critical", "Critical": "critical", "Error": "error", "Warning": "warning"}
+      message = string!(.message)
+      parsed = parse_regex!(message, r'^\S+ \S+ \[ *\d+ *\] \{[^}]*\} <(?P<level>\w+)> (?P<text>(?s).*)$')
+      level = get(levels, [parsed.level]) ?? null
+      if level == null {
+        abort
+      }
+      stamp = .timestamp
+      if !is_timestamp(stamp) {
+        stamp = now()
+      }
+      . = {
+        "ts": format_timestamp!(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ"),
+        "product": "${PRODUCT}",
+        "service": "clickhouse",
+        "source": "file",
+        "level": level,
+        "message": truncate(parsed.text, 8192),
+        "attributes": {},
+      }
+
+tests:
+  - name: an error line keeps its level
+    inputs:
+      - insert_at: logs_clickhouse
+        type: log
+        log_fields:
+          message: "2026.11.14 10:00:00.123456 [ 4242 ] {abc-1} <Error> TCPHandler: Code: 241. Memory limit exceeded"
+    outputs:
+      - extract_from: logs_clickhouse
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "error")
+              assert_eq!(.service, "clickhouse")
+              assert!(starts_with(string!(.message), "TCPHandler: Code: 241"))
+  - name: an information line is dropped
+    inputs:
+      - insert_at: logs_clickhouse
+        type: log
+        log_fields:
+          message: "2026.11.14 10:00:00.123456 [ 4242 ] {} <Information> Application: Ready"
+    no_outputs_from: [logs_clickhouse]

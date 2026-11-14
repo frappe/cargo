@@ -591,7 +591,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 
 
 class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
-	"""Vector on the Datum host, pushing its own host metrics with the host's own token."""
+	"""The Datum agent on the Datum host, sending its machine telemetry with the host's own token."""
 
 	def setUp(self):
 		IntegrationTestTelemetryRouting.setUp(self)
@@ -602,16 +602,14 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 	def ssh(self, **behaviour):
 		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
 
-	def test_the_host_labels_its_metrics_as_telemetry(self):
+	def test_the_host_sends_the_clickhouse_error_log(self):
 		with self.ssh() as ran:
 			self.server.install_metrics_exporter()
 
 		sent = ran.call_args_list[1].args[1]
 		self.assertNotIn("export DATUM_TOKEN=", sent)
-		self.assertIn(f"export ROLE={TELEMETRY}", sent)
-		self.assertIn(f"export MACHINE={shlex.quote(self.machine.name)}", sent)
-		self.assertIn(f"export REGION={SETTINGS['region']}", sent)
-		self.assertNotIn("export CLUSTER=", sent)
+		self.assertIn("export LOG_GROUPS=clickhouse", sent)
+		self.assertIn("logs_clickhouse", sent)
 
 	def test_the_host_keeps_its_role_and_gets_its_machine_token(self):
 		with self.ssh() as ran:
@@ -625,13 +623,13 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		# Central only learns the endpoint once this host is Active, so Cargo names it.
 		self.assertIn(f"export DATUM_ENDPOINT={shlex.quote(self.server.service_endpoint)}", refresh)
 
-	def test_setup_installs_vector_once_datum_is_installed(self):
+	def test_setup_installs_the_agent_once_datum_is_installed(self):
 		with self.ssh() as ran:
 			self.assertTrue(self.server.start_setup_on_machine())
 
 		self.assertEqual(ran.call_count, 3)
 		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[1])
-		self.assertIn("export VECTOR_VERSION=", ran.call_args_list[2].args[1])
+		self.assertIn("Installs the Datum agent", ran.call_args_list[2].args[1])
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_host(self):
 		"""Nothing hands the host a token later, so setup is the only chance."""

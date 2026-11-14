@@ -53,7 +53,7 @@ class IntegrationTestErrorLogPublisher(IntegrationTestCase):
 	def test_the_cursor_moves_only_when_datum_takes_the_lines(self):
 		frappe.log_error("Cargo telemetry push test")
 		with (
-			patch("cargo.telemetry.datum.get_metrics_info", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
 			patch("cargo.telemetry.datum.requests.post", side_effect=requests.ConnectionError("down")),
 			patch.object(error_logs.frappe, "log_error") as log_error,
 		):
@@ -63,7 +63,7 @@ class IntegrationTestErrorLogPublisher(IntegrationTestCase):
 		log_error.assert_not_called()
 
 		with (
-			patch("cargo.telemetry.datum.get_metrics_info", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
 			patch("cargo.telemetry.datum.requests.post", side_effect=requests.ConnectionError("down")),
 		):
 			send_new_error_logs()
@@ -71,7 +71,7 @@ class IntegrationTestErrorLogPublisher(IntegrationTestCase):
 		self.assertEqual(frappe.cache.get_value(CURSOR_KEY), first_cursor)
 
 		with (
-			patch("cargo.telemetry.datum.get_metrics_info", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
 			patch("cargo.telemetry.datum.requests.post", return_value=MagicMock()) as post,
 		):
 			send_new_error_logs()
@@ -82,7 +82,7 @@ class IntegrationTestErrorLogPublisher(IntegrationTestCase):
 	def test_nothing_is_sent_without_datum_credentials(self):
 		frappe.log_error("Cargo telemetry credential test")
 		with (
-			patch("cargo.telemetry.datum.get_metrics_info", side_effect=RuntimeError),
+			patch("cargo.telemetry.datum.get_application_credential", side_effect=RuntimeError),
 			patch("cargo.telemetry.datum.requests.post") as post,
 		):
 			send_new_error_logs()

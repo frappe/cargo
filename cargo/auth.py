@@ -116,9 +116,10 @@ def jwks_client(url: str) -> PyJWKClient:
 	return client
 
 
-def generate_machine_token(role: str, machine: str) -> str:
+def generate_machine_token(role: str, machine: str, virtual_machine: str | None = None) -> str:
 	"""A credential one machine trades with Central for its own Datum token. Central checks
-	it with the region's webhook secret, which only Central and this Cargo hold."""
+	it with the region's webhook secret, which only Central and this Cargo hold. A machine sends
+	under the name of its Atlas Virtual Machine; the Cargo site (role `cargo`) sends as `cargo`."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 	claims = {
 		"iss": "cargo",
@@ -129,6 +130,8 @@ def generate_machine_token(role: str, machine: str) -> str:
 		"role": role,
 		"iat": int(time.time()),
 	}
+	if virtual_machine:
+		claims["virtual_machine"] = virtual_machine
 
 	return jwt.encode(
 		claims, settings.get_password("central_webhook_secret", raise_exception=True), algorithm="HS256"

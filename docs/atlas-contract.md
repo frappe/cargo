@@ -102,7 +102,7 @@ Send `{"metadata": {...}}`. Atlas replaces the whole map, so Cargo always sends 
 | Key | Sent for |
 |---|---|
 | `role` | Every machine at creation, and again with each replace |
-| `datum_telemetry_token` | Object storage machines and the datum host, before Vector is installed |
+| `datum_telemetry_token` | Object storage machines and the Datum host, before the Datum agent is installed |
 | `metadata_bucket_access_key`, `metadata_bucket_secret_key` | Object storage machines, when the cluster backs up its metadata |
 
 ## Power — `POST /virtual-machines/{id}/actions/{action}`

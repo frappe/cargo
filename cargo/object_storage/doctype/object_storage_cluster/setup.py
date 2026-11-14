@@ -18,7 +18,7 @@ from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
-from cargo.telemetry.vector import datum_refresh_script, install_script
+from cargo.telemetry.agent import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
 CONF = ("object_storage", "conf", "garage")
@@ -199,33 +199,25 @@ class Setup(Client):
 	def install_metrics_exporter(
 		self, machine: MachineRow, on_output: Callable[[str], None] | None = None
 	) -> None:
-		"""Install Vector and the timer that fetches the node's own Datum token. Safe to repeat.
-		Vector scrapes Garage's metrics on the node itself, so they outlive Cargo."""
+		"""Install the Datum agent and the timer that fetches the node's own Datum token. Safe to repeat.
+		The agent scrapes Garage's metrics on the node itself, so they outlive Cargo."""
 		garage_metrics = {
 			"GARAGE_ADMIN_ADDRESS": host_port(machine["address"], self.cluster.admin_port),
 			"GARAGE_METRICS_TOKEN": self.secrets["metrics_token"],
 			"GARAGE_SCRAPE_SECONDS": self.cluster.metrics_scrape_seconds,
 		}
 		self.replace_vm_metadata(machine)
-		# Vector only installs once the node holds its own Datum token.
+		# The agent only installs once the node holds its own Datum token.
 		self.run(machine, datum_refresh_script(), on_output)
-		self.run(
-			machine,
-			install_script(
-				machine["role"],
-				machine["name"],
-				self.cluster.region,
-				cluster=self.cluster.name,
-				environment=garage_metrics,
-			),
-			on_output,
-		)
+		self.run(machine, install_script(machine["role"], garage_metrics), on_output)
 
 	def replace_vm_metadata(self, machine: MachineRow, extra: dict[str, str] | None = None) -> None:
 		"""Atlas replaces the whole map, so the role and Datum token are always sent again."""
 		metadata = {
 			"role": machine["role"],
-			"datum_telemetry_token": generate_machine_token(machine["role"], machine["name"]),
+			"datum_telemetry_token": generate_machine_token(
+				machine["role"], machine["name"], machine["vm_id"]
+			),
 			**(extra or {}),
 		}
 		AtlasClient.from_settings().replace_vm_metadata(machine["vm_id"], metadata)

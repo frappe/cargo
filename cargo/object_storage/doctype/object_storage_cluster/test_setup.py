@@ -212,15 +212,15 @@ class UnitTestMetricsExporter(UnitTestCase):
 		with (
 			patch.object(Setup, "secrets", new_callable=PropertyMock, return_value={"metrics_token": "m"}),
 			patch.object(Setup, "run") as run,
-			patch(f"{module}.install_script", return_value="install vector"),
+			patch(f"{module}.install_script", return_value="install agent"),
 			patch(f"{module}.datum_refresh_script", return_value="install timer"),
 			patch(f"{module}.generate_machine_token", return_value="machine-token") as generate,
 			patch(f"{module}.AtlasClient.from_settings") as atlas,
 		):
 			setup.install_metrics_exporter(node)
 
-		generate.assert_called_once_with(STORAGE, node["name"])
+		generate.assert_called_once_with(STORAGE, node["name"], "vm-storage")
 		atlas.return_value.replace_vm_metadata.assert_called_once_with(
 			"vm-storage", {"role": STORAGE, "datum_telemetry_token": "machine-token"}
 		)
-		self.assertEqual([call.args[1] for call in run.call_args_list], ["install timer", "install vector"])
+		self.assertEqual([call.args[1] for call in run.call_args_list], ["install timer", "install agent"])

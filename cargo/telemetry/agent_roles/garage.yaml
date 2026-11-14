@@ -1,0 +1,108 @@
+# Garage: its metrics from the admin API of this node, so they keep flowing while Cargo is down, and its journal
+# lines with the module that wrote each one.
+sources:
+  garage_scrape:
+    type: prometheus_scrape
+    endpoints: ["http://${GARAGE_ADMIN_ADDRESS}/metrics"]
+    scrape_interval_secs: ${GARAGE_SCRAPE_SECONDS}
+    auth:
+      strategy: bearer
+      token: "${GARAGE_METRICS_TOKEN}"
+  garage_journal:
+    type: journald
+    include_units: [garage.service]
+    since_now: true
+
+transforms:
+  garage_events:
+    type: metric_to_log
+    inputs: [garage_scrape]
+  # Garage names some series garage_* and some not, such as cluster_healthy. Histograms keep only _sum and _count:
+  # the buckets are most of each scrape and would push a batch past 10,000 samples.
+  garage_series:
+    type: remap
+    inputs: [garage_events]
+    drop_on_error: true
+    source: |
+      name = string!(.name)
+      if !starts_with(name, "garage_") {
+        name = "garage_" + name
+      }
+      .name = name
+      del(.namespace)
+      if exists(.aggregated_histogram) {
+        histogram = del(.aggregated_histogram)
+        sum = .
+        sum.name = name + "_sum"
+        sum.counter = {"value": to_float!(histogram.sum)}
+        count = .
+        count.name = name + "_count"
+        count.counter = {"value": to_float!(histogram.count)}
+        . = [sum, count]
+      }
+  metrics_garage:
+    type: log_to_metric
+    inputs: [garage_series]
+    all_metrics: true
+    metrics: []
+  logs_garage:
+    type: remap
+    inputs: [garage_journal]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      levels = ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
+      level = string(get(levels, [to_int(string(.PRIORITY) ?? "6") ?? 6]) ?? "info") ?? "info"
+      module = if .TARGET == "log" { .F_LOG_TARGET } else { .TARGET }
+      module = replace(string(module) ?? "garage", "::", ".")
+      # Block, table and worker lines come for each item. Cargo's health probes come each minute.
+      chatter = ["garage_block.resync", "garage_table.sync", "garage_util.background.worker"]
+      if level == "info" && includes(chatter, module) {
+        abort
+      }
+      message = strip_ansi_escape_codes(string(.message) ?? "")
+      if contains(message, "/v2/GetClusterHealth") || contains(message, "/v2/GetClusterStatus") {
+        abort
+      }
+      # A signed URL works for whoever holds it until it expires.
+      message = replace(message, r'X-Amz-Signature=[^&\s"]+', "X-Amz-Signature=redacted")
+      stamp = .timestamp
+      if !is_timestamp(stamp) {
+        stamp = now()
+      }
+      . = {
+        "ts": format_timestamp!(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ"),
+        "product": "${PRODUCT}",
+        "service": "garage",
+        "source": "journal",
+        "level": level,
+        "message": truncate(message, 8192),
+        "attributes": {"module": module},
+      }
+
+tests:
+  - name: a Garage line keeps its module and loses its signature
+    inputs:
+      - insert_at: logs_garage
+        type: log
+        log_fields:
+          PRIORITY: "4"
+          TARGET: "garage_api.generic_server"
+          message: "GET /b?X-Amz-Signature=abc&x=1 failed"
+    outputs:
+      - extract_from: logs_garage
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warning")
+              assert_eq!(.attributes.module, "garage_api.generic_server")
+              assert!(contains(string!(.message), "X-Amz-Signature=redacted&x=1"))
+  - name: a resync info line is dropped
+    inputs:
+      - insert_at: logs_garage
+        type: log
+        log_fields:
+          PRIORITY: "6"
+          TARGET: "garage_block::resync"
+          message: "resynced block"
+    no_outputs_from: [logs_garage]
