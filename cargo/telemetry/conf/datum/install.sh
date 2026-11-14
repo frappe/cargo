@@ -160,9 +160,10 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 } >> /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.
-as_user "set -a; . /etc/datum.env; set +a; BEACON_USER_PASSWORD=$(printf '%q' "$BEACON_USER_PASSWORD") $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate \
-	--insights-user-password $(printf '%q' "$INSIGHTS_USER_PASSWORD") \
-	--default-user-password $(printf '%q' "$DEFAULT_USER_PASSWORD")"
+# The passwords pass through the environment, so none shows in the process list.
+export INSIGHTS_USER_PASSWORD BEACON_USER_PASSWORD DEFAULT_USER_PASSWORD
+su - "$SERVICE_USER" -w INSIGHTS_USER_PASSWORD,BEACON_USER_PASSWORD,DEFAULT_USER_PASSWORD \
+	-c "set -a; . /etc/datum.env; set +a; $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate"
 
 cat > /etc/systemd/system/datum.service <<DATUM_UNIT
 [Unit]
