@@ -44,3 +44,7 @@ This app can use GitHub Actions for CI. The following workflows are configured:
 ### License
 
 mit
+
+### Beacon rules
+
+Beacon reads its alert rules and runbooks for Pilot image builds and object storage from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
