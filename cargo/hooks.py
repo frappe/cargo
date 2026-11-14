@@ -288,6 +288,7 @@ scheduler_events = {
 			# is what sets alerting latency; the read is two calls to the gateway.
 			"cargo.object_storage.health.refresh_health",
 			"cargo.telemetry.error_logs.publish_error_logs",
+			"cargo.telemetry.inventory.ship_machines",
 		],
 		"*/2 * * * *": [
 			"cargo.object_storage.health.live.increase_disk_size_if_required",
