@@ -16,7 +16,7 @@ SETUP_MODULE = "cargo.object_storage.doctype.object_storage_cluster.setup"
 
 
 class IntegrationTestMetricsExporter(IntegrationTestCase):
-	"""Vector on every node: host metrics and Garage's own, pushed to datum with the node's own token."""
+	"""The Datum agent on every node: machine metrics and Garage's own, sent with the node's own token."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -70,33 +70,29 @@ class IntegrationTestMetricsExporter(IntegrationTestCase):
 
 		self.assertEqual({call.args[0]["name"] for call in run.call_args_list}, {self.gateway, self.storage})
 
-	def test_the_node_fetches_its_own_token_before_vector_installs(self):
-		refresh, vector = self.sent_to(self.storage)
+	def test_the_node_fetches_its_own_token_before_the_agent_installs(self):
+		refresh, agent = self.sent_to(self.storage)
 
 		self.assertIn("datum-refresh.timer", refresh)
-		self.assertIn("export VECTOR_VERSION=", vector)
-		self.assertNotIn("export DATUM_TOKEN=", vector)
+		self.assertIn("Installs the Datum agent", agent)
+		self.assertNotIn("export DATUM_TOKEN=", agent)
 
-	def test_the_node_labels_its_metrics_with_where_it_runs(self):
-		sent = self.sent_to(self.storage)[1]
-
-		self.assertIn(f"export CLUSTER={self.cluster.name}", sent)
-		self.assertIn(f"export MACHINE={self.storage}", sent)
-		self.assertIn(f"export ROLE={STORAGE}", sent)
+	def test_only_the_gateway_sends_the_nginx_error_log(self):
+		self.assertIn("logs_nginx", self.sent_to(self.gateway)[1])
+		self.assertNotIn("logs_nginx", self.sent_to(self.storage)[1])
 
 	def test_the_node_scrapes_garage_itself_with_the_clusters_settings(self):
 		self.cluster.db_set("metrics_scrape_seconds", 120)
 		sent = self.sent_to(self.gateway)[1]
 
-		self.assertIn("export GARAGE_ADMIN_ADDRESS=", sent)
-		self.assertIn(f":{self.cluster.admin_port}", sent)
-		self.assertIn("export GARAGE_METRICS_TOKEN=cluster-metrics-token", sent)
-		self.assertIn("export GARAGE_SCRAPE_SECONDS=120", sent)
+		self.assertIn(f"GARAGE_ADMIN_ADDRESS=10.0.0.1:{self.cluster.admin_port}", sent)
+		self.assertIn("GARAGE_METRICS_TOKEN=cluster-metrics-token", sent)
+		self.assertIn("GARAGE_SCRAPE_SECONDS=120", sent)
 
 	def test_histograms_reach_datum_as_sum_and_count_only(self):
 		sent = self.sent_to(self.storage)[1]
 
-		self.assertIn('type = "prometheus_scrape"', sent)
+		self.assertIn("type: prometheus_scrape", sent)
 		self.assertIn('sum.name = name + "_sum"', sent)
 		self.assertIn('count.name = name + "_count"', sent)
 		self.assertIn("del(.aggregated_histogram)", sent)

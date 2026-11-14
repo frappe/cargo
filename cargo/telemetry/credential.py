@@ -11,25 +11,39 @@ import jwt
 import requests
 from frappe import _
 
-from cargo.auth import generate_machine_token
+from cargo.issuer import issue_datum_token
 
-if typing.TYPE_CHECKING:
-	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-
-# Renewal runs hourly against a 7-day token, so two days leaves room for Central to be down.
+# Renewal runs hourly against a 7-day token, so two days leaves room for a failed renewal.
 RENEW_BEFORE_SECONDS = 2 * 24 * 60 * 60
+METADATA_URL = "http://169.254.169.254/latest"
+APPLICATION_TOKEN_KEY = "cargo:datum_application_token"
 
 
 class MetricsInfo(typing.TypedDict):
-	"""The Datum endpoint and token this Cargo host ships its own metrics with."""
+	"""A Datum endpoint and the token to send with."""
 
 	endpoint: str
 	token: str
 
 
+def get_application_credential() -> MetricsInfo:
+	"""The credential the Cargo site sends its own metrics and Error Logs with, as resource `cargo`.
+	Raises `RuntimeError` while the region's Datum host is not Active."""
+	server = frappe.get_single("Datum Server")
+	if server.status != "Active":
+		raise RuntimeError("The Datum host of this region is not Active")
+
+	token = frappe.cache.get_value(APPLICATION_TOKEN_KEY)
+	if not token or is_token_expiring(token):
+		token = issue_datum_token("cargo")
+		frappe.cache.set_value(APPLICATION_TOKEN_KEY, token)
+
+	return MetricsInfo(endpoint=server.service_endpoint, token=token)
+
+
 def get_metrics_info() -> MetricsInfo:
-	"""Read the host's Datum credential from `common_config.toml`. Raises `RuntimeError` while
-	`renew_datum_token` has not written one yet."""
+	"""Read the credential that Pilot ships the machine telemetry of this VM with, from `common_config.toml`.
+	Raises `RuntimeError` while `renew_datum_token` has not written one yet."""
 	common_bench_config = Path(frappe.utils.get_bench_path()).parent / "common_config.toml"
 
 	parsed = tomllib.loads(common_bench_config.read_text()) if common_bench_config.exists() else {}
@@ -43,8 +57,8 @@ def get_metrics_info() -> MetricsInfo:
 
 
 def renew_datum_token() -> None:
-	"""Give this Cargo host a new Datum token when its own is missing or expiring. Its Pilot
-	has no Central credential, so Cargo asks Central itself. Scheduled hourly in `hooks.py`."""
+	"""Give the Pilot of this VM a new Datum token, as its Atlas Virtual Machine, when its own is
+	missing or expiring. Scheduled hourly in `hooks.py`."""
 	server = frappe.get_single("Datum Server")
 	if server.status != "Active":
 		return
@@ -57,7 +71,7 @@ def renew_datum_token() -> None:
 	if token and not is_token_expiring(token):
 		return
 
-	write_telemetry_credential(server.service_endpoint, get_datum_token())
+	write_telemetry_credential(server.service_endpoint, issue_datum_token(get_virtual_machine_name()))
 
 
 def is_token_expiring(token: str) -> bool:
@@ -70,25 +84,22 @@ def is_token_expiring(token: str) -> bool:
 	return not isinstance(expires_at, int | float) or expires_at - time.time() <= RENEW_BEFORE_SECONDS
 
 
-def get_datum_token() -> str:
-	"""Trade a machine token this Cargo signs for its own host at Central for a Datum token.
-	The machine is the region, so the host's rows keep their `cargo:<region>` resource."""
-	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
+def get_virtual_machine_name() -> str:
+	"""The name of the Atlas Virtual Machine that runs this Cargo, from its instance metadata."""
+	session = requests.put(
+		f"{METADATA_URL}/api/token", headers={"X-metadata-token-ttl-seconds": "60"}, timeout=5
+	)
+	session.raise_for_status()
 	response = requests.get(
-		f"{settings.central_url.rstrip('/')}/api/method/central.api.cargo.datum_token",
-		headers={
-			"X-Cargo-Machine-Token": generate_machine_token("cargo", settings.region),
-			"Accept": "application/json",
-		},
-		timeout=(5, 30),
+		f"{METADATA_URL}/meta-data/instance-id", headers={"X-metadata-token": session.text}, timeout=5
 	)
 	response.raise_for_status()
 
-	return response.json()["message"]["token"]
+	return response.text.strip()
 
 
 def write_telemetry_credential(endpoint: str, token: str) -> None:
-	"""Let pilot write `[telemetry]`: it owns common_config.toml, its lock, and Fluent Bit."""
+	"""Let pilot write `[telemetry]`: it owns common_config.toml and its lock."""
 	bench_path = Path(frappe.utils.get_bench_path())
 	pilot = bench_path.parent.parent / "bin" / "pilot"
 	command = [

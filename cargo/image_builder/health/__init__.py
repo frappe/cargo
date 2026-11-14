@@ -1,7 +1,7 @@
 import frappe
 
 from cargo.image_builder.health.relay import Telemetry
-from cargo.telemetry.credential import get_metrics_info
+from cargo.telemetry.credential import get_application_credential
 
 __all__ = ["Telemetry", "ship_metrics"]
 
@@ -9,10 +9,10 @@ __all__ = ["Telemetry", "ship_metrics"]
 def ship_metrics() -> None:
 	"""Relay the image building metrics to datum. Scheduled hourly in `hooks.py`.
 
-	A host whose bench has no datum credentials yet has nothing to ship, which is a state
+	A region whose Datum host is not Active yet has nothing to ship to, which is a state
 	to wait out rather than report every hour."""
 	try:
-		info = get_metrics_info()
+		info = get_application_credential()
 	except RuntimeError:
 		return
 

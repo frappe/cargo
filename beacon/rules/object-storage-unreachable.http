@@ -1,0 +1,10 @@
+-- title: Object storage unreachable
+-- severity: High
+-- url: https://s3-admin-svc.{wildcard_domain}/health
+-- region: all
+-- expected_status: 200
+-- timeout: 10
+-- pending_for: 180
+-- resolve_after: 300
+-- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-unreachable.md
+-- Beacon calls the Garage health route through the gateway from outside the region. It fails when DNS, Caddy or the gateway is down, or when Garage has no quorum. Customers cannot upload or download files then.

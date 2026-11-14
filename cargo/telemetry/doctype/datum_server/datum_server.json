@@ -23,6 +23,7 @@
   "column_break_clickhouse",
   "datum_user_password",
   "insights_user_password",
+  "beacon_user_password",
   "timeout_seconds",
   "section_break_setup",
   "setup_log"
@@ -128,6 +129,13 @@
    "read_only": 1
   },
   {
+   "description": "The `beacon` user, which Beacon reads ClickHouse with to run alert rules. It can only select. Datum never uses it.",
+   "fieldname": "beacon_user_password",
+   "fieldtype": "Password",
+   "label": "Beacon User Password",
+   "read_only": 1
+  },
+  {
    "default": "30",
    "description": "DATUM_TIMEOUT. Seconds, connect and execute.",
    "fieldname": "timeout_seconds",
@@ -190,7 +198,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-10-19 16:00:00.000000",
+ "modified": "2026-11-14 08:07:06.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "Datum Server",

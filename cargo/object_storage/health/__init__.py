@@ -4,7 +4,8 @@ import typing
 
 import frappe
 
-from cargo.object_storage.health.live import LiveHealth, prune_history
+from cargo.object_storage.health.live import UNKNOWN, LiveHealth, prune_history
+from cargo.object_storage.telemetry import ship_health
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -25,13 +26,17 @@ def live_clusters() -> list[str]:
 
 
 def refresh_health() -> None:
-	"""Re-read every live cluster's health from its gateway. Scheduled in `hooks.py`."""
+	"""Re-read every live cluster's health from its gateway, and send it to Datum. Scheduled in `hooks.py`.
+	A cluster whose health cannot be read reports Unknown, so a broken check does not look healthy."""
+	health = {}
 	for name in live_clusters():
 		cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", name)
 		try:
-			LiveHealth(cluster).record()
+			health[name] = LiveHealth(cluster).record().severity
 		except Exception:
 			frappe.log_error(title=f"Could not read {name} health")
+			health[name] = UNKNOWN
+	ship_health(health)
 
 
 def queue_cluster_metrics_exporters(cluster: str) -> None:

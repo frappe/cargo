@@ -4,8 +4,8 @@ Builds the Cargo workbook for [Insights](https://github.com/frappe/insights) fro
 
 | File | Owns |
 | --- | --- |
-| `sql/<key>.sql` | The query behind one chart. It returns `time`, `series` and `value` for a line chart, or the columns a table or number chart reads. |
-| `cargo_dashboard.py` | The Cargo dashboard for the Cargo host itself: disk, host metrics, bench processes, MariaDB, HTTP and logs. |
+| `sql/<key>.sql` | The query behind one chart. It returns `time`, `series` and `value` for a line chart, or the columns a table or number chart reads. It finds the Cargo VM and the Cargo machines, with their cluster and role, in the `cargo_machine` samples of the resource `cargo`. |
+| `cargo_dashboard.py` | The Cargo dashboard for the Cargo VM and site: disk, machine metrics, site uptime and logs. |
 | `object_storage_dashboard.py` | The Cargo - Object Storage dashboard: which charts, in which order, how they look. |
 | `workbook.py` | `Workbook`, `Dashboard` and the chart config helpers. |
 | `generate_workbook.py` | Prints the workbook as JSON. |

@@ -176,7 +176,9 @@ class IntegrationTestTelemetrySpawnCreation(SpawnTestCase):
 
 		environment = self.host().environment()
 
-		self.assertEqual(environment["DATUM_JWKS_URL"], SETTINGS["jwks_url"])
+		self.assertEqual(
+			environment["DATUM_JWKS_URL"], f"{SETTINGS['cargo_url']}/api/method/cargo.api.jwks.get_jwks"
+		)
 		self.assertEqual(environment["DATUM_REGION_ID"], str(SETTINGS["region_id"]))
 
 	def test_a_host_filled_in_by_hand_is_left_alone(self):

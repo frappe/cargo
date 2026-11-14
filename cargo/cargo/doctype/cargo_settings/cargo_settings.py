@@ -45,6 +45,8 @@ class CargoSettings(Document):
 		region: DF.Data
 		region_id: DF.Int
 		signup_apps: DF.Table[SignupApp]
+		signing_key_id: DF.Data | None
+		signing_private_key: DF.Password | None
 		storage_disk_min_hours_between_growth: DF.Float
 		storage_disk_predict_hours: DF.Int
 		storage_node_spread: DF.Literal["Separate hosts", "Off"]

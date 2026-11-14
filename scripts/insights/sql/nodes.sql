@@ -1,16 +1,23 @@
 WITH
 anchor AS (SELECT max(ts) AS at FROM samples WHERE metric = 'garage_cluster_healthy'),
+machines AS (
+  SELECT labels['machine'] AS machine, argMax(labels['cluster'], ts) AS cluster, argMax(labels['role'], ts) AS role
+  FROM samples
+  WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] != 'cargo' AND ts > now() - INTERVAL 7 DAY
+  GROUP BY machine
+),
 window_samples AS (
-  SELECT * FROM samples
-  WHERE metric IN ('garage_cluster_healthy', 'garage_api_admin_request_counter', 'garage_cluster_layout_node_disconnected_time', 'garage_rpc_request_counter')
-    AND ts >= (SELECT at FROM anchor) - INTERVAL 168 HOUR - INTERVAL 10 MINUTE
+  SELECT s.ts AS ts, s.metric AS metric, s.labels AS labels, s.value AS value, m.cluster AS cluster, m.machine AS machine, m.role AS role
+  FROM samples AS s
+  INNER JOIN machines AS m ON m.machine = s.resource_id
+  WHERE s.metric IN ('garage_cluster_healthy', 'garage_api_admin_request_counter', 'garage_cluster_layout_node_disconnected_time', 'garage_rpc_request_counter')
+    AND s.ts >= (SELECT at FROM anchor) - INTERVAL 168 HOUR - INTERVAL 10 MINUTE
 ),
 nodes AS (
-  SELECT labels['cluster'] AS cluster, labels['machine'] AS machine, any(labels['role']) AS role,
-    anyIf(labels['from'], metric = 'garage_rpc_request_counter') AS node_id
-  FROM window_samples GROUP BY cluster, machine
+  SELECT cluster, machine, role, anyIf(labels['from'], metric = 'garage_rpc_request_counter') AS node_id
+  FROM window_samples GROUP BY cluster, machine, role
 ),
-ticks AS (SELECT DISTINCT labels['cluster'] AS cluster, ts FROM window_samples WHERE metric = 'garage_cluster_healthy'),
+ticks AS (SELECT DISTINCT cluster, ts FROM window_samples WHERE metric = 'garage_cluster_healthy'),
 own AS (
   SELECT machine, ts, healthy, 1 AS present,
     position > 1 AND scrapes < previous_scrapes AS restarted, previous_ts
@@ -18,7 +25,7 @@ own AS (
     SELECT machine, ts, healthy, scrapes,
       lagInFrame(scrapes) OVER w AS previous_scrapes, lagInFrame(ts) OVER w AS previous_ts, row_number() OVER w AS position
     FROM (
-      SELECT labels['machine'] AS machine, ts,
+      SELECT machine, ts,
         anyIf(value, metric = 'garage_cluster_healthy') AS healthy,
         anyIf(value, metric = 'garage_api_admin_request_counter' AND labels['api_endpoint'] = '/metrics') AS scrapes
       FROM window_samples
@@ -29,8 +36,8 @@ own AS (
   )
 ),
 peer AS (
-  SELECT labels['cluster'] AS cluster, labels['id'] AS node_id, ts, max(value) AS disconnected_seconds,
-    arrayStringConcat(groupUniqArray(labels['machine']), ', ') AS seen_by
+  SELECT cluster, labels['id'] AS node_id, ts, max(value) AS disconnected_seconds,
+    arrayStringConcat(groupUniqArray(machine), ', ') AS seen_by
   FROM window_samples
   WHERE metric = 'garage_cluster_layout_node_disconnected_time' AND value > 0
   GROUP BY cluster, node_id, ts

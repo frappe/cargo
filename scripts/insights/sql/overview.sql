@@ -1,29 +1,32 @@
 WITH
 health AS (
-  SELECT labels['machine'] AS machine, metric, argMax(value, ts) AS value
+  SELECT resource_id AS machine, metric, argMax(value, ts) AS value
   FROM samples
   WHERE metric IN ('garage_cluster_healthy', 'garage_cluster_storage_nodes_ok', 'garage_cluster_storage_nodes', 'garage_cluster_connected_nodes', 'garage_local_disk_avail', 'garage_local_disk_total')
     AND ts > now() - INTERVAL 15 MINUTE AND (metric NOT LIKE 'garage_local_disk_%' OR labels['volume'] = 'data')
   GROUP BY machine, metric
 ),
 host AS (
-  SELECT labels['machine'] AS machine, ts,
-    sumIf(value, metric = 'host_cpu_seconds_total' AND labels['mode'] IN ('idle', 'io_wait')) AS idle,
-    sumIf(value, metric = 'host_cpu_seconds_total') AS total,
-    maxIf(value, metric = 'host_memory_available_bytes') AS available,
-    maxIf(value, metric = 'host_memory_total_bytes') AS memory
+  SELECT resource_id AS machine, ts,
+    sumIf(value, metric = 'system_cpu_seconds_total' AND labels['mode'] IN ('idle', 'iowait')) AS idle,
+    sumIf(value, metric = 'system_cpu_seconds_total') AS total,
+    maxIf(value, metric = 'system_memory_available_bytes') AS available,
+    maxIf(value, metric = 'system_memory_total_bytes') AS memory
   FROM samples
-  WHERE metric IN ('host_cpu_seconds_total', 'host_memory_available_bytes', 'host_memory_total_bytes') AND ts > now() - INTERVAL 5 MINUTE
+  WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] != 'cargo' AND ts > now() - INTERVAL 7 DAY)
+    AND (metric IN ('system_memory_available_bytes', 'system_memory_total_bytes')
+      OR (metric = 'system_cpu_seconds_total' AND labels['mode'] NOT IN ('guest', 'guest_nice')))
+    AND ts > now() - INTERVAL 5 MINUTE
   GROUP BY machine, ts
 ),
 counters AS (
-  SELECT metric, labels,
+  SELECT resource_id, metric, labels,
     greatest(argMax(value, ts) - argMin(value, ts), 0) AS delta,
     dateDiff('second', min(ts), max(ts)) AS seconds
   FROM samples
   WHERE metric IN ('garage_api_s3_request_counter', 'garage_api_s3_error_counter', 'garage_api_s3_request_duration_sum', 'garage_api_s3_request_duration_count')
     AND ts > now() - INTERVAL 16 MINUTE
-  GROUP BY metric, labels
+  GROUP BY resource_id, metric, labels
 )
 SELECT
   (SELECT minIfOrNull(value, metric = 'garage_cluster_healthy') FROM health) AS healthy,

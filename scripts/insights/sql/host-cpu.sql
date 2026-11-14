@@ -1,7 +1,8 @@
 WITH totals AS (
-  SELECT labels['machine'] AS machine, ts, sumIf(value, labels['mode'] IN ('idle', 'io_wait')) AS idle, sum(value) AS total
+  SELECT resource_id AS machine, ts, sumIf(value, labels['mode'] IN ('idle', 'iowait')) AS idle, sum(value) AS total
   FROM samples
-  WHERE metric = 'host_cpu_seconds_total' AND ts > now() - INTERVAL 24 HOUR - INTERVAL 10 MINUTE
+  WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] != 'cargo' AND ts > now() - INTERVAL 7 DAY)
+    AND metric = 'system_cpu_seconds_total' AND labels['mode'] NOT IN ('guest', 'guest_nice') AND ts > now() - INTERVAL 24 HOUR - INTERVAL 10 MINUTE
   GROUP BY machine, ts
 ),
 deltas AS (

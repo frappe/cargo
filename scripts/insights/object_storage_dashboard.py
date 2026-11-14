@@ -54,7 +54,7 @@ NODES = table(
 )
 
 CLUSTERS = table(
-	rows=[dimension("cluster"), dimension("region")],
+	rows=[dimension("cluster")],
 	values=[
 		measure("Healthy", "healthy", "min"),
 		measure("Available", "available", "min"),
@@ -146,10 +146,10 @@ def add_object_storage_dashboard(workbook: Workbook) -> None:
 
 	dashboard.heading("Machines")
 	chart("machines", "Machines", "Table", MACHINES,
-		"Latest host metrics from Vector on each Garage machine. CPU and network cover the last 5 minutes.",
+		"Latest machine metrics of each Cargo machine except the Cargo VM. CPU and network cover the last 5 minutes.",
 		width=20, height=13)  # fmt: skip
 	chart("host-cpu", "CPU Busy", "Line", line("CPU", "%", PERCENT, max=100, reference_lines=RED_LINE_AT_80),
-		"Share of CPU time not idle, per machine.")  # fmt: skip
+		"Share of CPU time not idle and not waiting on disk, per machine.")  # fmt: skip
 	chart("host-memory", "Memory Used", "Line", line("Memory", "%", PERCENT, max=100, reference_lines=RED_LINE_AT_80),
 		"Memory in use (total minus available), per machine.")  # fmt: skip
 	chart("host-load", "Load per Core", "Line", line("Load", "per core", {"decimals": 2}, reference_lines=LOAD_LINE_AT_1),
