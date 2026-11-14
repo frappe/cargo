@@ -1,13 +1,20 @@
-WITH latest AS (
-  SELECT labels['cluster'] AS cluster, labels['region'] AS region, labels['machine'] AS machine, metric, argMax(value, ts) AS value, max(ts) AS last_seen
+WITH
+machines AS (
+  SELECT labels['machine'] AS machine, argMax(labels['cluster'], ts) AS cluster, argMax(labels['role'], ts) AS role
   FROM samples
-  WHERE metric IN ('garage_cluster_healthy', 'garage_cluster_available', 'garage_cluster_storage_nodes_ok', 'garage_cluster_storage_nodes', 'garage_cluster_partitions_quorum', 'garage_cluster_partitions', 'garage_cluster_connected_nodes', 'garage_cluster_known_nodes')
-    AND ts > now() - INTERVAL 15 MINUTE
-  GROUP BY cluster, region, machine, metric
+  WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] != 'cargo' AND ts > now() - INTERVAL 7 DAY
+  GROUP BY machine
+),
+latest AS (
+  SELECT m.cluster AS cluster, m.machine AS machine, s.metric AS metric, argMax(s.value, s.ts) AS value, max(s.ts) AS last_seen
+  FROM samples AS s
+  INNER JOIN machines AS m ON m.machine = s.resource_id
+  WHERE s.metric IN ('garage_cluster_healthy', 'garage_cluster_available', 'garage_cluster_storage_nodes_ok', 'garage_cluster_storage_nodes', 'garage_cluster_partitions_quorum', 'garage_cluster_partitions', 'garage_cluster_connected_nodes', 'garage_cluster_known_nodes')
+    AND s.ts > now() - INTERVAL 15 MINUTE
+  GROUP BY cluster, machine, metric
 )
 SELECT
   cluster,
-  any(region) AS region,
   minIf(value, metric = 'garage_cluster_healthy') AS healthy,
   minIf(value, metric = 'garage_cluster_available') AS available,
   minIf(value, metric = 'garage_cluster_storage_nodes_ok') AS storage_nodes_ok,

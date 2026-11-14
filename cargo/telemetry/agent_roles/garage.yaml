@@ -1,0 +1,156 @@
+# Garage: the metrics of the admin API of this node that a rule or a dashboard reads, so they keep flowing while
+# Cargo is down, and its journal lines at warning and higher with the module that wrote each one.
+sources:
+  garage_scrape:
+    type: prometheus_scrape
+    endpoints: ["http://${GARAGE_ADMIN_ADDRESS}/metrics"]
+    scrape_interval_secs: ${GARAGE_SCRAPE_SECONDS}
+    auth:
+      strategy: bearer
+      token: "${GARAGE_METRICS_TOKEN}"
+  garage_journal:
+    type: journald
+    include_units: [garage.service]
+    since_now: true
+
+transforms:
+  garage_events:
+    type: metric_to_log
+    inputs: [garage_scrape]
+  # Garage names some series garage_* and some not, such as cluster_healthy. Only the series that the rules of
+  # beacon/rules and the charts of scripts/insights read go to Datum. Add a series here when a reader needs it.
+  # Histograms keep only _sum and _count: the buckets are most of each scrape.
+  garage_series:
+    type: remap
+    inputs: [garage_events]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      name = string!(.name)
+      if !starts_with(name, "garage_") {
+        name = "garage_" + name
+      }
+      read = [
+        "garage_api_admin_request_counter",
+        "garage_api_s3_error_counter",
+        "garage_api_s3_request_counter",
+        "garage_api_s3_request_duration",
+        "garage_block_bytes_read",
+        "garage_block_bytes_written",
+        "garage_block_resync_errored_blocks",
+        "garage_block_resync_queue_length",
+        "garage_cluster_available",
+        "garage_cluster_connected_nodes",
+        "garage_cluster_healthy",
+        "garage_cluster_known_nodes",
+        "garage_cluster_layout_node_disconnected_time",
+        "garage_cluster_partitions",
+        "garage_cluster_partitions_quorum",
+        "garage_cluster_storage_nodes",
+        "garage_cluster_storage_nodes_ok",
+        "garage_local_disk_avail",
+        "garage_local_disk_total",
+        "garage_rpc_netapp_error_counter",
+        "garage_rpc_request_counter",
+        "garage_rpc_timeout_counter",
+      ]
+      if !includes(read, name) {
+        abort
+      }
+      .name = name
+      del(.namespace)
+      if exists(.aggregated_histogram) {
+        histogram = del(.aggregated_histogram)
+        sum = .
+        sum.name = name + "_sum"
+        sum.counter = {"value": to_float!(histogram.sum)}
+        count = .
+        count.name = name + "_count"
+        count.counter = {"value": to_float!(histogram.count)}
+        . = [sum, count]
+      }
+  metrics_garage:
+    type: log_to_metric
+    inputs: [garage_series]
+    all_metrics: true
+    metrics: []
+  logs_garage:
+    type: remap
+    inputs: [garage_journal]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      # Garage writes each request and each background item at info. Those lines stay in the journal.
+      priority = to_int(string(.PRIORITY) ?? "6") ?? 6
+      if priority > 4 {
+        abort
+      }
+      levels = ["emergency", "alert", "critical", "error", "warning"]
+      level = string(get(levels, [priority]) ?? "warning") ?? "warning"
+      module = if .TARGET == "log" { .F_LOG_TARGET } else { .TARGET }
+      module = replace(string(module) ?? "garage", "::", ".")
+      message = strip_ansi_escape_codes(string(.message) ?? "")
+      # A signed URL works for whoever holds it until it expires.
+      message = replace(message, r'X-Amz-Signature=[^&\s"]+', "X-Amz-Signature=redacted")
+      stamp = .timestamp
+      if !is_timestamp(stamp) {
+        stamp = now()
+      }
+      . = {
+        "ts": format_timestamp!(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ"),
+        "product": "${PRODUCT}",
+        "service": "garage",
+        "source": "journal",
+        "level": level,
+        "message": truncate(message, 8192),
+        "attributes": {"module": module},
+      }
+
+tests:
+  - name: a Garage line keeps its module and loses its signature
+    inputs:
+      - insert_at: logs_garage
+        type: log
+        log_fields:
+          PRIORITY: "4"
+          TARGET: "garage_api.generic_server"
+          message: "GET /b?X-Amz-Signature=abc&x=1 failed"
+    outputs:
+      - extract_from: logs_garage
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "warning")
+              assert_eq!(.attributes.module, "garage_api.generic_server")
+              assert!(contains(string!(.message), "X-Amz-Signature=redacted&x=1"))
+  - name: an info line is dropped
+    inputs:
+      - insert_at: logs_garage
+        type: log
+        log_fields:
+          PRIORITY: "6"
+          TARGET: "garage_api.generic_server"
+          message: "GET /b"
+    no_outputs_from: [logs_garage]
+  - name: a series that no reader uses is dropped
+    inputs:
+      - insert_at: garage_series
+        type: log
+        log_fields:
+          name: "table_merkle_updater_todo_queue_length"
+          gauge:
+            value: 3.0
+    no_outputs_from: [garage_series]
+  - name: a series that a rule reads gets the garage_ prefix
+    inputs:
+      - insert_at: garage_series
+        type: log
+        log_fields:
+          name: "cluster_healthy"
+          gauge:
+            value: 1.0
+    outputs:
+      - extract_from: garage_series
+        conditions:
+          - type: vrl
+            source: assert_eq!(.name, "garage_cluster_healthy")

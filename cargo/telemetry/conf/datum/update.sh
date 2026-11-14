@@ -9,6 +9,7 @@ set -euo pipefail
 : "${DATUM_BRANCH:?DATUM_BRANCH is required}"
 : "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
+: "${BEACON_USER_PASSWORD:?set it to the password for the beacon user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
 
 SERVICE_USER="${SERVICE_USER:-frappe}"
@@ -69,7 +70,7 @@ echo "datum moves from $before to $(as_user "git -C $DIR rev-parse --short HEAD"
 as_user "$UV sync --group api --directory $DIR"
 
 # Every migration is IF NOT EXISTS, so this applies only what the new commit adds.
-as_user "set -a; . /etc/datum.env; set +a; $UV run --directory $DIR datum-migrate \
+as_user "set -a; . /etc/datum.env; set +a; BEACON_USER_PASSWORD=$(printf '%q' "$BEACON_USER_PASSWORD") $UV run --directory $DIR datum-migrate \
 	--insights-user-password $(printf '%q' "$INSIGHTS_USER_PASSWORD") \
 	--default-user-password $(printf '%q' "$DEFAULT_USER_PASSWORD")"
 

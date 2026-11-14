@@ -161,7 +161,7 @@ class IntegrationTestPilotImageTelemetry(IntegrationTestCase):
 
 	def test_nothing_is_shipped_without_datum_credentials(self):
 		with (
-			patch("cargo.image_builder.health.get_metrics_info", side_effect=RuntimeError),
+			patch("cargo.image_builder.health.get_application_credential", side_effect=RuntimeError),
 			patch.object(relay_module.requests, "post") as post,
 		):
 			ship_metrics()

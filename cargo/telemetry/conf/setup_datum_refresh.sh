@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs over SSH before install.sh: a daily timer trades this node's machine token, from its
+# Runs over SSH before the Datum agent install: a daily timer trades this node's machine token, from its
 # Atlas metadata, for its own Datum token from Central. Idempotent; runs one refresh now.
 # Cargo names the endpoint: Central only learns it once the region's Datum host is Active.
 set -euo pipefail
@@ -48,7 +48,7 @@ if cmp -s "$next" "$ENV_FILE"; then
 fi
 
 mv "$next" "$ENV_FILE"
-# Before install.sh has run there is no Vector to restart yet.
+# Before the Datum agent is installed there is no Vector to restart yet.
 if systemctl is-active --quiet vector; then
 	systemctl restart vector
 fi

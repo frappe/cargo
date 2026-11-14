@@ -14,6 +14,7 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	REGION_HEADER,
 	SOURCE,
 	SOURCE_HEADER,
+	USER_PASSWORDS,
 	WEBHOOK_NAME,
 	DatumServer,
 )
@@ -153,18 +154,15 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertNotIn("DATUM_CLICKHOUSE_HOST", self.environment(clickhouse_host=""))
 
 	def test_every_user_password_is_generated_and_distinct(self):
-		"""The install writes all three into ClickHouse, so nothing has to be kept in step."""
+		"""The install writes all of them into ClickHouse, so nothing has to be kept in step."""
 		doc = self.server()
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		secrets = {
-			field: doc.get_password(field)
-			for field in ("datum_user_password", "insights_user_password", "default_user_password")
-		}
+		secrets = {field: doc.get_password(field) for field in USER_PASSWORDS}
 
 		self.assertTrue(all(secrets.values()))
-		self.assertEqual(len(set(secrets.values())), 3)
+		self.assertEqual(len(set(secrets.values())), len(USER_PASSWORDS))
 		# datum-migrate refuses a password carrying `--` or a quote.
 		self.assertTrue(all(value.isalnum() for value in secrets.values()))
 
@@ -180,7 +178,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 			}
 		).save()
 
-		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+		for field in USER_PASSWORDS:
 			with self.subTest(field=field):
 				self.assertTrue(server.get_password(field))
 
@@ -200,6 +198,10 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		"""Datum defaults to ClickHouse's `default` user, which may write anywhere."""
 		self.assertEqual(self.environment()["DATUM_CLICKHOUSE_USER"], "datum")
 
+	def test_the_beacon_password_is_handed_to_the_migration(self):
+		"""datum-migrate creates the select-only user that Beacon runs alert rules as."""
+		self.assertTrue(self.environment()["BEACON_USER_PASSWORD"])
+
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
 		self.assertTrue(self.environment()["DEFAULT_USER_PASSWORD"])
@@ -209,7 +211,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+		for field in USER_PASSWORDS:
 			with self.subTest(field=field):
 				self.assertEqual(doc.reveal_password(field), doc.get_password(field))
 
@@ -589,7 +591,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 
 
 class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
-	"""Vector on the Datum host, pushing its own host metrics with the host's own token."""
+	"""The Datum agent on the Datum host, sending its machine telemetry with the host's own token."""
 
 	def setUp(self):
 		IntegrationTestTelemetryRouting.setUp(self)
@@ -600,16 +602,14 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 	def ssh(self, **behaviour):
 		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
 
-	def test_the_host_labels_its_metrics_as_telemetry(self):
+	def test_the_host_sends_the_clickhouse_error_log(self):
 		with self.ssh() as ran:
 			self.server.install_metrics_exporter()
 
 		sent = ran.call_args_list[1].args[1]
 		self.assertNotIn("export DATUM_TOKEN=", sent)
-		self.assertIn(f"export ROLE={TELEMETRY}", sent)
-		self.assertIn(f"export MACHINE={shlex.quote(self.machine.name)}", sent)
-		self.assertIn(f"export REGION={SETTINGS['region']}", sent)
-		self.assertNotIn("export CLUSTER=", sent)
+		self.assertIn("export LOG_GROUPS=clickhouse", sent)
+		self.assertIn("logs_clickhouse", sent)
 
 	def test_the_host_keeps_its_role_and_gets_its_machine_token(self):
 		with self.ssh() as ran:
@@ -623,13 +623,13 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		# Central only learns the endpoint once this host is Active, so Cargo names it.
 		self.assertIn(f"export DATUM_ENDPOINT={shlex.quote(self.server.service_endpoint)}", refresh)
 
-	def test_setup_installs_vector_once_datum_is_installed(self):
+	def test_setup_installs_the_agent_once_datum_is_installed(self):
 		with self.ssh() as ran:
 			self.assertTrue(self.server.start_setup_on_machine())
 
 		self.assertEqual(ran.call_count, 3)
 		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[1])
-		self.assertIn("export VECTOR_VERSION=", ran.call_args_list[2].args[1])
+		self.assertIn("Installs the Datum agent", ran.call_args_list[2].args[1])
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_host(self):
 		"""Nothing hands the host a token later, so setup is the only chance."""
