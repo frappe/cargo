@@ -120,7 +120,7 @@ def get_virtual_machine_name() -> str:
 
 
 def write_telemetry_credential(endpoint: str, token: str) -> None:
-	"""Let pilot write `[telemetry]`: it owns common_config.toml, its lock, and Fluent Bit."""
+	"""Let pilot write `[telemetry]`: it owns common_config.toml and its lock."""
 	bench_path = Path(frappe.utils.get_bench_path())
 	pilot = bench_path.parent.parent / "bin" / "pilot"
 	command = [

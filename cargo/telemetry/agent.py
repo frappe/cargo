@@ -14,14 +14,6 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 ROLE_FILES = Path(__file__).parent / "agent_roles"
-# The Vector that Cargo installed before the Datum agent ran from its own unit and binary, which hide the package.
-REMOVE_OLD_VECTOR = """
-if [ -f /etc/systemd/system/vector.service ]; then
-	systemctl disable --now vector || true
-	rm -f /etc/systemd/system/vector.service /usr/local/bin/vector /etc/vector/vector.toml
-	systemctl daemon-reload
-fi
-"""
 
 
 @dataclass(frozen=True)
@@ -56,7 +48,7 @@ def install_script(role: str, role_environment: dict[str, str | int] | None = No
 		"ROLE_ENVIRONMENT": "\n".join(f"{key}={value}" for key, value in (role_environment or {}).items()),
 	}
 
-	return with_environment(REMOVE_OLD_VECTOR + get_install_script(), environment)
+	return with_environment(get_install_script(), environment)
 
 
 def datum_refresh_script() -> str:
