@@ -3,7 +3,7 @@
 -- resource_type: Region
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/telemetry-volume.md
 -- interval: 3600
--- pending_for: 0
+-- pending_for: 3600
 -- resolve_after: 86400
 -- Datum counts the samples and log lines of each sender each day. A sender that sent more than 2 times its median of the 7 days before, and more than 100,000 rows, often runs a new version that sends a new metric or logs too much. The rule finds it before the storage cost does.
 SELECT {region:String} AS resource_id, sender AS alert_key, toFloat64(yesterday) AS value,
