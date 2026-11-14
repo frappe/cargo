@@ -7,7 +7,7 @@
 -- Cargo sends its image build metrics every hour. No sample for 3 hours means its scheduler, its Datum token or Cargo itself stopped.
 -- No sample in 14 days also counts as silent. A region without an active Cargo has no cargo resource, so Beacon drops the row.
 -- The subquery keeps the source resource_id apart from the output alias.
-SELECT 'cargo' AS resource_id, '' AS alert_key, toFloat64(if(samples = 0, 14 * 86400, age)) AS value,
+SELECT 'cargo' AS resource_id, '' AS alert_key, if(samples = 0, toFloat64(14 * 86400), toFloat64(age)) AS value,
        if(samples = 0, 'no Cargo metrics in 14 days', concat('no Cargo metrics for ', toString(round(age / 3600, 1)), ' h')) AS detail
 FROM (
     SELECT count() AS samples, dateDiff('second', max(ts), now()) AS age
