@@ -5,7 +5,7 @@
 -- pending_for: 60
 -- resolve_after: 900
 -- Cargo sends its Error Logs to Datum each minute. One alert for each error fingerprint that repeats. A PermissionError is a caller without access, not a Cargo failure.
-SELECT 'cargo' AS resource_id, attributes['fingerprint'] AS alert_key, count() AS value,
+SELECT 'cargo' AS resource_id, if(attributes['fingerprint'] = '', left(message, 200), attributes['fingerprint']) AS alert_key, count() AS value,
        concat(toString(value), ' x ', any(message), ' in Cargo in 15 min') AS detail
 FROM datum.logs
 WHERE product = 'cargo' AND source = 'error_log' AND attributes['unhandled'] = '1'
