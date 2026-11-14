@@ -47,4 +47,4 @@ mit
 
 ### Beacon rules
 
-Beacon reads its alert rules and runbooks for Pilot image builds and object storage from `beacon/` in this repository. `beacon/rules/<rule-key>.sql` is one alert rule and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
+Beacon reads its alert rules and runbooks for Pilot image builds, object storage and Cargo errors from `beacon/` in this repository. Each minute, Cargo sends the health verdict of each live cluster as `cargo_object_storage_health`, with Unknown when the gateway cannot be read. Each hour, Cargo sends the age of the newest metadata backup of each live cluster as `cargo_object_storage_metadata_backup_age_seconds`. Each minute, it sends its new Error Logs, without form data, to the same Datum. `beacon/rules/<rule-key>.sql` is one alert rule and `beacon/runbooks/<rule-key>.md` tells the responder what to do. Change a rule in the same pull request as the metric that it reads. Beacon applies the change when staff click Sync Definitions in Beacon Settings.
