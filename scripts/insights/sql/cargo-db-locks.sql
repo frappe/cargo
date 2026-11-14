@@ -1,7 +1,8 @@
 WITH deltas AS (
   SELECT ts, metric, value, lagInFrame(value) OVER w AS previous, lagInFrame(ts) OVER w AS previous_ts, row_number() OVER w AS position
   FROM samples
-  WHERE resource_id LIKE 'cargo:%' AND metric IN ('mariadb_row_lock_waits_total', 'mariadb_buffer_pool_reads_total', 'mariadb_buffer_pool_read_requests_total')
+  WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] = 'cargo' AND ts > now() - INTERVAL 7 DAY)
+    AND metric IN ('mariadb_row_lock_waits_total', 'mariadb_buffer_pool_reads_total', 'mariadb_buffer_pool_read_requests_total')
     AND ts > now() - INTERVAL 24 HOUR - INTERVAL 10 MINUTE
   WINDOW w AS (PARTITION BY metric ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)
 ),

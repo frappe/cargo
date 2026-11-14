@@ -2,13 +2,15 @@ WITH
 latest AS (
   SELECT replaceOne(replaceOne(labels['service'], 'cargo-', ''), '.service', '') AS service, metric, argMax(value, ts) AS value, max(ts) AS at
   FROM samples
-  WHERE resource_id LIKE 'cargo:%' AND metric LIKE 'pilot_process_%' AND metric != 'pilot_process_state' AND ts > now() - INTERVAL 5 MINUTE
+  WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] = 'cargo' AND ts > now() - INTERVAL 7 DAY)
+    AND metric LIKE 'pilot_process_%' AND metric != 'pilot_process_state' AND ts > now() - INTERVAL 5 MINUTE
   GROUP BY service, metric
 ),
 states AS (
   SELECT replaceOne(replaceOne(labels['service'], 'cargo-', ''), '.service', '') AS service, argMax(labels['state'], ts) AS state
   FROM samples
-  WHERE resource_id LIKE 'cargo:%' AND metric = 'pilot_process_state' AND ts > now() - INTERVAL 5 MINUTE
+  WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] = 'cargo' AND ts > now() - INTERVAL 7 DAY)
+    AND metric = 'pilot_process_state' AND ts > now() - INTERVAL 5 MINUTE
   GROUP BY service
 ),
 restarts AS (
@@ -17,7 +19,8 @@ restarts AS (
     SELECT replaceOne(replaceOne(labels['service'], 'cargo-', ''), '.service', '') AS service, value AS up,
       lagInFrame(value, 1, 1) OVER (PARTITION BY labels['service'] ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS previous
     FROM samples
-    WHERE resource_id LIKE 'cargo:%' AND metric = 'pilot_process_up' AND ts > now() - INTERVAL 24 HOUR
+    WHERE resource_id IN (SELECT labels['machine'] FROM samples WHERE resource_id = 'cargo' AND metric = 'cargo_machine' AND labels['role'] = 'cargo' AND ts > now() - INTERVAL 7 DAY)
+      AND metric = 'pilot_process_up' AND ts > now() - INTERVAL 24 HOUR
   )
   GROUP BY service
 )
