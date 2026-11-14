@@ -12,10 +12,10 @@ from frappe import _
 from frappe.utils import cint
 
 from cargo.atlas_client import AtlasClient, base_image_id
-from cargo.auth import generate_machine_token
 from cargo.caddy import require_public
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.client_models import TELEMETRY, NodeSpec
+from cargo.issuer import generate_machine_token
 from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
 from cargo.telemetry.agent import datum_refresh_script, install_script
 from cargo.telemetry.doctype.datum_server.proxy import (
@@ -91,9 +91,9 @@ class DatumServer(WorkflowBuilder):
 		self.validate_connection()
 
 	def validate_token_verification(self) -> None:
-		"""Datum checks tokens against the same merged key set Cargo does, for the same
-		region, so both come from Cargo Settings rather than being restated here. Without
-		either, datum answers 401 to everything."""
+		"""Datum checks tokens against Cargo's key set, which merges the set Cargo reads from
+		`jwks_url` with Cargo's own key, for the same region. Without them, datum answers 401
+		to everything."""
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 
 		if not (settings.jwks_url or "").strip():
@@ -247,7 +247,7 @@ class DatumServer(WorkflowBuilder):
 			machine.vm_id,
 			{
 				"role": TELEMETRY,
-				"datum_telemetry_token": generate_machine_token(TELEMETRY, machine.name, machine.vm_id),
+				"datum_telemetry_token": generate_machine_token(machine.name, machine.vm_id),
 			},
 		)
 		# The agent only installs once the host holds its own Datum token.
@@ -429,7 +429,7 @@ class DatumServer(WorkflowBuilder):
 			"BEACON_USER_PASSWORD": self.get_password("beacon_user_password", raise_exception=False),
 			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
-			"DATUM_JWKS_URL": settings.jwks_url,
+			"DATUM_JWKS_URL": f"{settings.cargo_url.rstrip('/')}/api/method/cargo.api.jwks.get_jwks",
 			"DATUM_REGION_ID": str(settings.region_id),
 		}
 

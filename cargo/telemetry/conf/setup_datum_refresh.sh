@@ -1,10 +1,9 @@
 #!/bin/bash
 # Runs over SSH before the Datum agent install: a daily timer trades this node's machine token, from its
-# Atlas metadata, for its own Datum token from Central. Idempotent; runs one refresh now.
-# Cargo names the endpoint: Central only learns it once the region's Datum host is Active.
+# Atlas metadata, for its own Datum token from Cargo. Idempotent; runs one refresh now.
 set -euo pipefail
 
-: "${CENTRAL_URL:?CENTRAL_URL is required}"
+: "${CARGO_URL:?CARGO_URL is required}"
 : "${DATUM_ENDPOINT:?DATUM_ENDPOINT is required}"
 
 cat > /usr/local/bin/datum-refresh <<'DATUM_REFRESH'
@@ -31,7 +30,7 @@ done
 
 response=$(curl -fsS --max-time 30 -H "Accept: application/json" \
 	-H "X-Cargo-Machine-Token: $machine_token" \
-	"$CENTRAL_URL/api/method/central.api.cargo.datum_token")
+	"$CARGO_URL/api/method/cargo.api.telemetry.datum_token")
 
 token=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["message"]["token"])' <<<"$response")
 
@@ -57,20 +56,20 @@ chmod 755 /usr/local/bin/datum-refresh
 
 cat > /etc/systemd/system/datum-refresh.service <<DATUM_SERVICE
 [Unit]
-Description=Fetch this node's Datum token from Central
+Description=Fetch this node's Datum token from Cargo
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-Environment=CENTRAL_URL=${CENTRAL_URL%/}
+Environment=CARGO_URL=${CARGO_URL%/}
 Environment=DATUM_ENDPOINT=${DATUM_ENDPOINT%/}
 ExecStart=/usr/local/bin/datum-refresh
 DATUM_SERVICE
 
 cat > /etc/systemd/system/datum-refresh.timer <<'DATUM_TIMER'
 [Unit]
-Description=Fetch this node's Datum token from Central every day
+Description=Fetch this node's Datum token from Cargo every day
 
 [Timer]
 OnCalendar=daily

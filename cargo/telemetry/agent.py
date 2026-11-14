@@ -52,7 +52,7 @@ def install_script(role: str, role_environment: dict[str, str | int] | None = No
 
 
 def datum_refresh_script() -> str:
-	"""The script that has a machine fetch its own Datum token from Central every day, and ship
+	"""The script that has a machine fetch its own Datum token from this Cargo every day, and ship
 	to this region's Datum host."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 	return script(
@@ -60,7 +60,7 @@ def datum_refresh_script() -> str:
 		"conf",
 		"setup_datum_refresh.sh",
 		environment={
-			"CENTRAL_URL": settings.central_url,
+			"CARGO_URL": settings.cargo_url,
 			"DATUM_ENDPOINT": frappe.get_single("Datum Server").service_endpoint,
 		},
 	)

@@ -219,7 +219,7 @@ class UnitTestMetricsExporter(UnitTestCase):
 		):
 			setup.install_metrics_exporter(node)
 
-		generate.assert_called_once_with(STORAGE, node["name"], "vm-storage")
+		generate.assert_called_once_with(node["name"], "vm-storage")
 		atlas.return_value.replace_vm_metadata.assert_called_once_with(
 			"vm-storage", {"role": STORAGE, "datum_telemetry_token": "machine-token"}
 		)

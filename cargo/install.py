@@ -4,6 +4,8 @@ import typing
 import frappe
 from frappe import _
 
+from cargo.issuer import initialize_signing_key
+
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
@@ -33,6 +35,7 @@ def after_install() -> None:
 		print(_("Set {0} before installing Cargo.").format(", ".join(missing)))
 
 	record_upstreams()
+	initialize_signing_key()
 	complete_setup_wizard()
 
 

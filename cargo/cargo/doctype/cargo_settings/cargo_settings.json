@@ -14,6 +14,8 @@
   "central_webhook_secret",
   "central_webhook_enabled",
   "jwks_url",
+  "signing_key_id",
+  "signing_private_key",
   "column_break_atlas",
   "atlas_url",
   "atlas_token",
@@ -139,6 +141,19 @@
    "fieldtype": "Data",
    "label": "JWKS URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "signing_key_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Signing Key ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "signing_private_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Signing Private Key"
   },
   {
    "description": "Regional wildcard domain used for public service routes.",
@@ -333,7 +348,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-13 17:00:00.000000",
+ "modified": "2026-11-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

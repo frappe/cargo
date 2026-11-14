@@ -116,11 +116,12 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertFalse(self.saved_without("region_id", 0))
 
 	def test_the_key_set_and_region_reach_datum_from_settings(self):
-		"""Both are Cargo Settings' to own: datum verifies against the same merged set for
-		the same region, so restating them on the host is a second copy that can drift."""
+		"""Datum verifies against Cargo's key set for Cargo's region."""
 		environment = self.environment()
 
-		self.assertEqual(environment["DATUM_JWKS_URL"], SETTINGS["jwks_url"])
+		self.assertEqual(
+			environment["DATUM_JWKS_URL"], f"{SETTINGS['cargo_url']}/api/method/cargo.api.jwks.get_jwks"
+		)
 		self.assertEqual(environment["DATUM_REGION_ID"], str(SETTINGS["region_id"]))
 
 	def test_the_clickhouse_defaults_are_carried(self):
@@ -620,7 +621,6 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		)
 		refresh = ran.call_args_list[0].args[1]
 		self.assertIn("datum-refresh.timer", refresh)
-		# Central only learns the endpoint once this host is Active, so Cargo names it.
 		self.assertIn(f"export DATUM_ENDPOINT={shlex.quote(self.server.service_endpoint)}", refresh)
 
 	def test_setup_installs_the_agent_once_datum_is_installed(self):

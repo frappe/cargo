@@ -14,8 +14,8 @@ from frappe import _
 from frappe.utils.password import get_decrypted_password
 
 from cargo.atlas_client import AtlasClient, host_port
-from cargo.auth import generate_machine_token
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.issuer import generate_machine_token
 from cargo.object_storage.client import Client, Error
 from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 from cargo.telemetry.agent import datum_refresh_script, install_script
@@ -215,9 +215,7 @@ class Setup(Client):
 		"""Atlas replaces the whole map, so the role and Datum token are always sent again."""
 		metadata = {
 			"role": machine["role"],
-			"datum_telemetry_token": generate_machine_token(
-				machine["role"], machine["name"], machine["vm_id"]
-			),
+			"datum_telemetry_token": generate_machine_token(machine["name"], machine["vm_id"]),
 			**(extra or {}),
 		}
 		AtlasClient.from_settings().replace_vm_metadata(machine["vm_id"], metadata)

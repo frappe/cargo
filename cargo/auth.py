@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import functools
-import time
 import typing
 from collections.abc import Callable
 from typing import Any
 
 import frappe
-import jwt
 from frappe import _
 
 if typing.TYPE_CHECKING:
@@ -114,25 +112,3 @@ def jwks_client(url: str) -> PyJWKClient:
 		jwks_clients[url] = client
 
 	return client
-
-
-def generate_machine_token(role: str, machine: str, virtual_machine: str | None = None) -> str:
-	"""A credential one machine trades with Central for its own Datum token. Central checks
-	it with the region's webhook secret, which only Central and this Cargo hold. A machine sends
-	under the name of its Atlas Virtual Machine; the Cargo site (role `cargo`) sends as `cargo`."""
-	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-	claims = {
-		"iss": "cargo",
-		# Keeps the token from passing as a webhook signature made with the same secret.
-		"aud": "central:datum-credential",
-		"region": settings.region,
-		"machine": machine,
-		"role": role,
-		"iat": int(time.time()),
-	}
-	if virtual_machine:
-		claims["virtual_machine"] = virtual_machine
-
-	return jwt.encode(
-		claims, settings.get_password("central_webhook_secret", raise_exception=True), algorithm="HS256"
-	)

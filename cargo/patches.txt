@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 cargo.patches.reconfigure_gateway_cors
 cargo.patches.protect_service_machines
+cargo.patches.create_signing_key
