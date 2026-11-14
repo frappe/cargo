@@ -14,6 +14,7 @@ from cargo.telemetry.doctype.datum_server.datum_server import (
 	REGION_HEADER,
 	SOURCE,
 	SOURCE_HEADER,
+	USER_PASSWORDS,
 	WEBHOOK_NAME,
 	DatumServer,
 )
@@ -153,18 +154,15 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		self.assertNotIn("DATUM_CLICKHOUSE_HOST", self.environment(clickhouse_host=""))
 
 	def test_every_user_password_is_generated_and_distinct(self):
-		"""The install writes all three into ClickHouse, so nothing has to be kept in step."""
+		"""The install writes all of them into ClickHouse, so nothing has to be kept in step."""
 		doc = self.server()
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		secrets = {
-			field: doc.get_password(field)
-			for field in ("datum_user_password", "insights_user_password", "default_user_password")
-		}
+		secrets = {field: doc.get_password(field) for field in USER_PASSWORDS}
 
 		self.assertTrue(all(secrets.values()))
-		self.assertEqual(len(set(secrets.values())), 3)
+		self.assertEqual(len(set(secrets.values())), len(USER_PASSWORDS))
 		# datum-migrate refuses a password carrying `--` or a quote.
 		self.assertTrue(all(value.isalnum() for value in secrets.values()))
 
@@ -180,7 +178,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 			}
 		).save()
 
-		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+		for field in USER_PASSWORDS:
 			with self.subTest(field=field):
 				self.assertTrue(server.get_password(field))
 
@@ -200,6 +198,10 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		"""Datum defaults to ClickHouse's `default` user, which may write anywhere."""
 		self.assertEqual(self.environment()["DATUM_CLICKHOUSE_USER"], "datum")
 
+	def test_the_beacon_password_is_handed_to_the_migration(self):
+		"""datum-migrate creates the select-only user that Beacon runs alert rules as."""
+		self.assertTrue(self.environment()["BEACON_USER_PASSWORD"])
+
 	def test_the_admin_password_is_handed_to_the_migration(self):
 		"""Only datum-migrate uses it, to create the other two users."""
 		self.assertTrue(self.environment()["DEFAULT_USER_PASSWORD"])
@@ -209,7 +211,7 @@ class IntegrationTestDatumServer(IntegrationTestCase):
 		doc.insert()
 		self.addCleanup(frappe.db.rollback)
 
-		for field in ("datum_user_password", "insights_user_password", "default_user_password"):
+		for field in USER_PASSWORDS:
 			with self.subTest(field=field):
 				self.assertEqual(doc.reveal_password(field), doc.get_password(field))
 

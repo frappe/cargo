@@ -37,7 +37,12 @@ if typing.TYPE_CHECKING:
 SETUP_TIMEOUT = 30 * 60
 MAX_PORT = 65535
 CLICKHOUSE_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+\.\d+")
-USER_PASSWORDS = ("datum_user_password", "insights_user_password", "default_user_password")
+USER_PASSWORDS = (
+	"datum_user_password",
+	"insights_user_password",
+	"beacon_user_password",
+	"default_user_password",
+)
 WEBHOOK_NAME = "datum_server"
 SOURCE_HEADER = "X-FC-Source"
 REGION_HEADER = "X-FC-Region"
@@ -62,6 +67,7 @@ class DatumServer(WorkflowBuilder):
 		clickhouse_port: DF.Int
 		clickhouse_version: DF.Data
 		commit: DF.Data
+		beacon_user_password: DF.Password | None
 		datum_user_password: DF.Password | None
 		default_user_password: DF.Password | None
 		error: DF.SmallText | None
@@ -418,6 +424,7 @@ class DatumServer(WorkflowBuilder):
 			"DATUM_CLICKHOUSE_USER": "datum",
 			"DATUM_USER_PASSWORD": self.get_password("datum_user_password", raise_exception=False),
 			"INSIGHTS_USER_PASSWORD": self.get_password("insights_user_password", raise_exception=False),
+			"BEACON_USER_PASSWORD": self.get_password("beacon_user_password", raise_exception=False),
 			"DEFAULT_USER_PASSWORD": self.get_password("default_user_password", raise_exception=False),
 			"DATUM_TIMEOUT": str(self.timeout_seconds),
 			"DATUM_JWKS_URL": settings.jwks_url,

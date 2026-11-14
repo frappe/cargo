@@ -11,6 +11,7 @@ export DEBIAN_FRONTEND=noninteractive
 : "${DATUM_CLICKHOUSE_USER:?set it to the user datum-api connects as}"
 : "${DATUM_USER_PASSWORD:?set it to the password for the datum user}"
 : "${INSIGHTS_USER_PASSWORD:?set it to the password for the insights user}"
+: "${BEACON_USER_PASSWORD:?set it to the password for the beacon user}"
 : "${DEFAULT_USER_PASSWORD:?set it to the password for the ClickHouse default user}"
 : "${CLICKHOUSE_VERSION:?CLICKHOUSE_VERSION is required}"
 
@@ -159,7 +160,7 @@ install -o "$SERVICE_USER" -g "$SERVICE_USER" -m 600 /dev/null /etc/datum.env
 } >> /etc/datum.env
 
 # Connects as `default`, because `datum` is what it is about to create.
-as_user "set -a; . /etc/datum.env; set +a; $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate \
+as_user "set -a; . /etc/datum.env; set +a; BEACON_USER_PASSWORD=$(printf '%q' "$BEACON_USER_PASSWORD") $UV run --directory $(printf '%q' "$DATUM_DIR") datum-migrate \
 	--insights-user-password $(printf '%q' "$INSIGHTS_USER_PASSWORD") \
 	--default-user-password $(printf '%q' "$DEFAULT_USER_PASSWORD")"
 
