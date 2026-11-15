@@ -5,6 +5,7 @@
 -- pending_for: 900
 -- resolve_after: 3600
 -- No failure reports a build loop that stopped, so the age of the newest usable image does.
+-- Cargo sends the age only while Track Pilot Releases is on, so a person who turns tracking off gets no alert.
 SELECT 'cargo' AS resource_id, key AS alert_key, age AS value,
        concat('the newest usable ', key, ' image is ', toString(round(age / 86400, 1)), ' days old') AS detail
 FROM (

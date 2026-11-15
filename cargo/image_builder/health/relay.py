@@ -6,6 +6,8 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
+from cargo.image_builder.doctype.pilot_image.pilot_image import is_tracking_releases
+
 INGEST_PATH = "/v1/ingest"
 SHIP_TIMEOUT = 30
 PREFIX = "cargo_pilot_image_"
@@ -129,7 +131,11 @@ class Telemetry:
 
 	def get_newest_completed_samples(self) -> list[dict]:
 		"""How old the newest usable image is. A growing age says building has stopped,
-		which no failure ever reports."""
+		which no failure ever reports. Without release tracking nothing builds on its own,
+		so no age is sent."""
+		if not is_tracking_releases():
+			return []
+
 		samples = []
 		for build in self.get_newest_completed_builds():
 			if not build.built_at:
