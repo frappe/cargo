@@ -31,6 +31,7 @@ class UnitTestBucket(UnitTestCase):
 		self.bucket.name = BUCKET
 		self.patch(Bucket, "garage", Client(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001")))
 		self.saved = self.patch(Bucket, "save")
+		self.patch(Client, "status", return_value={"nodes": [{"garageVersion": "v2.3.0", "isUp": True}]})
 
 	def patch(self, target, attribute, *args, **kwargs):
 		patcher = patch.object(target, attribute, *args, **kwargs)
@@ -430,6 +431,7 @@ class UnitTestBucket(UnitTestCase):
 
 	def test_a_new_bucket_with_no_caps_asks_garage_for_no_quota(self):
 		"""Every create would otherwise carry a pointless round trip."""
+		self.patch(Bucket, "apply_cors_rules")
 		quota = self.patch(Bucket, "apply_quota")
 		self.bucket.flags.in_insert = True
 
@@ -438,6 +440,7 @@ class UnitTestBucket(UnitTestCase):
 		quota.assert_not_called()
 
 	def test_a_new_bucket_with_a_cap_sends_it_once_the_bucket_exists(self):
+		self.patch(Bucket, "apply_cors_rules")
 		quota = self.patch(Bucket, "apply_quota")
 		self.bucket.flags.in_insert = True
 		self.bucket.max_size_gib = 2

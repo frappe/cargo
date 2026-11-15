@@ -19,7 +19,6 @@ class IntegrationTestProxy(IntegrationTestCase):
 	def setUp(self):
 		frappe.set_user("Administrator")
 		use_test_settings()
-		frappe.db.set_single_value("Cargo Settings", "central_url", "https://central.test/dashboard")
 		# Other suites commit clusters that serve or set up, which would block publishing DNS here.
 		frappe.db.set_value(
 			"Object Storage Cluster", {"status": ("in", ("Active", "Setting Up"))}, "status", "Draft"
@@ -56,15 +55,6 @@ class IntegrationTestProxy(IntegrationTestCase):
 		self.assertEqual(environment["S3_UPSTREAM"], f"[{GATEWAY_ADDRESS}]:{self.cluster.s3_port}")
 		self.assertEqual(environment["ADMIN_UPSTREAM"], f"[{GATEWAY_ADDRESS}]:{self.cluster.admin_port}")
 
-	def test_s3_accepts_browser_calls_from_the_central_origin_only(self):
-		self.assertEqual(self.proxy().environment["CORS_ORIGIN"], "https://central.test")
-
-	def test_a_proxy_cannot_be_set_up_without_a_central_url(self):
-		frappe.db.set_single_value("Cargo Settings", "central_url", "")
-
-		with self.assertRaisesRegex(frappe.ValidationError, "Central URL"):
-			self.proxy().environment
-
 	def test_a_proxy_cannot_be_set_up_without_a_domain(self):
 		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
 
@@ -85,7 +75,8 @@ class IntegrationTestProxy(IntegrationTestCase):
 		self.assertIn(f"s3-svc.{domain} {{", sent)
 		self.assertIn(f"s3-admin-svc.{domain} {{", sent)
 		self.assertIn(f"reverse_proxy [{GATEWAY_ADDRESS}]:{self.cluster.s3_port}", sent)
-		self.assertIn('header_down Access-Control-Allow-Origin "https://central.test"', sent)
+		# Garage answers CORS per bucket; a header Caddy set would override every bucket's origins.
+		self.assertNotIn("Access-Control-", sent)
 
 	def test_a_gateway_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)

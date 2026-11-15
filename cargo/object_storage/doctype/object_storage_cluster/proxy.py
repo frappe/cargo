@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import typing
-from urllib.parse import urlsplit
 
-import frappe
 from frappe import _
 
 from cargo.atlas_client import host_port
@@ -50,17 +48,7 @@ class Proxy(Caddy):
 			"WILDCARD_DOMAIN": self.cluster.wildcard_domain,
 			"S3_UPSTREAM": host_port(gateway, self.cluster.s3_port),
 			"ADMIN_UPSTREAM": host_port(gateway, self.cluster.admin_port),
-			"CORS_ORIGIN": self.central_origin,
 		}
-
-	@property
-	def central_origin(self) -> str:
-		"""The one origin S3 accepts browser calls from: the Central dashboard's."""
-		url = urlsplit(frappe.db.get_single_value("Cargo Settings", "central_url") or "")
-		if not (url.scheme and url.netloc):
-			frappe.throw(_("Central URL must be set in Cargo Settings."))
-
-		return f"{url.scheme}://{url.netloc}"
 
 	@property
 	def is_serving(self) -> bool:

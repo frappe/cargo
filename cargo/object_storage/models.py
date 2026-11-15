@@ -94,3 +94,15 @@ class RotateCredentialsResponse:
 
 	def asdict(self) -> dict[str, Any]:
 		return asdict(self)
+
+
+@dataclass
+class AllowedOriginsResponse:
+	"""The websites that may call the bucket from a browser, besides the Central dashboard."""
+
+	name: str
+	region: str
+	allowed_origins: list[str]
+
+	def asdict(self) -> dict[str, Any]:
+		return asdict(self)

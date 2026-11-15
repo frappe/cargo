@@ -4,6 +4,7 @@ from frappe import _
 from cargo.auth import verify_token
 from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.object_storage.models import (
+	AllowedOriginsResponse,
 	BucketCredentials,
 	BucketUsageResponse,
 	CreateBucketResponse,
@@ -154,3 +155,26 @@ def set_quota(name: str, size_gib: int, region: str, max_objects: int) -> dict:
 	bucket.save(ignore_permissions=True)
 
 	return SetQuotaResponse(name=name, region=region, size_gib=size_gib).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def get_allowed_origins(name: str, region: str) -> dict:
+	"""The websites that may call this bucket from a browser. The Central dashboard always may."""
+	bucket = bucket_for(name, region)
+
+	return AllowedOriginsResponse(name=name, region=region, allowed_origins=bucket.origins).asdict()
+
+
+# nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@verify_token
+def set_allowed_origins(name: str, region: str, origins: list[str]) -> dict:
+	"""Replace the websites that may call this bucket from a browser. An empty list leaves the
+	Central dashboard alone."""
+	bucket = bucket_for(name, region)
+	bucket.set("allowed_origins", [{"origin": origin} for origin in origins])
+	bucket.save(ignore_permissions=True)
+
+	return AllowedOriginsResponse(name=name, region=region, allowed_origins=bucket.origins).asdict()

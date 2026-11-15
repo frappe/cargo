@@ -10,6 +10,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils.synchronization import filelock
 
+from cargo.object_storage import cors
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.models import BucketCredentials, BucketUsage
 
@@ -29,9 +30,13 @@ class Bucket(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from cargo.object_storage.doctype.bucket_allowed_origin.bucket_allowed_origin import (
+			BucketAllowedOrigin,
+		)
 		from cargo.object_storage.doctype.bucket_credential.bucket_credential import BucketCredential
 		from cargo.object_storage.doctype.bucket_tag.bucket_tag import BucketTag
 
+		allowed_origins: DF.Table[BucketAllowedOrigin]
 		bucket_credentials: DF.Table[BucketCredential]
 		bucket_name: DF.Data
 		cluster: DF.Link
@@ -48,11 +53,29 @@ class Bucket(Document):
 		"""One caller at a time per bucket name."""
 		return filelock(f"garage-bucket-{self.bucket_name}", timeout=30)
 
+	@property
+	def origins(self) -> list[str]:
+		return [row.origin for row in self.allowed_origins]
+
+	def validate(self) -> None:
+		"""Origins as the browser sends them, since Garage matches the Origin header exactly."""
+		origins = cors.normalize_origins(self.origins)
+		if origins != self.origins:
+			self.set("allowed_origins", [{"origin": origin} for origin in origins])
+
 	def before_insert(self) -> None:
 		"""Before Frappe names the key rows, so their secrets can be saved."""
 		self.provision()
 
 	def on_update(self) -> None:
+		if self.flags.in_insert:
+			# Caddy still answers CORS for a cluster on an older Garage, until setup moves it.
+			if cors.supported_by(self.garage):
+				self.apply_cors_rules()
+		elif self.origins_changed():
+			cors.require_support(self.garage)
+			self.apply_cors_rules()
+
 		# An uncapped new bucket needs no call: Garage caps nothing until it is told to.
 		if self.flags.in_insert and not (self.max_size_gib or self.max_objects):
 			return
@@ -238,6 +261,19 @@ class Bucket(Document):
 			quota_bytes=quotas.get("maxSize"),
 			quota_objects=quotas.get("maxObjects"),
 		)
+
+	def origins_changed(self) -> bool:
+		before = self.get_doc_before_save()
+		return not before or before.origins != self.origins
+
+	def apply_cors_rules(self) -> None:
+		"""Send this bucket's origins to Garage, the dashboard's among them. Garage applies them
+		to the browser's preflight and to every answer after it."""
+		bucket_id = self.get_bucket_id()
+		if not bucket_id:
+			frappe.throw(_("This cluster has no bucket called {0}.").format(self.bucket_name))
+
+		self.garage.set_bucket_cors_rules(bucket_id, cors.rules_for(self.origins))
 
 	def apply_quota(self) -> None:
 		"""Send this record's caps to Garage, which counts bytes as it writes them. Zero is

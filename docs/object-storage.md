@@ -31,9 +31,27 @@ Each new machine boots from the Ubuntu system image that Atlas serves when the m
 4. Wait. `sync_all_machines` moves each machine to Running when Atlas reports it up with a mesh address.
 5. Select **Set Up Cluster**.
 
-Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts Caddy on the gateway, and waits until `s3-svc` and `s3-admin-svc` answer over HTTPS. The gateway has a public IPv4 from Atlas. Before it installs Caddy, setup replaces the gateway's Atlas firewall and asks Atlas to point both names at that address, and their `internal-` names at the gateway's mesh address. You do not set DNS by hand. To publish the records again without a full setup, select **Update DNS Records**. Caddy obtains and renews the certificates itself. Garage listens on each node's mesh address only, so the public address reaches Caddy alone. Caddy sends CORS headers on `s3-svc` for the origin of `central_url` only, so the Central dashboard can upload and download with presigned URLs. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
+Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts Caddy on the gateway, and waits until `s3-svc` and `s3-admin-svc` answer over HTTPS. The gateway has a public IPv4 from Atlas. Before it installs Caddy, setup replaces the gateway's Atlas firewall and asks Atlas to point both names at that address, and their `internal-` names at the gateway's mesh address. You do not set DNS by hand. To publish the records again without a full setup, select **Update DNS Records**. Caddy obtains and renews the certificates itself. Garage listens on each node's mesh address only, so the public address reaches Caddy alone. Caddy sends no CORS headers of its own: Garage answers CORS for each bucket, as [browser access](#browser-access) explains. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
 
 When setup applies the layout, it also removes each Garage node that no machine of the cluster holds: the node of a released machine, and the old node of a machine that came back with a new node id after it lost its metadata. The old node is removed only once the new one is up, so a machine that is down keeps its role. On every run, if Garage still waits for nodes that are down and no longer in the layout, and no node in the layout is down, setup tells Garage to stop waiting for them (`ClusterLayoutSkipDeadNodes`). A skip that failed or had to wait is tried again on the next run. Garage refuses this when the remaining nodes do not hold a full copy. Run setup after you release a machine or replace a node.
+
+## Browser access
+
+A browser can call a bucket directly, with a presigned URL, only from a website the bucket allows. Each **Bucket** keeps its allowed websites in **Allowed Origins**. An origin is a scheme, a host and an optional port, such as `https://files.example.com`. It has no path and no wildcard. Cargo stores each origin as a browser sends it in the `Origin` header: lowercase, with no default port and no trailing slash.
+
+Cargo writes the origins to Garage as the bucket's CORS rules, through the admin API (`UpdateBucket`). S3's own `PutBucketCors` needs a key with owner permission, and the keys Cargo issues are read and write only. Each rule allows `GET`, `HEAD`, `PUT` and `POST` with any request header, and lets the browser read `ETag`. Cargo writes one rule for each origin, because Garage names every origin of a matching rule in one `Access-Control-Allow-Origin` header, and a browser refuses a header that names more than one.
+
+The origin of `central_url` is always added, so the Central dashboard can upload and download on every bucket. It is not stored on the bucket. Cargo writes the rules when it creates a bucket, when the allowed origins change, and for every bucket of the cluster on each setup run, before it installs Caddy.
+
+Caddy passes every request through, the unsigned preflight `OPTIONS` among them. Garage reads the bucket from the path and answers from that bucket's rules: it refuses a preflight from any other origin with a 403. The signature still authorizes each request. CORS only lets the browser send it and read the answer.
+
+Garage before v2.3.0 accepts CORS rules on `UpdateBucket` and ignores them. Cargo reads each node's version from the cluster status first:
+
+- Setup is refused before it changes anything when a node runs an older Garage, so the cluster keeps its status and its old Caddy. Upgrade Garage on every node, then set up again. Setup installs Garage only on a machine that has not joined, so changing the cluster's **Version** does not upgrade the nodes that joined.
+- A change to a bucket's allowed origins is refused with the version found.
+- A new bucket is still created, without rules. Its cluster still runs the old Caddy, which answers CORS for the dashboard. The next setup run writes its rules.
+
+Garage v2.3.0 does not send `Access-Control-Max-Age`, so a browser sends a preflight before each upload.
 
 ## Releasing a machine
 

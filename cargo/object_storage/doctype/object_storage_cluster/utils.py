@@ -6,6 +6,8 @@ import frappe
 from frappe import _
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage import cors
+from cargo.object_storage.client import Error
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 
 if typing.TYPE_CHECKING:
@@ -44,6 +46,7 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
 	ensure_gateway_is_public(cluster)
+	ensure_garage_takes_bucket_cors(cluster)
 
 	running_storage_nodes = [node for node in cluster.storage_nodes if node.status == "Running"]
 	if len(running_storage_nodes) != len(cluster.storage_nodes):
@@ -69,6 +72,16 @@ def ensure_gateway_is_public(cluster: ObjectStorageCluster) -> None:
 				cluster.gateway_node.name
 			)
 		)
+
+
+def ensure_garage_takes_bucket_cors(cluster: ObjectStorageCluster) -> None:
+	"""Refuse setup before it changes anything, so a live cluster on an older Garage stays
+	Active: setup's Caddy leaves CORS to Garage, and an older Garage ignores it."""
+	try:
+		cors.require_support(cluster.garage_setup)
+	except Error:
+		# Nothing answers yet: setup installs the cluster's Garage Version and checks again.
+		return
 
 
 def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> list[str]:

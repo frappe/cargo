@@ -13,6 +13,8 @@
   "quota_section",
   "max_size_gib",
   "max_objects",
+  "browser_access_section",
+  "allowed_origins",
   "tags_section",
   "tags"
  ],
@@ -76,6 +78,18 @@
    "read_only": 1
   },
   {
+   "fieldname": "browser_access_section",
+   "fieldtype": "Section Break",
+   "label": "Browser Access"
+  },
+  {
+   "description": "Websites that may call this bucket from a browser, such as https://files.example.com. The Central dashboard is always allowed.",
+   "fieldname": "allowed_origins",
+   "fieldtype": "Table",
+   "label": "Allowed Origins",
+   "options": "Bucket Allowed Origin"
+  },
+  {
    "fieldname": "tags_section",
    "fieldtype": "Section Break",
    "label": "Tags"
@@ -92,7 +106,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-30 15:01:10.902710",
+ "modified": "2026-11-15 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket",

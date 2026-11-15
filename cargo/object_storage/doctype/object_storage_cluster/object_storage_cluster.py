@@ -14,6 +14,7 @@ from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE, NodeSpec, PlacementRule, Role
+from cargo.object_storage import cors
 from cargo.object_storage.doctype.object_storage_cluster.proxy import PROXY_SITE_NAMES, S3_SITE_NAME, Proxy
 from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT, Setup
 from cargo.object_storage.doctype.object_storage_cluster.utils import (
@@ -275,8 +276,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not self.verify_connected_nodes():
 			return
 
-		# Caddy last: it only routes to a gateway ready to take its traffic.
-		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
+		# Caddy last: it only routes to a gateway ready to take its traffic, and leaves CORS
+		# to Garage, so every bucket's rules must be there first.
+		if not (
+			self.apply_bucket_cors_rules() and self.install_caddy() and self.check_if_proxy_is_configured()
+		):
 			return
 
 		self.mark_cluster_status("Active", None)
@@ -315,6 +319,29 @@ class ObjectStorageCluster(WorkflowBuilder):
 					message=frappe.get_traceback(with_context=True),
 				)
 				return False
+
+		return True
+
+	@task(queue="long")
+	def apply_bucket_cors_rules(self) -> bool:
+		"""Write each bucket's allowed origins to Garage. Run on every setup, so it also repairs
+		rules that drifted. Refused on a Garage that would ignore them."""
+		try:
+			cors.require_support(self.garage_setup)
+			for name in frappe.get_all("Bucket", filters={"cluster": self.name}, pluck="name"):
+				frappe.get_doc("Bucket", name).apply_cors_rules()
+		except Exception as exception:
+			frappe.log_error(
+				title=f"{self.name} could not apply bucket CORS rules",
+				message=frappe.get_traceback(with_context=True),
+			)
+			reason = str(exception) if isinstance(exception, frappe.ValidationError) else None
+			self.mark_cluster_status(
+				"Failed",
+				reason
+				or _("Garage would not take the buckets' CORS rules. See the Error Log, then set up again."),
+			)
+			return False
 
 		return True
 

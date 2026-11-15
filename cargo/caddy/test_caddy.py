@@ -13,7 +13,6 @@ ENVIRONMENT = {
 	"WILDCARD_DOMAIN": "example.test",
 	"S3_UPSTREAM": "[fdaa:1::7]:3900",
 	"ADMIN_UPSTREAM": "[fdaa:1::7]:3903",
-	"CORS_ORIGIN": "https://central.test",
 }
 
 
