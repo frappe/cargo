@@ -1,0 +1,11 @@
+-- title: Object storage API unreachable
+-- severity: High
+-- url: https://s3-svc.{wildcard_domain}/beacon-probe/
+-- region: all
+-- expected_status: 403
+-- timeout: 10
+-- pending_for: 180
+-- resolve_after: 300
+-- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-api-unreachable.md
+-- Beacon sends an unsigned S3 request through the gateway each minute, and Garage refuses it with 403. A 403 shows that the S3 API answers.
+-- Garage counts the request, so the Object Storage service has valid events when customers send no requests.
