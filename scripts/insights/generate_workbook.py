@@ -3,6 +3,7 @@ import json
 
 from cargo_dashboard import add_cargo_dashboard
 from object_storage_dashboard import add_object_storage_dashboard
+from pilot_image_dashboard import add_pilot_image_dashboard
 from workbook import Workbook
 
 if __name__ == "__main__":
@@ -13,4 +14,5 @@ if __name__ == "__main__":
 	workbook = Workbook("Cargo", arguments.data_source)
 	add_cargo_dashboard(workbook)
 	add_object_storage_dashboard(workbook)
+	add_pilot_image_dashboard(workbook)
 	print(json.dumps(workbook.export(), indent=1))
