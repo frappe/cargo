@@ -97,6 +97,7 @@ class IntegrationTestPilotImageTelemetry(IntegrationTestCase):
 		self.assertNotIn(building.name, self.images_in("in_progress_seconds"))
 
 	def test_the_newest_completed_image_reports_its_age(self):
+		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 1)
 		self.image("Site", built_at=now_datetime() - timedelta(days=3))
 		self.image("Site", built_at=now_datetime() - timedelta(hours=1))
 
@@ -107,6 +108,12 @@ class IntegrationTestPilotImageTelemetry(IntegrationTestCase):
 		]
 		self.assertEqual(len(site), 1)
 		self.assertLess(site[0]["value"], 2 * 3600)
+
+	def test_no_image_age_is_sent_while_releases_are_not_tracked(self):
+		frappe.db.set_single_value("Cargo Settings", "track_pilot_releases", 0)
+		self.image("Site", built_at=now_datetime() - timedelta(days=3))
+
+		self.assertEqual(self.samples("newest_completed_age_seconds"), [])
 
 	def test_a_failure_says_where_and_why_and_how_often(self):
 		failed = self.image(
