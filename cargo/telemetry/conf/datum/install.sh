@@ -117,6 +117,14 @@ SYSTEM_LOGS=(query_log query_views_log query_metric_log part_log trace_log text_
 	echo "</clickhouse>"
 } > /etc/clickhouse-server/config.d/datum-system-logs.xml
 
+# The stock limit is 90% of RAM, so ClickHouse and Datum together can exhaust it, and the
+# kernel kills ClickHouse. At 75% a heavy query fails instead.
+cat > /etc/clickhouse-server/config.d/datum-memory.xml <<'CLICKHOUSE_MEMORY'
+<clickhouse>
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+</clickhouse>
+CLICKHOUSE_MEMORY
+
 systemctl enable --quiet clickhouse-server
 systemctl restart clickhouse-server
 
