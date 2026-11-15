@@ -101,8 +101,9 @@ could sign a token claiming to be Atlas, or the reverse.
 
 A failed check answers the same way whatever failed: `AuthenticationError`, no detail.
 
-Atlas already mints this audience for its own bucket call, with subject `atlas` and a 5-minute
-lifetime. Central does not mint it yet, so no Central call gets past the audience check today.
+Both planes mint this audience. Atlas signs its own bucket call with subject `atlas`, and
+Central signs every bucket call with subject `central` and scope `bucket:*`. Both tokens last
+5 minutes.
 
 It travels in `X-Cargo-Access-Token` rather than `Authorization`, because Frappe rejects an
 unrecognised `Authorization` header with a 401 before the endpoint is reached.
