@@ -4,10 +4,10 @@
 from unittest.mock import patch
 
 import frappe
+from cloudtoolkit.ssh.output_log import get_cache_key, live_output
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import TELEMETRY
-from cargo.ssh import cache_key, live_output
 from cargo.telemetry.doctype.datum_server.datum_server import DatumServer
 from cargo.telemetry.spawn import (
 	CONFIG_KEY,
@@ -254,9 +254,9 @@ class IntegrationTestDatumServerSetupLog(SpawnTestCase):
 		server = self.host()
 		self.machine_of(server)
 		server.db_set("setup_log", "the last run's output")
-		frappe.cache.set_value(cache_key(server.doctype, server.name, "setup_log"), "a stale run")
+		frappe.cache.set_value(get_cache_key(server.doctype, server.name, "setup_log"), "a stale run")
 
-		with patch("pipeline.pipeline.doctype.pipeline.decorators.BoundFlow.run_as_pipeline"):
+		with patch("cloudtoolkit.pipeline.doctype.pipeline.decorators.BoundFlow.run_as_pipeline"):
 			self.host().setup()
 
 		self.assertFalse(self.host().setup_log)

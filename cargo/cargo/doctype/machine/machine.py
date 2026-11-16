@@ -7,6 +7,7 @@ import ipaddress
 from typing import TYPE_CHECKING, Literal
 
 import frappe
+from cloudtoolkit.ssh.client import SSHClient, create_keypair
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, now_datetime
@@ -23,7 +24,6 @@ from cargo.atlas_client import (
 	IPVersion,
 )
 from cargo.client_models import NodeSpec, PlacementRule
-from cargo.ssh import create_keypair
 
 if TYPE_CHECKING:
 	from cargo.atlas_client import AtlasClient
@@ -320,6 +320,10 @@ class Machine(Document):
 			)
 
 		self.db_set("is_termination_protected", enabled)
+
+	@property
+	def ssh_client(self) -> SSHClient:
+		return SSHClient(self.address, private_key=self.get_password("ssh_private_key"))
 
 	@property
 	def tenant_network(self) -> str:

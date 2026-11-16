@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
 from frappe.integrations.doctype.webhook.webhook import (
 	WEBHOOK_SECRET_HEADER,
 	get_webhook_data,
@@ -36,7 +37,6 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	configure_storage_cluster_webhook,
 	ensure_no_other_cluster_serving_or_setting_up,
 )
-from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
@@ -270,7 +270,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 				"status": "Running",
 			}
 		)
-		with patch("pipeline.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
+		with patch("cloudtoolkit.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
 			pipeline.insert(ignore_permissions=True)
 
 		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
@@ -662,7 +662,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 			step = ObjectStorageCluster.__dict__[method]
 			with self.subTest(method=method):
 				self.assertEqual(step._queue, "long")
-				self.assertGreater(step._timeout, SSH_TIMEOUT)
+				self.assertGreater(step._timeout, DEFAULT_TIMEOUT_SECONDS)
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_node(self):
 		"""Nothing hands the node a token later, so setup is the only chance."""

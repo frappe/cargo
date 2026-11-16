@@ -102,15 +102,15 @@ jobs:
             ~/.config/systemd/user
           key: ${{ steps.pilot-bench.outputs.cache-primary-key }}
 
-      # Pilot resolves dependencies only for marketplace apps, so Pipeline is fetched by hand.
+      # Pilot resolves dependencies only for marketplace apps, so cloudtoolkit is fetched by hand.
       - name: Install the app
         working-directory: /home/runner/pilot/benches/frappe-bench
         run: |
           systemctl --user start pilot-mariadb.service
           uv pip install --python env/bin/python -e "apps/frappe[test]"
-          pilot get-app https://github.com/frappe/pipeline --skip-assets
+          pilot get-app https://github.com/frappe/cloudtoolkit --skip-assets
           pilot get-app "$GITHUB_WORKSPACE" --branch "$GITHUB_SHA" --skip-assets
-          pilot install-app test_site pipeline cargo
+          pilot install-app test_site cloudtoolkit cargo
 
       - name: Run Tests
         working-directory: /home/runner/pilot/benches/frappe-bench

@@ -4,8 +4,8 @@
 from unittest.mock import MagicMock, patch
 
 import frappe
+from cloudtoolkit.pipeline.utils import called_methods_in_order
 from frappe.tests import IntegrationTestCase
-from pipeline.pipeline.utils import called_methods_in_order
 
 from cargo.atlas_client import AtlasError, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
@@ -132,7 +132,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image = self.image()
 		with (
 			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
-			patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh"),
+			patch("cloudtoolkit.ssh.client.SSHClient.run"),
 			patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"),
 		):
 			client = atlas.return_value
@@ -155,7 +155,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image = self.image()
 		with (
 			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
-			patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh"),
+			patch("cloudtoolkit.ssh.client.SSHClient.run"),
 		):
 			client = atlas.return_value
 			client.get_vm.return_value = {"current_state": "running"}
@@ -199,7 +199,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 				"status": status,
 			}
 		)
-		with patch("pipeline.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
+		with patch("cloudtoolkit.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
 			pipeline.insert(ignore_permissions=True)
 
 		return pipeline.name
@@ -330,7 +330,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with (
 			patch.object(PilotImage, "save", deadlock_once),
 			patch.object(frappe.db, "rollback"),
-			patch("pipeline.pipeline.utils.time.sleep"),
+			patch("cloudtoolkit.pipeline.utils.time.sleep"),
 		):
 			self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
 
@@ -339,7 +339,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with (
 			patch.object(PilotImage, "save", side_effect=frappe.QueryDeadlockError),
 			patch.object(frappe.db, "rollback"),
-			patch("pipeline.pipeline.utils.time.sleep"),
+			patch("cloudtoolkit.pipeline.utils.time.sleep"),
 			self.assertRaises(frappe.QueryDeadlockError),
 		):
 			self.pin_releases(image)

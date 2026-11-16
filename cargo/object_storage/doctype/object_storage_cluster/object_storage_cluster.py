@@ -7,10 +7,12 @@ import typing
 from functools import cached_property
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.utils import now_datetime
-from pipeline.pipeline.doctype.pipeline.decorators import flow, task
-from pipeline.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
 
 from cargo.atlas_client import base_image_id
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES
@@ -29,16 +31,15 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	ensure_no_other_active_cluster,
 )
 from cargo.object_storage.health import queue_cluster_metrics_exporters
-from cargo.ssh import SSH_TIMEOUT, OutputLog
 
 if typing.TYPE_CHECKING:
-	from pipeline.pipeline.doctype.pipeline.pipeline import Pipeline
+	from cloudtoolkit.pipeline.doctype.pipeline.pipeline import Pipeline
 
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
-MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
+MACHINE_STEP_TIMEOUT = 3 * DEFAULT_TIMEOUT_SECONDS
 # Fetches run one machine after another: a gateway and up to four storage nodes.
 FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 MIN_SCRAPE_SECONDS = 60

@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-required_apps = ["frappe/pipeline"]
+required_apps = ["frappe/cloudtoolkit"]
 
 add_to_apps_screen = [
 	{

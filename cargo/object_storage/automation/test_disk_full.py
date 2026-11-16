@@ -67,6 +67,7 @@ class GrowStorageDisksTestCase(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": disk_gb,
 				"vm_id": f"vm-{role}-{frappe.generate_hash(length=8)}",
+				"address": f"fdaa:1::{frappe.generate_hash(length=4)}",
 				"status": "Running",
 			}
 		).insert()
@@ -325,12 +326,12 @@ class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "disk_size_gb"), 150)
 
 	def test_only_storage_filesystems_are_grown(self):
-		with patch("cargo.object_storage.doctype.object_storage_cluster.setup.run_over_ssh") as ssh:
+		with patch("cloudtoolkit.ssh.client.SSHClient.run") as ssh:
 			self.cluster_doc().grow_storage_filesystems()
 
 		self.assertEqual(ssh.call_count, 2)
-		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[1])
-		self.assertIn("resize2fs", ssh.call_args.args[1])
+		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[0])
+		self.assertIn("resize2fs", ssh.call_args.args[0])
 
 	def test_only_a_changed_capacity_is_staged_and_applied(self):
 		frappe.db.set_value("Machine", self.storage[0], "disk_size_gb", 150)
