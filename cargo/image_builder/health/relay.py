@@ -6,7 +6,8 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
-from cargo.image_builder.doctype.pilot_image.pilot_image import is_tracking_releases
+from cargo.image_builder.doctype.pilot_image.apps import get_signup_apps
+from cargo.image_builder.doctype.pilot_image.pilot_image import get_frappe_branches, is_tracking_releases
 
 INGEST_PATH = "/v1/ingest"
 SHIP_TIMEOUT = 30
@@ -53,10 +54,19 @@ class Telemetry:
 
 	def get_latest_builds(self, image_type: str) -> list[dict]:
 		"""The newest build of `image_type` per Frappe branch, and per signup app for Apps
-		images. Builds come newest first, so the first one seen for a branch is its latest."""
+		images. Only what Cargo Settings lists counts: Cargo builds nothing else again.
+		Builds come newest first, so the first one seen for a branch is its latest."""
+		filters = {
+			"image_type": image_type,
+			"status": ("!=", "Retired"),
+			"frappe_branch": ("in", get_frappe_branches()),
+		}
+		if image_type == "Apps":
+			filters["signup_app"] = ("in", get_signup_apps())
+
 		builds = frappe.get_all(
 			"Pilot Image",
-			filters={"image_type": image_type, "status": ("!=", "Retired")},
+			filters=filters,
 			fields=BUILD_FIELDS,
 			order_by="creation desc",
 		)

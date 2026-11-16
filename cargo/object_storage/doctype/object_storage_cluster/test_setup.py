@@ -3,11 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import read_script
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.doctype.object_storage_cluster.setup import CONF, Setup
-from cargo.ssh import script
 from cargo.testing import SETTINGS, use_test_settings
 
 
@@ -39,13 +39,13 @@ class IntegrationTestGarageInstall(IntegrationTestCase):
 		self.assertEqual(environment["ADMIN_BIND_ADDR"], f"[fdaa:1::5]:{cluster.admin_port}")
 
 	def test_the_install_script_binds_no_wildcard_address(self):
-		body = script(*CONF, "install.sh")
+		body = read_script("cargo", *CONF, "install.sh")
 
 		self.assertNotIn("[::]", body)
 		self.assertIn('api_bind_addr = "$S3_BIND_ADDR"', body)
 
 	def test_garage_does_not_log_every_request(self):
-		body = script(*CONF, "install.sh")
+		body = read_script("cargo", *CONF, "install.sh")
 
 		self.assertIn('"RUST_LOG=garage=info,garage_api_common=warn"', body)
 

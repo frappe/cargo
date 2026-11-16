@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import boto3
 import frappe
 from botocore.exceptions import ClientError
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS, SSHClient, read_script
 from frappe import _
 from frappe.utils.password import get_decrypted_password
 
@@ -17,7 +18,6 @@ from cargo.atlas_client import AtlasClient, host_port
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.issuer import generate_machine_token
 from cargo.object_storage.client import Client, Error
-from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 from cargo.telemetry.agent import datum_refresh_script, install_script
 
 BINARY_URL = "https://garagehq.deuxfleurs.fr/_releases/{version}/{arch}/garage"
@@ -85,12 +85,11 @@ class Setup(Client):
 		machine: MachineRow,
 		script: str,
 		on_output: Callable[[str], None] | None = None,
-		timeout: int = SSH_TIMEOUT,
+		timeout: int = DEFAULT_TIMEOUT_SECONDS,
 	) -> str:
 		"""Every command a node is given, streamed to `on_output` as it arrives."""
-		return run_over_ssh(
-			machine["address"], script, self.key_for(machine), on_output=on_output, timeout=timeout
-		)
+		client = SSHClient(machine["address"], private_key=self.key_for(machine))
+		return client.run(script, timeout_seconds=timeout, on_output=on_output).output
 
 	def layout_version(self) -> int:
 		"""The applied layout version, zero if none. Staged changes are a separate field."""
@@ -179,7 +178,7 @@ class Setup(Client):
 		"""Where a node looks for the others after a reboot. Nothing restarts to read it."""
 		return self.run(
 			machine,
-			script(*CONF, "set_peers.sh", environment={"BOOTSTRAP_PEERS": " ".join(peers)}),
+			read_script("cargo", *CONF, "set_peers.sh", environment={"BOOTSTRAP_PEERS": " ".join(peers)}),
 		)
 
 	def setup_machine(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
@@ -189,7 +188,7 @@ class Setup(Client):
 
 		self.run(
 			machine,
-			script(*CONF, "install.sh", environment=self.install_environment(machine)),
+			read_script("cargo", *CONF, "install.sh", environment=self.install_environment(machine)),
 			on_output,
 		)
 		identifier = self.node_identifier(machine, on_output)
@@ -290,7 +289,9 @@ class Setup(Client):
 	def get_newest_metadata_snapshot(self, machine: MachineRow) -> str | None:
 		"""The newest snapshot Garage has finished on this machine, if any."""
 		environment = {"METADATA_DIR": self.cluster.metadata_dir}
-		output = self.run(machine, script(*CONF, "newest_metadata_snapshot.sh", environment=environment))
+		output = self.run(
+			machine, read_script("cargo", *CONF, "newest_metadata_snapshot.sh", environment=environment)
+		)
 		# SSH's own warnings share the stream, so the answer is the one marked line.
 		marked = [
 			line.removeprefix("snapshot=") for line in output.splitlines() if line.startswith("snapshot=")
@@ -307,7 +308,7 @@ class Setup(Client):
 		}
 		return self.run(
 			machine,
-			script(*CONF, "upload_metadata_snapshot.sh", environment=environment),
+			read_script("cargo", *CONF, "upload_metadata_snapshot.sh", environment=environment),
 			on_output,
 			timeout=BACKUP_SSH_TIMEOUT,
 		)
@@ -328,7 +329,9 @@ class Setup(Client):
 	def grow_filesystem(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> None:
 		"""Fill the disk Atlas grew. Until then Garage still sees the old size."""
 		environment = {"DATA_DIR": self.cluster.data_dir}
-		self.run(machine, script(*CONF, "grow_filesystem.sh", environment=environment), on_output)
+		self.run(
+			machine, read_script("cargo", *CONF, "grow_filesystem.sh", environment=environment), on_output
+		)
 
 	def stop_garage(self, machine: MachineRow, on_output: Callable[[str], None] | None = None) -> str:
 		return self.run(machine, "systemctl stop garage", on_output)
@@ -342,7 +345,9 @@ class Setup(Client):
 			"METADATA_DIR": self.cluster.metadata_dir,
 			"SNAPSHOT": snapshot,
 		}
-		return self.run(machine, script(*CONF, "restore_metadata.sh", environment=environment), on_output)
+		return self.run(
+			machine, read_script("cargo", *CONF, "restore_metadata.sh", environment=environment), on_output
+		)
 
 	def fetch_metadata_snapshot(
 		self, machine: MachineRow, snapshot: str, on_output: Callable[[str], None] | None = None
@@ -355,7 +360,7 @@ class Setup(Client):
 		}
 		return self.run(
 			machine,
-			script(*CONF, "fetch_metadata_snapshot.sh", environment=environment),
+			read_script("cargo", *CONF, "fetch_metadata_snapshot.sh", environment=environment),
 			on_output,
 			timeout=BACKUP_SSH_TIMEOUT,
 		)

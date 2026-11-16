@@ -1,17 +1,57 @@
 from __future__ import annotations
 
 import typing
+from types import ModuleType
 from typing import Any, Literal, Self
 
 import frappe
-import requests
+import httpx
+from atlas_client import AuthenticatedClient
+from atlas_client.api.dns_records import set_dns_record
+from atlas_client.api.images import (
+	delete_image,
+	get_image,
+	list_images,
+	update_image_termination_protection,
+)
+from atlas_client.api.vm_actions import (
+	create_virtual_machine_snapshot,
+	pause_virtual_machine,
+	resize_virtual_machine,
+	restart_virtual_machine,
+	resume_virtual_machine,
+	start_virtual_machine,
+	stop_virtual_machine,
+)
+from atlas_client.api.vm_configuration import (
+	attach_virtual_machine_public_ipv4,
+	attach_virtual_machine_public_ipv6,
+	detach_virtual_machine_public_ipv4,
+	detach_virtual_machine_public_ipv6,
+	replace_virtual_machine_metadata,
+	update_virtual_machine_disk,
+	update_virtual_machine_network,
+	update_virtual_machine_termination_protection,
+)
+from atlas_client.api.vm_lifecycle import create_virtual_machine, delete_virtual_machine, get_virtual_machine
+from atlas_client.models import (
+	CreateVirtualMachinePayload,
+	DiskUpdatePayload,
+	DnsRecordPayload,
+	ListImagesImageTypeType0,
+	MetadataReplacementPayload,
+	NetworkUpdatePayload,
+	PublicIPAssignmentPayload,
+	ResizePayload,
+	SnapshotPayload,
+	TerminationProtectionPayload,
+)
 
 from cargo.client_models import PlacementRule
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 
-API_PREFIX = "/api/atlas"
 AUTO_PUBLIC_IP = "auto"
 ANYWHERE = ["0.0.0.0/0", "::/0"]
 IPVersion = Literal["IPv4", "IPv6"]
@@ -29,11 +69,20 @@ BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
 PILOT_IMAGE_OS_TAGS = {key: BASE_IMAGE_TAGS[key] for key in ("os", "os_version")}
 # The most a list route returns in one page.
 IMAGE_PAGE_LIMIT = 100
+POWER_ACTIONS = {
+	"start": start_virtual_machine,
+	"stop": stop_virtual_machine,
+	"pause": pause_virtual_machine,
+	"resume": resume_virtual_machine,
+	"restart": restart_virtual_machine,
+}
+ATTACH_PUBLIC_IP = {"IPv4": attach_virtual_machine_public_ipv4, "IPv6": attach_virtual_machine_public_ipv6}
+DETACH_PUBLIC_IP = {"IPv4": detach_virtual_machine_public_ipv4, "IPv6": detach_virtual_machine_public_ipv6}
 
 
 class AtlasError(RuntimeError):
 	"""An Atlas call failed. One argument, so it survives a pickle round trip: that is how
-	the workflow engine carries an exception back to the flow that raised it."""
+	the pipeline engine carries an exception back to the flow that raised it."""
 
 
 class AtlasNotFound(AtlasError):
@@ -41,16 +90,13 @@ class AtlasNotFound(AtlasError):
 
 
 class AtlasClient:
-	"""Atlas's tenant API. Every route is scoped to the tenant in the header."""
+	"""Atlas's tenant API, through the generated `atlas_client`. Every route is scoped to the tenant."""
 
 	def __init__(self, url: str, token: str, tenant_id: int, timeout: float = 120) -> None:
-		self.url = url.rstrip("/")
-		self.timeout = timeout
 		self.tenant_id = tenant_id
-		self.headers = {
-			"Authorization": f"Bearer {token}",
-			"X-Tenant-ID": str(tenant_id),
-		}
+		self.client = AuthenticatedClient(
+			base_url=url.rstrip("/"), token=token, timeout=httpx.Timeout(timeout)
+		)
 
 	@classmethod
 	def from_settings(cls) -> Self:
@@ -64,45 +110,49 @@ class AtlasClient:
 			tenant_id=settings.atlas_tenant_id,
 		)
 
-	def call(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
-		"""One request against the tenant API. 204 and an empty body both return None."""
+	def call(self, endpoint: ModuleType, *args: Any, **kwargs: Any) -> Any:
+		"""One request built by a generated endpoint. Returns the JSON body, or None when there is none.
+
+		The body is read as JSON, not parsed by the endpoint: a strict parse that fails after Atlas
+		created a machine would read as a failed create, and a retry would create a second one."""
+		name = endpoint.__name__.rsplit(".", 1)[-1]
+		request = endpoint._get_kwargs(*args, x_tenant_id=self.tenant_id, **kwargs)
 		try:
-			response = requests.request(
-				method,
-				f"{self.url}{API_PREFIX}{path}",
-				headers=self.headers,
-				json=body,
-				timeout=self.timeout,
-			)
-		except requests.RequestException as exception:
-			raise AtlasError(f"{method} {path}: {exception}") from exception
+			response = self.client.get_httpx_client().request(**request)
+		except httpx.HTTPError as exception:
+			raise AtlasError(f"{name}: {exception}") from exception
 
 		try:
-			payload = response.json()
+			payload = response.json() if response.content else None
 		except ValueError:
 			payload = None
 
 		if response.status_code == 404:
-			raise AtlasNotFound(f"{method} {path}: {error_message(payload, response.text)}")
-
-		if not response.ok:
+			raise AtlasNotFound(f"{name}: {error_message(payload, response.text)}")
+		if not response.is_success:
 			raise AtlasError(
-				f"{method} {path} answered {response.status_code}: {error_message(payload, response.text)}"
+				f"{name} answered {response.status_code}: {error_message(payload, response.text)}"
 			)
 
 		return payload
 
 	def set_dns_record(self, name: str, address: str) -> None:
 		"""Point a regional service name at an address. Atlas picks A or AAAA and a 300 second TTL."""
-		self.call("PUT", f"/dns-records/{name}", {"address": address})
+		self.call(set_dns_record, name, body=DnsRecordPayload.from_dict({"address": address}))
 
 	def set_vm_firewall(self, vm_id: str, firewall: dict[str, Any]) -> None:
 		"""Replace the VM's whole firewall. Atlas answers before Metal applies it."""
-		self.call("PATCH", f"/virtual-machines/{vm_id}/network", {"firewall": firewall})
+		self.call(
+			update_virtual_machine_network, vm_id, body=NetworkUpdatePayload.from_dict({"firewall": firewall})
+		)
 
 	def replace_vm_metadata(self, machine_id: str, metadata: dict[str, str]) -> None:
 		"""Replace the VM's whole metadata map. Atlas drops every key left out."""
-		self.call("PUT", f"/virtual-machines/{machine_id}/metadata", {"metadata": metadata})
+		self.call(
+			replace_virtual_machine_metadata,
+			machine_id,
+			body=MetadataReplacementPayload.from_dict({"metadata": metadata}),
+		)
 
 	def create_vm(
 		self,
@@ -144,7 +194,7 @@ class AtlasClient:
 		if is_privileged:
 			payload["is_privileged"] = True
 
-		created = self.call("POST", "/virtual-machines", payload)
+		created = self.call(create_virtual_machine, body=CreateVirtualMachinePayload.from_dict(payload))
 		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_virtual_machine returned no id: {created!r}")
 
@@ -152,39 +202,43 @@ class AtlasClient:
 
 	def get_vm(self, vm_id: str) -> dict[str, Any]:
 		"""The VM as Atlas currently sees it, including `current_state`."""
-		return self.call("GET", f"/virtual-machines/{vm_id}")
+		return self.call(get_virtual_machine, vm_id)
 
 	def terminate_vm(self, vm_id: str) -> None:
 		"""Start termination. The VM route answers 404 once cleanup finishes."""
-		self.call("DELETE", f"/virtual-machines/{vm_id}")
+		self.call(delete_virtual_machine, vm_id)
 
 	def set_vm_termination_protection(self, vm_id: str, enabled: bool) -> None:
 		"""Set or clear a VM's termination protection. Atlas refuses to terminate a protected VM."""
-		self.call("PATCH", f"/virtual-machines/{vm_id}/termination-protection", {"enabled": enabled})
+		self.call(
+			update_virtual_machine_termination_protection,
+			vm_id,
+			body=TerminationProtectionPayload(enabled=enabled),
+		)
 
 	def attach_public_ip(self, vm_id: str, version: IPVersion, public_ip: str = AUTO_PUBLIC_IP) -> None:
 		"""Ask Atlas for a public address: one it picks, or a reserved allocation by id. It
 		answers before the address is live."""
-		self.call("PUT", f"/virtual-machines/{vm_id}/public-{version.lower()}", {"public_ip": public_ip})
+		self.call(ATTACH_PUBLIC_IP[version], vm_id, body=PublicIPAssignmentPayload(public_ip=public_ip))
 
 	def detach_public_ip(self, vm_id: str, version: IPVersion) -> None:
 		"""Release the public address. A reserved allocation stays with the tenant."""
-		self.call("DELETE", f"/virtual-machines/{vm_id}/public-{version.lower()}")
+		self.call(DETACH_PUBLIC_IP[version], vm_id)
 
 	def set_power_state(self, vm_id: str, action: str) -> None:
 		"""Ask Atlas to start, stop, pause, resume or restart the VM. It answers before the VM gets there."""
-		self.call("POST", f"/virtual-machines/{vm_id}/actions/{action}")
+		self.call(POWER_ACTIONS[action], vm_id)
 
 	def grow_disk(self, vm_id: str, disk_mib: int) -> None:
 		"""Grow the VM's disk while it runs."""
-		self.call("PATCH", f"/virtual-machines/{vm_id}/disk", {"disk_mib": disk_mib})
+		self.call(update_virtual_machine_disk, vm_id, body=DiskUpdatePayload(disk_mib=disk_mib))
 
 	def resize_vm(self, vm_id: str, *, cpu_millicores: int, memory_mib: int, disk_mib: int) -> None:
 		"""Change the VM's shape. Atlas only resizes a stopped VM and only grows the disk."""
 		self.call(
-			"POST",
-			f"/virtual-machines/{vm_id}/actions/resize",
-			{"cpu_millicores": cpu_millicores, "memory_mib": memory_mib, "disk_mib": disk_mib},
+			resize_virtual_machine,
+			vm_id,
+			body=ResizePayload(cpu_millicores=cpu_millicores, memory_mib=memory_mib, disk_mib=disk_mib),
 		)
 
 	def create_snapshot(
@@ -198,17 +252,16 @@ class AtlasClient:
 		tags: dict[str, str] | None = None,
 	) -> str:
 		"""Freeze a machine's disk into an image Atlas can boot later."""
-		created = self.call(
-			"POST",
-			f"/virtual-machines/{vm_id}/actions/snapshot",
+		body = SnapshotPayload.from_dict(
 			{
 				"title": title,
 				"image_type": image_type,
 				"cache_image": cache_image,
 				"memory_snapshot": memory_snapshot,
 				"tags": tags or {},
-			},
+			}
 		)
+		created = self.call(create_virtual_machine_snapshot, vm_id, body=body)
 		if not isinstance(created, dict) or not created.get("id"):
 			raise AtlasError(f"create_snapshot returned no id: {created!r}")
 
@@ -217,20 +270,24 @@ class AtlasClient:
 	def set_image_termination_protection(self, image_id: str, enabled: bool) -> None:
 		"""Set or clear an image's termination protection. Atlas protects every System image
 		when it makes one, and refuses to delete a protected image."""
-		self.call("PATCH", f"/images/{image_id}/termination-protection", {"enabled": enabled})
+		self.call(
+			update_image_termination_protection, image_id, body=TerminationProtectionPayload(enabled=enabled)
+		)
 
 	def delete_snapshot(self, image_id: str) -> None:
 		"""Retire an image. Atlas archives one a machine still uses and reclaims it later."""
-		self.call("DELETE", f"/images/{image_id}")
+		self.call(delete_image, image_id)
 
 	def find_system_image(self, tags: dict[str, str]) -> str | None:
 		"""The id of the newest available System image carrying every tag, or None.
 
-		Atlas names an image by a generated id, so the one to build on is found by its
-		tags. Atlas matches the tags and returns enabled images newest first, so one
-		page holds every candidate."""
-		tag_filter = ",".join(f"{key}:{value}" for key, value in tags.items())
-		page = self.call("GET", f"/images?image_type=system&tag={tag_filter}&limit={IMAGE_PAGE_LIMIT}")
+		Atlas matches the tags and returns enabled images newest first, so one page holds every candidate."""
+		page = self.call(
+			list_images,
+			image_type=ListImagesImageTypeType0.SYSTEM,
+			tag=",".join(f"{key}:{value}" for key, value in tags.items()),
+			limit=IMAGE_PAGE_LIMIT,
+		)
 		for image in page.get("items") or []:
 			if image.get("status") == "available":
 				return image["id"]
@@ -239,7 +296,7 @@ class AtlasClient:
 
 	def get_snapshot(self, image_id: str) -> dict[str, Any]:
 		"""The image as Atlas currently sees it, to know when it is usable."""
-		return self.call("GET", f"/images/{image_id}")
+		return self.call(get_image, image_id)
 
 
 def base_image_id(minimal: bool = False) -> str:

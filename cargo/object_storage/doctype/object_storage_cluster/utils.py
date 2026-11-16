@@ -40,7 +40,7 @@ def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""Throw unless every machine is Running and storage nodes cover the replication factor."""
 	ensure_no_other_cluster_serving_or_setting_up(cluster)
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 
 	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
@@ -91,7 +91,7 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 	if cluster.status == "Setting Up":
 		frappe.throw(_("Cannot release machines from a cluster that is setting up."))
 
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 	ensure_machines_belong(cluster, machines)
 
 	joined = get_joined_machines(cluster)
@@ -113,7 +113,7 @@ def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: 
 	if not cluster.is_live:
 		frappe.throw(_("Only a cluster that has served has metadata to restore."))
 
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 	ensure_machines_belong(cluster, [machine])
 	ensure_peers_serve(cluster, machine)
 	ensure_snapshot_is_backed_up(cluster, snapshot, [machine])
@@ -207,9 +207,9 @@ def ensure_enough_storage_nodes_stay(
 		)
 
 
-def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
+def get_running_pipeline(cluster: ObjectStorageCluster) -> str | None:
 	return frappe.db.exists(
-		"Press Workflow",
+		"Pipeline",
 		{
 			"linked_doctype": cluster.doctype,
 			"linked_docname": cluster.name,
@@ -218,10 +218,10 @@ def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
 	)
 
 
-def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
-	"""Keep layout changes out of an active setup or drain workflow."""
-	if running_workflow := get_running_workflow(cluster):
-		frappe.throw(_("Workflow {0} is still running on this cluster.").format(running_workflow))
+def ensure_no_running_pipeline(cluster: ObjectStorageCluster) -> None:
+	"""Keep layout changes out of an active setup or drain pipeline."""
+	if running_pipeline := get_running_pipeline(cluster):
+		frappe.throw(_("Pipeline {0} is still running on this cluster.").format(running_pipeline))
 
 
 def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:

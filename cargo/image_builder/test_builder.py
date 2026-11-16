@@ -4,11 +4,11 @@
 from unittest.mock import Mock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import SSHError
 from frappe.tests import IntegrationTestCase
 
 from cargo.atlas_client import AtlasError
 from cargo.image_builder.doctype.pilot_image.builder import Builder
-from cargo.ssh import SshError
 
 
 class IntegrationTestBuilder(IntegrationTestCase):
@@ -45,8 +45,8 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 	def test_sshd_that_is_not_up_yet_is_tried_again(self):
 		with patch(
-			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh",
-			side_effect=[SshError("refused"), "up 1 min"],
+			"cloudtoolkit.ssh.client.SSHClient.run",
+			side_effect=[SSHError("refused"), "up 1 min"],
 		) as run:
 			with patch("cargo.image_builder.doctype.pilot_image.builder.time.sleep"):
 				self.assertTrue(self.builder.is_accepting_ssh("fdaa:1::1d", "key"))
@@ -56,16 +56,14 @@ class IntegrationTestBuilder(IntegrationTestCase):
 	def test_a_local_failure_keeps_its_own_error(self):
 		"""A missing ssh binary says more than a readiness timeout, so it is not retried."""
 		with patch(
-			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh",
+			"cloudtoolkit.ssh.client.SSHClient.run",
 			side_effect=FileNotFoundError("ssh"),
 		):
 			with self.assertRaises(FileNotFoundError):
 				self.builder.is_accepting_ssh("fdaa:1::1d", "key")
 
 	def test_a_machine_that_never_accepts_ssh_gives_up(self):
-		with patch(
-			"cargo.image_builder.doctype.pilot_image.builder.run_over_ssh", side_effect=SshError("timed out")
-		):
+		with patch("cloudtoolkit.ssh.client.SSHClient.run", side_effect=SSHError("timed out")):
 			with patch(
 				"cargo.image_builder.doctype.pilot_image.builder.time.monotonic", side_effect=[0, 999, 999]
 			):
@@ -85,10 +83,10 @@ class IntegrationTestBuilder(IntegrationTestCase):
 
 	def test_a_baked_machine_is_flushed_before_it_is_photographed(self):
 		"""Atlas snapshots a paused disk, so what is only in the page cache is lost."""
-		with patch("cargo.image_builder.doctype.pilot_image.builder.run_over_ssh") as run:
+		with patch("cloudtoolkit.ssh.client.SSHClient.run") as run:
 			self.builder.flush_build_machine("fdaa:1::1d", "key")
 
-		self.assertEqual(run.call_args.args[1], "sync")
+		self.assertEqual(run.call_args.args[0], "sync")
 
 	def test_stop_waits_for_atlas_after_flushing(self):
 		machine = Mock(vm_id="vm-builder", address="fdaa:1::1d")
@@ -133,10 +131,10 @@ class IntegrationTestBuilder(IntegrationTestCase):
 	def test_failed_flush_does_not_request_stop(self):
 		with (
 			patch("cargo.atlas_client.AtlasClient.from_settings") as atlas,
-			patch.object(Builder, "flush_build_machine", side_effect=SshError("flush failed")),
+			patch.object(Builder, "flush_build_machine", side_effect=SSHError("flush failed")),
 		):
 			atlas.return_value.get_vm.return_value = {"current_state": "running"}
-			with self.assertRaisesRegex(SshError, "flush failed"):
+			with self.assertRaisesRegex(SSHError, "flush failed"):
 				self.builder.stop_build_machine(Mock())
 		atlas.return_value.set_power_state.assert_not_called()
 

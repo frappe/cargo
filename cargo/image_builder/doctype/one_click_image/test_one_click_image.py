@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import frappe
+from cloudtoolkit.pipeline.utils import called_methods_in_order
 from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
@@ -19,9 +20,7 @@ from cargo.image_builder.doctype.one_click_image.one_click_image import (
 	report_if_registry_is_stale,
 )
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
-from cargo.ssh import SshError
 from cargo.testing import use_test_settings
-from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.one_click_image.one_click_image"
 APP_HEADER = "description: A test app.\nbase_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\n"
@@ -163,13 +162,13 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 
 		with (
 			patch.object(Builder, "wait_until_reachable"),
-			patch(f"{CONTROLLER}.run_over_ssh") as run_over_ssh,
+			patch("cloudtoolkit.ssh.client.SSHClient.run") as run,
 		):
 			image.install_packages()
 
 		self.assertIn(
 			"apt-get install -y --no-install-recommends rsync curl nginx python3-venv\n",
-			run_over_ssh.call_args.args[1],
+			run.call_args.args[0],
 		)
 
 	def test_each_folder_is_copied_in_one_rsync_laid_out_as_on_the_machine(self):
@@ -187,11 +186,11 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		image = self.image(status="Building")
 		copied = []
 
-		def rsync_over_ssh(address, source, destination, *args, **kwargs):
+		def rsync(source, destination, *args, **kwargs):
 			files = sorted(str(file.relative_to(source)) for file in source.rglob("*") if file.is_file())
 			copied.append((destination, files))
 
-		with patch(f"{CONTROLLER}.rsync_over_ssh", side_effect=rsync_over_ssh):
+		with patch("cloudtoolkit.ssh.client.SSHClient.rsync", side_effect=rsync):
 			image.copy_files()
 
 		self.assertEqual(
@@ -206,7 +205,10 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		)
 		image = self.image(status="Building")
 
-		with patch(f"{CONTROLLER}.rsync_over_ssh"), self.assertRaisesRegex(frappe.ValidationError, "inside"):
+		with (
+			patch("cloudtoolkit.ssh.client.SSHClient.rsync"),
+			self.assertRaisesRegex(frappe.ValidationError, "inside"),
+		):
 			image.copy_files()
 
 	def test_an_app_destination_outside_the_machine_is_rejected(self):
@@ -217,7 +219,7 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		image = self.image(status="Building")
 
 		with (
-			patch(f"{CONTROLLER}.rsync_over_ssh") as rsync,
+			patch("cloudtoolkit.ssh.client.SSHClient.rsync") as rsync,
 			self.assertRaisesRegex(frappe.ValidationError, "stay inside"),
 		):
 			image.copy_files()
@@ -227,13 +229,13 @@ class IntegrationTestOneClickImage(IntegrationTestCase):
 		self.application(scripts=("20-app.sh", "10-setup.sh"))
 		image = self.image(status="Building")
 
-		with patch(f"{CONTROLLER}.run_over_ssh") as run_over_ssh:
+		with patch("cloudtoolkit.ssh.client.SSHClient.run") as run:
 			image.run_build_scripts()
 
-		scripts = [call.args[1] for call in run_over_ssh.call_args_list]
+		scripts = [call.args[0] for call in run.call_args_list]
 		self.assertEqual(scripts, ["echo 10-setup.sh\n", "echo 20-app.sh\n", "echo 900-cleanup.sh\n"])
 		self.assertTrue(
-			all(call.kwargs["timeout"] <= PROVISION_TIMEOUT for call in run_over_ssh.call_args_list)
+			all(call.kwargs["timeout_seconds"] <= PROVISION_TIMEOUT for call in run.call_args_list)
 		)
 
 	def test_the_snapshot_is_disk_only_and_tagged_with_the_application(self):

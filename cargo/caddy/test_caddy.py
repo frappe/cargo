@@ -4,6 +4,7 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import frappe
 import requests
+from cloudtoolkit.ssh.client import SSHClient
 from frappe.tests import UnitTestCase
 
 from cargo.atlas_client import AtlasError
@@ -27,7 +28,7 @@ class SiteCaddy(Caddy):
 			address="fdaa:1::7",
 			tenant_network="fdaa:1::/64",
 			public_ipv4="203.0.113.7",
-			get_password=lambda _fieldname: "private-key",
+			ssh_client=SSHClient("fdaa:1::7", private_key="private-key"),
 			set_firewall=Mock(),
 		)
 
@@ -59,7 +60,7 @@ class UnitTestCaddy(UnitTestCase):
 			SiteCaddy({"WILDCARD_DOMAIN": "example.test"}).render()
 
 	def test_install_publishes_public_and_internal_records_first(self):
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			atlas.from_settings.return_value.set_dns_record.side_effect = lambda *_: run.assert_not_called()
 			SiteCaddy().install()
 
@@ -77,7 +78,7 @@ class UnitTestCaddy(UnitTestCase):
 
 	def test_install_admits_the_web_and_tenant_zero_vms_first(self):
 		caddy = SiteCaddy()
-		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch.object(SSHClient, "run", autospec=True) as run:
 			caddy.machine.set_firewall.side_effect = lambda **_: run.assert_not_called()
 			caddy.install()
 
@@ -90,7 +91,7 @@ class UnitTestCaddy(UnitTestCase):
 
 	def test_a_caddyfile_that_cannot_render_changes_nothing_in_atlas(self):
 		caddy = SiteCaddy({"WILDCARD_DOMAIN": "example.test"})
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			with self.assertRaises(KeyError):
 				caddy.install()
 
@@ -100,7 +101,7 @@ class UnitTestCaddy(UnitTestCase):
 
 	def test_updating_dns_publishes_without_installing(self):
 		caddy = SiteCaddy()
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			caddy.update_dns_records()
 
 		self.assertEqual(atlas.from_settings.return_value.set_dns_record.call_count, 4)
@@ -114,17 +115,17 @@ class UnitTestCaddy(UnitTestCase):
 				SiteCaddy().update_dns_records()
 
 	def test_install_sends_the_rendered_caddyfile_to_the_machine(self):
-		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch.object(SSHClient, "run", autospec=True) as run:
 			SiteCaddy().install()
 
-		address, sent, key = run.call_args.args
-		self.assertEqual((address, key), ("fdaa:1::7", "private-key"))
+		client, sent = run.call_args.args
+		self.assertEqual((client.host, client.private_key), ("fdaa:1::7", "private-key"))
 		self.assertIn(f"export CADDYFILE={shlex.quote(SiteCaddy().render())}", sent)
 		self.assertIn("caddy validate", sent)
 
 	def test_nginx_from_an_earlier_setup_is_stopped_before_caddy_starts(self):
 		"""Earlier setups left nginx enabled on port 80, which Caddy needs for its certificates."""
-		with patch("cargo.caddy.AtlasClient"), patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient"), patch.object(SSHClient, "run", autospec=True) as run:
 			SiteCaddy().install()
 
 		sent = run.call_args.args[1]

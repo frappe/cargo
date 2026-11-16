@@ -10,6 +10,9 @@ from pathlib import Path, PurePath
 
 import frappe
 import yaml
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe.utils import now_datetime
 from frappe.utils.synchronization import filelock
 
@@ -27,9 +30,6 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	SSH_READY_TIMEOUT,
 	Builder,
 )
-from cargo.ssh import OutputLog, rsync_over_ssh, run_over_ssh
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 # Held to clone, pin or refresh the one clone of the apps repository, so none of them sees it half moved.
@@ -37,7 +37,7 @@ APPS_LOCK = "one_click_apps"
 APPS_LOCK_TIMEOUT = 120
 
 
-class OneClickImage(BuildMachineOwner, WorkflowBuilder):
+class OneClickImage(BuildMachineOwner, PipelineBuilder):
 	# common/scripts/900-cleanup.sh removes the build key and SSH host keys, then syncs the disk.
 	has_ssh_after_build = False
 
@@ -116,7 +116,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 
 	def create_image(self):
 		"""Called by `sync_machines` once the build machine is running."""
-		self._create_image.run_as_workflow()
+		self._create_image.run_as_pipeline()
 
 	@property
 	def folders(self) -> list[str]:
@@ -200,13 +200,8 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 						source, target
 					)
 
-				rsync_over_ssh(
-					machine.address,
-					Path(staging),
-					"/",
-					machine.get_password("ssh_private_key"),
-					timeout=PROVISION_TIMEOUT,
-					on_output=log.write,
+				machine.ssh_client.rsync(
+					Path(staging), "/", timeout_seconds=PROVISION_TIMEOUT, on_output=log.write
 				)
 
 	@task(queue="long", timeout=BUILD_TIMEOUT)
@@ -243,14 +238,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 		super().retire()
 
 	def run_on_build_machine(self, script: str, log: OutputLog, timeout: int = PROVISION_TIMEOUT) -> None:
-		machine = self.build_machine
-		run_over_ssh(
-			machine.address,
-			script,
-			machine.get_password("ssh_private_key"),
-			timeout=timeout,
-			on_output=log.write,
-		)
+		self.build_machine.ssh_client.run(script, timeout_seconds=timeout, on_output=log.write)
 
 	def get_atlas_tags(self) -> dict[str, str]:
 		"""What a search at Atlas asks for to find this application's image."""

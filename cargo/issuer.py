@@ -38,12 +38,18 @@ def initialize_signing_key() -> None:
 	if settings.get_password("signing_private_key", raise_exception=False) and has_region_key_id(settings):
 		return
 
-	private_key = Ed25519PrivateKey.generate().private_bytes(
-		Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+	private_key = (
+		Ed25519PrivateKey.generate().private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
 	)
-	# Written field by field: a Password reads back empty, so saving the whole Single fails.
-	set_encrypted_password(SETTINGS, SETTINGS, private_key.decode(), "signing_private_key")
-	frappe.db.set_single_value(SETTINGS, "signing_key_id", f"{get_issuer(settings.region_id)}:{uuid4()}")
+	set_encrypted_password(SETTINGS, SETTINGS, private_key, "signing_private_key")
+	# Frappe deletes a Password that a save finds empty, so a Desk save would drop the key without the placeholder.
+	frappe.db.set_single_value(
+		SETTINGS,
+		{
+			"signing_private_key": "*" * len(private_key),
+			"signing_key_id": f"{get_issuer(settings.region_id)}:{uuid4()}",
+		},
+	)
 	frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 

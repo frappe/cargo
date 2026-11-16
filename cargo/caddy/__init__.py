@@ -8,10 +8,10 @@ from string import Template
 
 import frappe
 import requests
+from cloudtoolkit.ssh.client import read_script
 from frappe import _
 
 from cargo.atlas_client import ANYWHERE, AtlasClient, AtlasError
-from cargo.ssh import SSH_TIMEOUT, run_over_ssh, script
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -60,12 +60,8 @@ class Caddy:
 			outbound=[{"protocol": "any", "cidrs": ANYWHERE}],
 		)
 		self.publish_dns(machine)
-		run_over_ssh(
-			machine.address,
-			script(*INSTALL_SCRIPT, environment={"CADDYFILE": caddyfile}),
-			machine.get_password("ssh_private_key"),
-			timeout=SSH_TIMEOUT,
-			on_output=on_output,
+		machine.ssh_client.run(
+			read_script("cargo", *INSTALL_SCRIPT, environment={"CADDYFILE": caddyfile}), on_output=on_output
 		)
 
 	def publish_dns(self, machine: Machine) -> None:

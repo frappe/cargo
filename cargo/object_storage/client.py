@@ -19,7 +19,7 @@ READ_WRITE = {"read": True, "write": True, "owner": False}
 
 class Error(RuntimeError):
 	"""A Garage Admin API call failed. One argument, so it survives a pickle round trip:
-	that is how the workflow engine carries an exception back to the flow that raised it."""
+	that is how the pipeline engine carries an exception back to the flow that raised it."""
 
 
 class Client:

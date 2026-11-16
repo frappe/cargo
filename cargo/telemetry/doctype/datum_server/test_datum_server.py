@@ -5,6 +5,7 @@ import shlex
 from unittest.mock import Mock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import SSHResult
 from frappe.integrations.doctype.webhook.webhook import get_webhook_data, get_webhook_headers
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password
@@ -408,10 +409,10 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.server.db_set("commit", "abc1234")
 		self.server.reload()
 
-		with patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh") as ran:
+		with patch("cloudtoolkit.ssh.client.SSHClient.run") as ran:
 			self.server.start_setup_on_machine()
 
-		self.assertIn("export DATUM_COMMIT=abc1234", ran.call_args_list[0].args[1])
+		self.assertIn("export DATUM_COMMIT=abc1234", ran.call_args_list[0].args[0])
 
 	def test_a_blank_branch_falls_back_to_main(self):
 		self.server.branch = ""
@@ -461,7 +462,7 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		):
 			self.server.setup()
 
-		flow.run_as_workflow.assert_not_called()
+		flow.run_as_pipeline.assert_not_called()
 		self.assertNotEqual(frappe.db.get_single_value("Datum Server", "status"), "Setting Up")
 
 	def test_the_host_asks_atlas_for_a_public_address(self):
@@ -482,7 +483,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 	setUp = IntegrationTestTelemetryRouting.setUp
 
 	def ssh(self, **behaviour):
-		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
+		return patch("cloudtoolkit.ssh.client.SSHClient.run", **behaviour)
 
 	def test_a_host_that_is_not_set_up_cannot_be_updated(self):
 		with self.assertRaisesRegex(frappe.ValidationError, "Set datum up"):
@@ -495,13 +496,13 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Machine must be running"):
 			self.server.update_datum()
 
-	def test_an_update_runs_as_a_workflow_with_its_branch_and_commit(self):
+	def test_an_update_runs_as_a_pipeline_with_its_branch_and_commit(self):
 		self.server.mark("Active")
 
 		with patch.object(DatumServer, "_update") as update:
 			self.server.update_datum(" main ", " abc1234 ")
 
-		update.run_as_workflow.assert_called_once_with("main", "abc1234")
+		update.run_as_pipeline.assert_called_once_with("main", "abc1234")
 		self.assertEqual(self.server.status, "Updating")
 
 	def test_an_update_without_a_branch_keeps_the_hosts(self):
@@ -510,13 +511,13 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		with patch.object(DatumServer, "_update") as update:
 			self.server.update_datum()
 
-		update.run_as_workflow.assert_called_once_with("develop", "")
+		update.run_as_pipeline.assert_called_once_with("develop", "")
 
 	def test_the_update_script_is_given_the_commit(self):
 		with self.ssh() as ran:
 			self.assertTrue(self.server.update_on_machine("main", "abc1234"))
 
-		sent = ran.call_args.args[1]
+		sent = ran.call_args.args[0]
 		self.assertIn("export DATUM_BRANCH=main", sent)
 		self.assertIn("export DATUM_COMMIT=abc1234", sent)
 		self.assertIn('TARGET="${DATUM_COMMIT:-$DATUM_BRANCH}"', sent)
@@ -563,32 +564,32 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Failed")
 
-	def test_an_update_whose_workflow_died_does_not_stay_updating(self):
+	def test_an_update_whose_pipeline_died_does_not_stay_updating(self):
 		self.server.mark("Updating")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Unreachable")
 
-	def test_a_setup_whose_workflow_died_is_failed_for_the_spawner_to_retry(self):
+	def test_a_setup_whose_pipeline_died_is_failed_for_the_spawner_to_retry(self):
 		self.server.mark("Setting Up")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
 
-	def test_a_dead_workflow_leaves_a_settled_host_alone(self):
+	def test_a_dead_pipeline_leaves_a_settled_host_alone(self):
 		self.server.mark("Active")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Active")
 
 	def test_the_commit_datum_runs_at_is_read_from_the_host(self):
-		with self.ssh(return_value=f"{self.UPDATED}\n") as ran:
+		with self.ssh(return_value=SSHResult(f"{self.UPDATED}\n", 0)) as ran:
 			self.assertEqual(self.server.get_datum_commit(), self.UPDATED)
 
-		self.assertIn("rev-parse HEAD", ran.call_args.args[1])
+		self.assertIn("rev-parse HEAD", ran.call_args.args[0])
 
 
 class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
@@ -601,13 +602,13 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		self.enterContext(patch(f"{module}.generate_machine_token", return_value="machine-token"))
 
 	def ssh(self, **behaviour):
-		return patch("cargo.telemetry.doctype.datum_server.datum_server.run_over_ssh", **behaviour)
+		return patch("cloudtoolkit.ssh.client.SSHClient.run", **behaviour)
 
 	def test_the_host_sends_the_clickhouse_error_log(self):
 		with self.ssh() as ran:
 			self.server.install_metrics_exporter()
 
-		sent = ran.call_args_list[1].args[1]
+		sent = ran.call_args_list[1].args[0]
 		self.assertNotIn("export DATUM_TOKEN=", sent)
 		self.assertIn("export LOG_GROUPS=clickhouse", sent)
 		self.assertIn("logs_clickhouse", sent)
@@ -619,7 +620,7 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 		self.atlas.return_value.replace_vm_metadata.assert_called_once_with(
 			self.machine.vm_id, {"role": TELEMETRY, "datum_telemetry_token": "machine-token"}
 		)
-		refresh = ran.call_args_list[0].args[1]
+		refresh = ran.call_args_list[0].args[0]
 		self.assertIn("datum-refresh.timer", refresh)
 		self.assertIn(f"export DATUM_ENDPOINT={shlex.quote(self.server.service_endpoint)}", refresh)
 
@@ -628,8 +629,8 @@ class IntegrationTestDatumMetricsExporter(IntegrationTestCase):
 			self.assertTrue(self.server.start_setup_on_machine())
 
 		self.assertEqual(ran.call_count, 3)
-		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[1])
-		self.assertIn("Installs the Datum agent", ran.call_args_list[2].args[1])
+		self.assertIn("datum-refresh.timer", ran.call_args_list[1].args[0])
+		self.assertIn("Installs the Datum agent", ran.call_args_list[2].args[0])
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_host(self):
 		"""Nothing hands the host a token later, so setup is the only chance."""

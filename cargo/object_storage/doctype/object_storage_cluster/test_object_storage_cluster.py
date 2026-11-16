@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
 from frappe.integrations.doctype.webhook.webhook import (
 	WEBHOOK_SECRET_HEADER,
 	get_webhook_data,
@@ -36,7 +37,6 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	configure_storage_cluster_webhook,
 	ensure_no_other_cluster_serving_or_setting_up,
 )
-from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings
 
 
@@ -254,7 +254,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		):
 			self.cluster.release_machines([self.storage[0]])
 
-		drain.run_as_workflow.assert_called_once_with([self.storage[0]])
+		drain.run_as_pipeline.assert_called_once_with([self.storage[0]])
 		atlas.from_settings.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
 
@@ -264,10 +264,10 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
 
-	def test_a_running_workflow_blocks_a_release(self):
-		workflow = frappe.get_doc(
+	def test_a_running_pipeline_blocks_a_release(self):
+		pipeline = frappe.get_doc(
 			{
-				"doctype": "Press Workflow",
+				"doctype": "Pipeline",
 				"linked_doctype": self.cluster.doctype,
 				"linked_docname": self.cluster.name,
 				"main_method_name": "_drain_and_release",
@@ -275,8 +275,8 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 				"status": "Running",
 			}
 		)
-		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
-			workflow.insert(ignore_permissions=True)
+		with patch("cloudtoolkit.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
+			pipeline.insert(ignore_permissions=True)
 
 		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
 			self.cluster.release_machines([self.storage[2]])
@@ -334,7 +334,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		):
 			self.cluster.release_machines([self.storage[2]])
 
-		drain.run_as_workflow.assert_called_once_with([self.storage[2]])
+		drain.run_as_pipeline.assert_called_once_with([self.storage[2]])
 		atlas.from_settings.assert_not_called()
 
 	def test_a_node_that_never_joined_can_be_released(self):
@@ -622,7 +622,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		):
 			self.cluster.setup()
 
-		flow.run_as_workflow.assert_called_once()
+		flow.run_as_pipeline.assert_called_once()
 		self.assertEqual(self.cluster.status, "Setting Up")
 
 	def refused_setup(self, message: str):
@@ -632,7 +632,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		):
 			frappe.get_doc("Object Storage Cluster", self.cluster.name).setup()
 
-		flow.run_as_workflow.assert_not_called()
+		flow.run_as_pipeline.assert_not_called()
 
 	def test_setup_is_refused_before_the_gateway_has_a_public_address(self):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
@@ -678,7 +678,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 			step = ObjectStorageCluster.__dict__[method]
 			with self.subTest(method=method):
 				self.assertEqual(step._queue, "long")
-				self.assertGreater(step._timeout, SSH_TIMEOUT)
+				self.assertGreater(step._timeout, DEFAULT_TIMEOUT_SECONDS)
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_node(self):
 		"""Nothing hands the node a token later, so setup is the only chance."""

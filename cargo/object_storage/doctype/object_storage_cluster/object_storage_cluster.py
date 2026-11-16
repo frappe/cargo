@@ -7,6 +7,10 @@ import typing
 from functools import cached_property
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.utils import now_datetime
 
@@ -27,17 +31,15 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	ensure_no_other_active_cluster,
 )
 from cargo.object_storage.health import queue_cluster_metrics_exporters
-from cargo.ssh import SSH_TIMEOUT, OutputLog
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
+	from cloudtoolkit.pipeline.doctype.pipeline.pipeline import Pipeline
+
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.workflow_engine.doctype.press_workflow.press_workflow import PressWorkflow
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
-MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
+MACHINE_STEP_TIMEOUT = 3 * DEFAULT_TIMEOUT_SECONDS
 # Fetches run one machine after another: a gateway and up to four storage nodes.
 FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 MIN_SCRAPE_SECONDS = 60
@@ -46,7 +48,7 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
 
 
-class ObjectStorageCluster(WorkflowBuilder):
+class ObjectStorageCluster(PipelineBuilder):
 	"""One Garage cluster: the machines it needs, and the secrets they run on."""
 
 	# begin: auto-generated types
@@ -240,7 +242,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		# run, and a cluster is only Active once it serves.
 		self.clear_logs()
 		self.mark_cluster_status("Setting Up", None)
-		self._setup.run_as_workflow()
+		self._setup.run_as_pipeline()
 
 	@flow
 	def _setup(self) -> None:
@@ -419,7 +421,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 			self.terminate_machines(unjoined_machines)
 
 		if joined_machines:
-			self._drain_and_release.run_as_workflow(joined_machines)
+			self._drain_and_release.run_as_pipeline(joined_machines)
 
 	@flow
 	def _drain_and_release(self, machines: list[str]) -> None:
@@ -475,7 +477,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Roll one machine's metadata back to a snapshot Garage took. It catches up from its
 		peers."""
 		machines = can_restore_metadata(self, snapshot, machine)
-		self._restore_metadata.run_as_workflow(snapshot, machines)
+		self._restore_metadata.run_as_pipeline(snapshot, machines)
 
 	@flow
 	def _restore_metadata(self, snapshot: str, machines: list[str]) -> None:
@@ -524,26 +526,26 @@ class ObjectStorageCluster(WorkflowBuilder):
 				log.write(f"\n=== repairing tables on {name} ===\n")
 				garage.repair_tables(garage.machine(name), on_output=log.write)
 
-	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
+	def on_pipeline_failure(self, pipeline: Pipeline) -> None:
 		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed.
 		A failed restore stops where it failed, with every swapped database kept beside it."""
-		if workflow.main_method_name == "_grow_storage_disks":
+		if pipeline.main_method_name == "_grow_storage_disks":
 			frappe.log_error(
 				f"Storage disk growth failed on {self.name}",
-				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{workflow.workflow_traceback}",
-				reference_doctype=workflow.doctype,
-				reference_name=workflow.name,
+				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{pipeline.pipeline_traceback}",
+				reference_doctype=pipeline.doctype,
+				reference_name=pipeline.name,
 			)
 
-		if workflow.main_method_name == "_restore_metadata":
+		if pipeline.main_method_name == "_restore_metadata":
 			frappe.log_error(
 				f"Metadata restore failed on {self.name}",
 				message=(
 					"A machine whose database was swapped keeps the old one as db.lmdb.bak-<time> in "
-					f"its metadata directory. See the Setup Log.\n\n{workflow.workflow_traceback}"
+					f"its metadata directory. See the Setup Log.\n\n{pipeline.pipeline_traceback}"
 				),
-				reference_doctype=workflow.doctype,
-				reference_name=workflow.name,
+				reference_doctype=pipeline.doctype,
+				reference_name=pipeline.name,
 			)
 
 	@flow

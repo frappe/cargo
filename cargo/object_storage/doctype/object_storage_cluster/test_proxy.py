@@ -2,6 +2,7 @@ import os
 from unittest.mock import Mock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import SSHClient
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY
@@ -65,11 +66,12 @@ class IntegrationTestProxy(IntegrationTestCase):
 		with (
 			patch("cargo.caddy.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
-			patch("cargo.caddy.run_over_ssh") as run,
+			patch.object(SSHClient, "run", autospec=True) as run,
 		):
 			self.proxy().install()
 
-		address, sent = run.call_args.args[:2]
+		client, sent = run.call_args.args[:2]
+		address = client.host
 		domain = SETTINGS["wildcard_domain"]
 		self.assertEqual(address, GATEWAY_ADDRESS)
 		self.assertIn(f"s3-svc.{domain} {{", sent)
@@ -84,7 +86,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
 
 		with (
-			patch("cargo.caddy.run_over_ssh") as run,
+			patch.object(SSHClient, "run", autospec=True) as run,
 			self.assertRaisesRegex(frappe.ValidationError, "public IPv4"),
 		):
 			self.proxy().install()
@@ -106,7 +108,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 
 	def test_the_cluster_points_its_names_at_the_gateway_again(self):
 		domain = SETTINGS["wildcard_domain"]
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			frappe.get_doc("Object Storage Cluster", self.cluster.name).update_dns_records()
 
 		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]

@@ -10,7 +10,7 @@ from cargo.image_builder.doctype.pilot_image.pilot_image import PilotImage
 from cargo.image_builder.health import relay as relay_module
 from cargo.image_builder.health import ship_metrics
 from cargo.image_builder.health.relay import Telemetry
-from cargo.testing import use_test_settings
+from cargo.testing import set_frappe_branches, set_signup_apps, use_test_settings
 
 ENDPOINT, TOKEN = "https://datum.test/", "datum-jwt"
 
@@ -65,6 +65,18 @@ class IntegrationTestPilotImageTelemetry(IntegrationTestCase):
 		retired = self.image("Site", status="Retired")
 
 		self.assertNotIn(retired.name, self.images_in("latest"))
+
+	def test_a_build_that_cargo_settings_no_longer_lists_is_never_latest(self):
+		site = self.image("Site", status="Failed")
+		apps = self.image("Apps", status="Failed")
+
+		set_frappe_branches(("develop",))
+		self.assertNotIn(site.name, self.images_in("latest"))
+
+		set_frappe_branches(("version-16",))
+		set_signup_apps(("hrms",))
+		self.assertIn(site.name, self.images_in("latest"))
+		self.assertNotIn(apps.name, self.images_in("latest"))
 
 	def test_apps_builds_are_latest_per_signup_app(self):
 		apps = self.image("Apps", status="Failed")
