@@ -146,3 +146,7 @@ class Client:
 			params={"id": bucket_id},
 			json={"quotas": {"maxSize": max_size_bytes, "maxObjects": max_objects}},
 		)
+
+	def set_bucket_cors_rules(self, bucket_id: str, rules: list[dict[str, Any]]) -> None:
+		"""Replace the bucket's CORS rules. Needs no owner key, unlike S3's PutBucketCors."""
+		self.call("UpdateBucket", "POST", params={"id": bucket_id}, json={"corsRules": rules})

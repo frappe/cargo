@@ -2,23 +2,17 @@
 # Bodies stream both ways with no size cap. Buckets are addressed by path only, so a bucket
 # in the hostname matches no site here.
 s3-svc.${WILDCARD_DOMAIN} {
-	# Garage sets CORS only per bucket, with an owner key, so Caddy answers for every bucket.
-	# The signature still authorises each request; CORS only lets the browser send it.
+	# CORS is Garage's: each bucket carries its own allowed origins, and Garage answers the
+	# browser's unsigned preflight from the bucket named in the path. The signature still
+	# authorises each request; CORS only lets the browser send it and read the answer.
+	# Garage sends no Max-Age or Vary, so Caddy adds them: the browser caches a preflight
+	# for an hour, and no cache serves one origin's Allow-Origin to another.
 	@preflight method OPTIONS
-	handle @preflight {
-		header Access-Control-Allow-Origin "${CORS_ORIGIN}"
-		header Access-Control-Allow-Methods "GET, HEAD, PUT"
-		header Access-Control-Allow-Headers "Content-Type"
-		header Access-Control-Max-Age 3600
-		respond 204
-	}
+	header @preflight Access-Control-Max-Age 3600
+	header Vary Origin
 
-	handle {
-		reverse_proxy ${S3_UPSTREAM} {
-			flush_interval -1
-			header_down Access-Control-Allow-Origin "${CORS_ORIGIN}"
-			header_down Access-Control-Expose-Headers "ETag"
-		}
+	reverse_proxy ${S3_UPSTREAM} {
+		flush_interval -1
 	}
 }
 

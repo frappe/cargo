@@ -1,13 +1,14 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 from frappe.tests import UnitTestCase
 
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.doctype.bucket.bucket import Bucket
+from cargo.patches import apply_bucket_cors_rules
 
 BUCKET = "team-alpha"
 BUCKET_ID = "b1"
@@ -31,6 +32,7 @@ class UnitTestBucket(UnitTestCase):
 		self.bucket.name = BUCKET
 		self.patch(Bucket, "garage", Client(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001")))
 		self.saved = self.patch(Bucket, "save")
+		self.patch(Client, "status", return_value={"nodes": [{"garageVersion": "v2.3.0", "isUp": True}]})
 
 	def patch(self, target, attribute, *args, **kwargs):
 		patcher = patch.object(target, attribute, *args, **kwargs)
@@ -430,6 +432,7 @@ class UnitTestBucket(UnitTestCase):
 
 	def test_a_new_bucket_with_no_caps_asks_garage_for_no_quota(self):
 		"""Every create would otherwise carry a pointless round trip."""
+		self.patch(Bucket, "apply_cors_rules")
 		quota = self.patch(Bucket, "apply_quota")
 		self.bucket.flags.in_insert = True
 
@@ -438,6 +441,7 @@ class UnitTestBucket(UnitTestCase):
 		quota.assert_not_called()
 
 	def test_a_new_bucket_with_a_cap_sends_it_once_the_bucket_exists(self):
+		self.patch(Bucket, "apply_cors_rules")
 		quota = self.patch(Bucket, "apply_quota")
 		self.bucket.flags.in_insert = True
 		self.bucket.max_size_gib = 2
@@ -501,4 +505,17 @@ class UnitTestBucket(UnitTestCase):
 
 		self.bucket.discard_provisioned()
 
+		log_error.assert_called_once()
+
+	def test_the_patch_writes_every_live_buckets_rules_and_logs_a_refusal(self):
+		refused, written = Mock(), Mock()
+		refused.apply_cors_rules.side_effect = Error("UpdateBucket answered 500: nope")
+		listed = self.patch(frappe, "get_all", side_effect=[["OSC-0001"], ["refused", "written"]])
+		self.patch(frappe, "get_doc", side_effect=[refused, written])
+		log_error = self.patch(frappe, "log_error")
+
+		apply_bucket_cors_rules.execute()
+
+		self.assertEqual(listed.call_args.kwargs["filters"], {"cluster": ("in", ["OSC-0001"])})
+		written.apply_cors_rules.assert_called_once()
 		log_error.assert_called_once()

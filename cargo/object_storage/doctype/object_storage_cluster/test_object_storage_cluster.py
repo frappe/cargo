@@ -39,6 +39,11 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 )
 from cargo.testing import SETTINGS, use_test_settings
 
+
+def garage_status(version: str) -> dict:
+	return {"nodes": [{"id": "n1", "garageVersion": version, "isUp": True}]}
+
+
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
 
@@ -611,6 +616,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 
 	def test_setting_up_a_fully_joined_cluster_runs_the_flow_not_a_shortcut(self):
 		with (
+			patch.object(Setup, "status", return_value=garage_status("v2.3.0")),
 			patch.object(Setup, "healthy_nodes", return_value={self.gateway, self.storage}),
 			patch.object(ObjectStorageCluster, "_setup") as flow,
 		):
@@ -639,6 +645,16 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
 
 		self.refused_setup("public IPv4")
+
+		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
+
+	def test_a_live_cluster_on_an_older_garage_is_not_set_up_and_stays_active(self):
+		"""Setup's Caddy leaves CORS to Garage, and an older Garage would drop every bucket's
+		rules, the dashboard's among them."""
+		self.cluster.mark_cluster_status("Active")
+
+		with patch.object(Setup, "status", return_value=garage_status("v2.1.0")):
+			self.refused_setup("v2.1.0")
 
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
 
