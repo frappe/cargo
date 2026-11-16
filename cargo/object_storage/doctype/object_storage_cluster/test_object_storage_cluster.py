@@ -6,7 +6,7 @@ import hashlib
 import hmac
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import Mock, PropertyMock, patch
+from unittest.mock import PropertyMock, patch
 
 import frappe
 from frappe.integrations.doctype.webhook.webhook import (
@@ -25,7 +25,6 @@ from frappe.utils.password import (
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.client import Client
-from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
 from cargo.object_storage.doctype.object_storage_cluster.proxy import Proxy
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
@@ -554,12 +553,11 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
 	@contextmanager
-	def everything_joined(self, caddy=None, serving=True, garage_version="v2.3.0"):
+	def everything_joined(self, caddy=None, serving=True):
 		"""Garage up on every node, so the flow has nothing to install and goes straight to
 		verification and the proxy."""
 		joined = {self.gateway, self.storage}
 		with (
-			patch.object(Setup, "status", return_value=garage_status(garage_version)),
 			patch.object(Setup, "healthy_nodes", return_value=joined),
 			patch.object(Setup, "get_connected_nodes"),
 			patch.object(Setup, "apply_staged_layout"),
@@ -659,29 +657,6 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 			self.refused_setup("v2.1.0")
 
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
-
-	def test_setup_writes_every_buckets_cors_rules_before_caddy_leaves_cors_to_garage(self):
-		bucket = frappe.get_doc(
-			{"doctype": "Bucket", "bucket_name": "team-alpha", "cluster": self.cluster.name}
-		)
-		bucket.db_insert()
-		steps = Mock()
-
-		with self.everything_joined() as installed, patch.object(Bucket, "apply_cors_rules") as applied:
-			steps.attach_mock(applied, "apply_cors_rules")
-			steps.attach_mock(installed, "install_caddy")
-			self.run_flow()
-
-		self.assertEqual([call[0] for call in steps.mock_calls], ["apply_cors_rules", "install_caddy"])
-		self.assertEqual(self.cluster.status, "Active")
-
-	def test_a_flow_that_finds_an_older_garage_leaves_caddy_alone(self):
-		with self.everything_joined(garage_version="v2.1.0") as installed:
-			self.run_flow()
-
-		installed.assert_not_called()
-		self.assertEqual(self.cluster.status, "Failed")
-		self.assertIn("v2.1.0", self.cluster.error)
 
 	def test_only_the_gateway_asks_atlas_for_a_public_address(self):
 		with (

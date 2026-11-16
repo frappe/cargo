@@ -1,13 +1,14 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import frappe
 from frappe.tests import UnitTestCase
 
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.doctype.bucket.bucket import Bucket
+from cargo.patches import apply_bucket_cors_rules
 
 BUCKET = "team-alpha"
 BUCKET_ID = "b1"
@@ -504,4 +505,17 @@ class UnitTestBucket(UnitTestCase):
 
 		self.bucket.discard_provisioned()
 
+		log_error.assert_called_once()
+
+	def test_the_patch_writes_every_live_buckets_rules_and_logs_a_refusal(self):
+		refused, written = Mock(), Mock()
+		refused.apply_cors_rules.side_effect = Error("UpdateBucket answered 500: nope")
+		listed = self.patch(frappe, "get_all", side_effect=[["OSC-0001"], ["refused", "written"]])
+		self.patch(frappe, "get_doc", side_effect=[refused, written])
+		log_error = self.patch(frappe, "log_error")
+
+		apply_bucket_cors_rules.execute()
+
+		self.assertEqual(listed.call_args.kwargs["filters"], {"cluster": ("in", ["OSC-0001"])})
+		written.apply_cors_rules.assert_called_once()
 		log_error.assert_called_once()
