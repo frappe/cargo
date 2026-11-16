@@ -38,6 +38,7 @@ def use_test_settings() -> None:
 
 	for field, secret in SECRETS.items():
 		set_encrypted_password("Cargo Settings", "Cargo Settings", secret, field)
+		frappe.db.set_single_value("Cargo Settings", field, "*" * len(secret))
 
 	set_frappe_branches(FRAPPE_BRANCHES)
 	set_signup_apps(SIGNUP_APPS)
