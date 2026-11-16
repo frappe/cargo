@@ -16,7 +16,6 @@ if typing.TYPE_CHECKING:
 #: Older Garage accepts `corsRules` on UpdateBucket and ignores them without an error.
 MINIMUM_GARAGE_VERSION = (2, 3, 0)
 METHODS = ["GET", "HEAD", "PUT", "POST"]
-MAX_AGE_SECONDS = 3600
 DEFAULT_PORTS = {"http": 80, "https": 443}
 HOST = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
 VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
@@ -76,7 +75,6 @@ def rules_for(origins: list[str]) -> list[dict[str, typing.Any]]:
 			"AllowedMethod": METHODS,
 			"AllowedHeader": ["*"],
 			"ExposeHeader": ["ETag"],
-			"MaxAgeSeconds": MAX_AGE_SECONDS,
 		}
 		for origin in dict.fromkeys([dashboard_origin(), *origins])
 	]

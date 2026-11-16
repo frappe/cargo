@@ -51,7 +51,7 @@ Garage before v2.3.0 accepts CORS rules on `UpdateBucket` and ignores them. Carg
 - A change to a bucket's allowed origins is refused with the version found.
 - A new bucket is still created, without rules. Its cluster still runs the old Caddy, which answers CORS for the dashboard. The next setup run writes its rules.
 
-Garage v2.3.0 does not send `Access-Control-Max-Age`, so a browser sends a preflight before each upload.
+Garage v2.3.0 sends neither `Access-Control-Max-Age` nor `Vary: Origin`, so Caddy adds both on `s3-svc`: `Max-Age: 3600` on preflight answers, and `Vary: Origin` on every answer, since `Access-Control-Allow-Origin` now depends on the caller.
 
 ## Releasing a machine
 

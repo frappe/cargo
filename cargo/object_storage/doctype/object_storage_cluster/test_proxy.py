@@ -76,7 +76,9 @@ class IntegrationTestProxy(IntegrationTestCase):
 		self.assertIn(f"s3-admin-svc.{domain} {{", sent)
 		self.assertIn(f"reverse_proxy [{GATEWAY_ADDRESS}]:{self.cluster.s3_port}", sent)
 		# Garage answers CORS per bucket; a header Caddy set would override every bucket's origins.
-		self.assertNotIn("Access-Control-", sent)
+		self.assertNotIn("Access-Control-Allow-", sent)
+		self.assertIn("header @preflight Access-Control-Max-Age 3600", sent)
+		self.assertIn("header Vary Origin", sent)
 
 	def test_a_gateway_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
