@@ -64,11 +64,6 @@ ignore = [
 ]
 typing-modules = ["frappe.types.DF"]
 
-[tool.ruff.lint.per-file-ignores]
-# Vendored from frappe/press (AGPL-3.0). Kept byte-comparable with upstream so future
-# diffs stay clean, so its lint config is honoured rather than ours.
-"cargo/workflow_engine/**" = ["RUF100", "UP046", "UP047", "I001"]
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "tab"
@@ -77,3 +72,4 @@ docstring-code-format = true
 
 [tool.bench.frappe-dependencies]
 frappe = ">=16.0.0,<18.0.0"
+pipeline = ">=0.0.1"

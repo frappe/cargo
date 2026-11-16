@@ -461,7 +461,7 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		):
 			self.server.setup()
 
-		flow.run_as_workflow.assert_not_called()
+		flow.run_as_pipeline.assert_not_called()
 		self.assertNotEqual(frappe.db.get_single_value("Datum Server", "status"), "Setting Up")
 
 	def test_the_host_asks_atlas_for_a_public_address(self):
@@ -495,13 +495,13 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "Machine must be running"):
 			self.server.update_datum()
 
-	def test_an_update_runs_as_a_workflow_with_its_branch_and_commit(self):
+	def test_an_update_runs_as_a_pipeline_with_its_branch_and_commit(self):
 		self.server.mark("Active")
 
 		with patch.object(DatumServer, "_update") as update:
 			self.server.update_datum(" main ", " abc1234 ")
 
-		update.run_as_workflow.assert_called_once_with("main", "abc1234")
+		update.run_as_pipeline.assert_called_once_with("main", "abc1234")
 		self.assertEqual(self.server.status, "Updating")
 
 	def test_an_update_without_a_branch_keeps_the_hosts(self):
@@ -510,7 +510,7 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		with patch.object(DatumServer, "_update") as update:
 			self.server.update_datum()
 
-		update.run_as_workflow.assert_called_once_with("develop", "")
+		update.run_as_pipeline.assert_called_once_with("develop", "")
 
 	def test_the_update_script_is_given_the_commit(self):
 		with self.ssh() as ran:
@@ -563,23 +563,23 @@ class IntegrationTestDatumUpdate(IntegrationTestCase):
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Failed")
 
-	def test_an_update_whose_workflow_died_does_not_stay_updating(self):
+	def test_an_update_whose_pipeline_died_does_not_stay_updating(self):
 		self.server.mark("Updating")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Unreachable")
 
-	def test_a_setup_whose_workflow_died_is_failed_for_the_spawner_to_retry(self):
+	def test_a_setup_whose_pipeline_died_is_failed_for_the_spawner_to_retry(self):
 		self.server.mark("Setting Up")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
 
-	def test_a_dead_workflow_leaves_a_settled_host_alone(self):
+	def test_a_dead_pipeline_leaves_a_settled_host_alone(self):
 		self.server.mark("Active")
-		self.server.on_workflow_failure(Mock())
+		self.server.on_pipeline_failure(Mock())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Active")

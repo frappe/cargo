@@ -10,6 +10,8 @@ from functools import cached_property
 import frappe
 from frappe import _
 from frappe.utils import cint
+from pipeline.pipeline.doctype.pipeline.decorators import flow, task
+from pipeline.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
 
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.caddy import require_public
@@ -24,8 +26,6 @@ from cargo.telemetry.doctype.datum_server.proxy import (
 	TELEMETRY_WRITE_SITE_NAME,
 	Proxy,
 )
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
 	from collections.abc import Callable
@@ -49,7 +49,7 @@ REGION_HEADER = "X-FC-Region"
 SOURCE = "cargo"
 
 
-class DatumServer(WorkflowBuilder):
+class DatumServer(PipelineBuilder):
 	"""One datum host: the machine it runs on, and what it was built with."""
 
 	# begin: auto-generated types
@@ -195,7 +195,7 @@ class DatumServer(WorkflowBuilder):
 		self.setup_log = None
 		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Setting Up")
-		self._setup.run_as_workflow()
+		self._setup.run_as_pipeline()
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def start_setup_on_machine(self) -> bool:
@@ -272,7 +272,7 @@ class DatumServer(WorkflowBuilder):
 		self.setup_log = None
 		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Updating")
-		self._update.run_as_workflow((branch or "").strip() or self.branch, (commit or "").strip())
+		self._update.run_as_pipeline((branch or "").strip() or self.branch, (commit or "").strip())
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
 	def update_on_machine(self, branch: str, commit: str) -> bool:
@@ -324,7 +324,7 @@ class DatumServer(WorkflowBuilder):
 		self.commit = self.get_datum_commit()
 		self.mark("Active")
 
-	def on_workflow_failure(self, workflow) -> None:
+	def on_pipeline_failure(self, pipeline) -> None:
 		"""A flow that raised would otherwise leave the host in Setting Up or Updating, which
 		nothing watches. Failed setup is retried by the spawner; a failed update is not."""
 		if self.status == "Setting Up":

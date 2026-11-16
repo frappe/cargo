@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import now_datetime
 
 from cargo.object_storage.doctype.object_storage_cluster.setup import BACKUP_SSH_TIMEOUT
-from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_workflow
+from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_pipeline
 
 if typing.TYPE_CHECKING:
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
@@ -22,7 +22,7 @@ def upload_metadata_snapshots() -> None:
 		return
 
 	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", cluster_name)
-	if not cluster.garage_setup.has_metadata_backup or get_running_workflow(cluster):
+	if not cluster.garage_setup.has_metadata_backup or get_running_pipeline(cluster):
 		return
 
 	# One long job per machine, so a slow upload neither outlives this scheduler job nor holds

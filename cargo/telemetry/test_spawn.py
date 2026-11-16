@@ -256,7 +256,7 @@ class IntegrationTestDatumServerSetupLog(SpawnTestCase):
 		server.db_set("setup_log", "the last run's output")
 		frappe.cache.set_value(cache_key(server.doctype, server.name, "setup_log"), "a stale run")
 
-		with patch("cargo.workflow_engine.doctype.press_workflow.decorators.BoundFlow.run_as_workflow"):
+		with patch("pipeline.pipeline.doctype.pipeline.decorators.BoundFlow.run_as_pipeline"):
 			self.host().setup()
 
 		self.assertFalse(self.host().setup_log)
