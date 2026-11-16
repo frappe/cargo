@@ -10,7 +10,7 @@ import frappe
 from frappe import _
 
 from cargo.client_models import STORAGE
-from cargo.object_storage.doctype.object_storage_cluster.utils import ensure_no_running_workflow
+from cargo.object_storage.doctype.object_storage_cluster.utils import ensure_no_running_pipeline
 from cargo.object_storage.health.live import history_file
 
 if typing.TYPE_CHECKING:
@@ -82,7 +82,7 @@ class GrowStorageNodeDisks:
 		if not self.settings.max_storage_node_disk:
 			frappe.throw(_("Set Max Storage Node Disk in Cargo Settings before growing storage disks."))
 
-		ensure_no_running_workflow(self.cluster)
+		ensure_no_running_pipeline(self.cluster)
 
 		last_extention = self.get_last_extention()
 		if last_extention and frappe.utils.now_datetime() - last_extention.timestamp < timedelta(
@@ -101,7 +101,7 @@ class GrowStorageNodeDisks:
 			)
 
 		disk_size_gb = self.get_required_disk_size()
-		self.cluster._grow_storage_disks.run_as_workflow(disk_size_gb)
+		self.cluster._grow_storage_disks.run_as_pipeline(disk_size_gb)
 
 	def get_samples(self) -> list[Sample]:
 		"""Usage readings of the fullest storage node, oldest first, from LiveHealth's log."""

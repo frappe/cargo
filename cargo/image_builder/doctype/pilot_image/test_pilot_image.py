@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from pipeline.pipeline.utils import called_methods_in_order
 
 from cargo.atlas_client import AtlasError, AtlasNotFound
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
@@ -25,7 +26,6 @@ from cargo.testing import (
 	set_signup_apps,
 	use_test_settings,
 )
-from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.pilot_image.pilot_image"
 BUILD_MACHINE = "cargo.image_builder.doctype.build_machine"
@@ -187,11 +187,11 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 					frappe.db.get_value("Pilot Image", image.name, "snapshot_id"), f"img-{image_type}"
 				)
 
-	def workflow(self, image: PilotImage, status: str) -> str:
-		"""A build workflow linked to the image, without running it."""
-		workflow = frappe.get_doc(
+	def pipeline(self, image: PilotImage, status: str) -> str:
+		"""A build pipeline linked to the image, without running it."""
+		pipeline = frappe.get_doc(
 			{
-				"doctype": "Press Workflow",
+				"doctype": "Pipeline",
 				"linked_doctype": image.doctype,
 				"linked_docname": image.name,
 				"main_method_name": "_create_image",
@@ -199,10 +199,10 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 				"status": status,
 			}
 		)
-		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
-			workflow.insert(ignore_permissions=True)
+		with patch("pipeline.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
+			pipeline.insert(ignore_permissions=True)
 
-		return workflow.name
+		return pipeline.name
 
 	def test_a_new_image_rents_a_builder_and_waits_for_it(self):
 		image = self.image("Base")
@@ -330,7 +330,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with (
 			patch.object(PilotImage, "save", deadlock_once),
 			patch.object(frappe.db, "rollback"),
-			patch("cargo.workflow_engine.utils.time.sleep"),
+			patch("pipeline.pipeline.utils.time.sleep"),
 		):
 			self.assertEqual(self.pin_releases(image), ["erpnext", "hrms"])
 
@@ -339,7 +339,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with (
 			patch.object(PilotImage, "save", side_effect=frappe.QueryDeadlockError),
 			patch.object(frappe.db, "rollback"),
-			patch("cargo.workflow_engine.utils.time.sleep"),
+			patch("pipeline.pipeline.utils.time.sleep"),
 			self.assertRaises(frappe.QueryDeadlockError),
 		):
 			self.pin_releases(image)
@@ -403,22 +403,22 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def test_a_running_build_is_asked_to_fail_and_loses_its_machine(self):
 		"""The flag stops the next step. Terminating the machine ends the running one."""
 		image = self.image(status="Building")
-		workflow = self.workflow(image, "Running")
+		pipeline = self.pipeline(image, "Running")
 
 		with patch.object(MachineDoc, "terminate") as terminate:
 			image.stop_build()
 
 		terminate.assert_called_once()
-		self.assertTrue(frappe.db.get_value("Press Workflow", workflow, "is_force_failure_requested"))
+		self.assertTrue(frappe.db.get_value("Pipeline", pipeline, "is_force_failure_requested"))
 
 	def test_a_stopped_build_says_so_when_it_fails(self):
 		"""The running step fails on a lost SSH session, which alone would read as a fault."""
 		image = self.image(status="Building")
-		workflow = frappe.get_doc("Press Workflow", self.workflow(image, "Failure"))
-		workflow.is_force_failure_requested = 1
+		pipeline = frappe.get_doc("Pipeline", self.pipeline(image, "Failure"))
+		pipeline.is_force_failure_requested = 1
 
 		with patch.object(MachineDoc, "terminate"), patch.object(PilotImage, "delete_atlas_image"):
-			image.on_workflow_failure(workflow)
+			image.on_pipeline_failure(pipeline)
 
 		self.assertEqual(image.status, "Failed")
 		self.assertIn("Stopped by request", image.error)
@@ -426,7 +426,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 	def test_a_build_waiting_on_its_success_callback_cannot_be_stopped(self):
 		"""The callback records the result, so a stop here would race it."""
 		image = self.image(status="Snapshotting")
-		self.workflow(image, "Success")
+		self.pipeline(image, "Success")
 
 		with patch.object(MachineDoc, "terminate") as terminate, self.assertRaises(frappe.ValidationError):
 			image.stop_build()
@@ -434,8 +434,8 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		terminate.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Pilot Image", image.name, "status"), "Snapshotting")
 
-	def test_a_build_with_no_workflow_releases_its_own_machine(self):
-		"""A machine that is still booting has no workflow to fail."""
+	def test_a_build_with_no_pipeline_releases_its_own_machine(self):
+		"""A machine that is still booting has no pipeline to fail."""
 		image = self.image()
 
 		with patch.object(MachineDoc, "terminate") as terminate:
@@ -472,13 +472,13 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 	def test_a_failed_build_deletes_its_atlas_image(self):
 		image = self.image(status="Snapshotting")
-		workflow = frappe.get_doc("Press Workflow", self.workflow(image, "Failure"))
+		pipeline = frappe.get_doc("Pipeline", self.pipeline(image, "Failure"))
 
 		with (
 			patch.object(PilotImage, "release_build_machine") as release_build_machine,
 			patch.object(PilotImage, "delete_atlas_image") as delete_atlas_image,
 		):
-			image.on_workflow_failure(workflow)
+			image.on_pipeline_failure(pipeline)
 
 		self.assertEqual(image.status, "Failed")
 		release_build_machine.assert_called_once()
@@ -489,7 +489,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		image.db_set("error", "an earlier attempt")
 
 		with patch.object(PilotImage, "release_build_machine") as release_build_machine:
-			image.on_workflow_success(None)
+			image.on_pipeline_success(None)
 
 		self.assertEqual(image.status, "Completed")
 		self.assertIsNone(image.error)

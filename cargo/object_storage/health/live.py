@@ -224,14 +224,14 @@ def increase_disk_size_if_required():
 		GrowStorageNodeDisks,
 		add_storage_node,
 	)
-	from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_workflow
+	from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_pipeline
 
 	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
 	if not cluster_name:
 		return
 
 	cluster: ObjectStorageCluster = frappe.get_doc("Object Storage Cluster", cluster_name)
-	if get_running_workflow(cluster):
+	if get_running_pipeline(cluster):
 		return
 
 	# A node added at the max disk size boots first, then joins here on a later run.

@@ -33,7 +33,7 @@ IMAGE_PAGE_LIMIT = 100
 
 class AtlasError(RuntimeError):
 	"""An Atlas call failed. One argument, so it survives a pickle round trip: that is how
-	the workflow engine carries an exception back to the flow that raised it."""
+	the pipeline engine carries an exception back to the flow that raised it."""
 
 
 class AtlasNotFound(AtlasError):

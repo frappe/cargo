@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
+from pipeline.pipeline.utils import called_methods_in_order
 
 from cargo.cargo.doctype.machine.machine import Machine
 from cargo.image_builder.doctype.one_click_image.one_click_image import (
@@ -21,7 +22,6 @@ from cargo.image_builder.doctype.one_click_image.one_click_image import (
 from cargo.image_builder.doctype.pilot_image.builder import PROVISION_TIMEOUT, Builder
 from cargo.ssh import SshError
 from cargo.testing import use_test_settings
-from cargo.workflow_engine.utils import called_methods_in_order
 
 CONTROLLER = "cargo.image_builder.doctype.one_click_image.one_click_image"
 APP_HEADER = "description: A test app.\nbase_image:\n  os: Ubuntu\n  os_version: '24.04'\n  minimal: true\n"

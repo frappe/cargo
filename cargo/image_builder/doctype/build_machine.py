@@ -10,9 +10,9 @@ from cargo.image_builder.doctype.pilot_image.builder import Builder, get_build_s
 class BuildMachineOwner:
 	"""An image doctype that rents one build machine, builds on it and snapshots it. It needs
 	`status`, `error`, `machine`, `snapshot_id` and `built_at` fields, plus `get_boot_image()`,
-	`get_atlas_tags()`, `is_warm_image` and a `create_image()` that runs its workflow.
+	`get_atlas_tags()`, `is_warm_image` and a `create_image()` that runs its pipeline.
 
-	`take_snapshot` and `wait_for_snapshot` are plain here: the workflow only tracks tasks a
+	`take_snapshot` and `wait_for_snapshot` are plain here: the pipeline only tracks tasks a
 	class declares itself, so each image declares them as `@task` and calls `super()`."""
 
 	is_warm_image = False
@@ -32,7 +32,7 @@ class BuildMachineOwner:
 
 	def sync_machines(self) -> None:
 		"""Once the machine is live we can start the initial build process."""
-		# Past this, the workflow owns the machine: a finished build terminates it on purpose.
+		# Past this, the pipeline owns the machine: a finished build terminates it on purpose.
 		if self.status != "Provisioning":
 			return
 
@@ -84,20 +84,20 @@ class BuildMachineOwner:
 		self.built_at = now_datetime()
 		self.save()
 
-	def on_workflow_failure(self, workflow) -> None:
-		"""The workflow engine has given up on this image. The machine is still running, but
+	def on_pipeline_failure(self, pipeline) -> None:
+		"""The pipeline engine has given up on this image. The machine is still running, but
 		the image is not going to be built."""
 		failed = frappe.db.get_value(
-			"Press Workflow Task",
-			{"workflow": workflow.name, "status": "Failure"},
+			"Pipeline Task",
+			{"pipeline": pipeline.name, "status": "Failure"},
 			["method_title", "traceback"],
 			order_by="creation desc",
 			as_dict=True,
 		)
 		stage = failed.method_title if failed else _("Build")
-		if workflow.is_force_failure_requested:
+		if pipeline.is_force_failure_requested:
 			stage = _("Stopped by request during: {0}").format(stage)
-		traceback = ((failed and failed.traceback) or workflow.workflow_traceback or "").strip()
+		traceback = ((failed and failed.traceback) or pipeline.pipeline_traceback or "").strip()
 
 		# Recorded before the machine goes, so a failed release cannot hide why the build failed.
 		self.status = "Failed"
@@ -107,7 +107,7 @@ class BuildMachineOwner:
 		self.release_build_machine()
 		self.delete_atlas_image()
 
-	def on_workflow_success(self, workflow) -> None:
+	def on_pipeline_success(self, pipeline) -> None:
 		"""Record the completed image and release its stopped build machine."""
 		self.status = "Completed"
 		self.error = None

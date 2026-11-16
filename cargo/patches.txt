@@ -7,3 +7,4 @@
 cargo.patches.reconfigure_gateway_cors
 cargo.patches.protect_service_machines
 cargo.patches.create_signing_key
+cargo.patches.remove_workflow_engine

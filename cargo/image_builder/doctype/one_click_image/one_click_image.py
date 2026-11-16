@@ -12,6 +12,8 @@ import frappe
 import yaml
 from frappe.utils import now_datetime
 from frappe.utils.synchronization import filelock
+from pipeline.pipeline.doctype.pipeline.decorators import flow, task
+from pipeline.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
 
 from cargo.image_builder.app_repository import AppRepository
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
@@ -28,8 +30,6 @@ from cargo.image_builder.doctype.pilot_image.builder import (
 	Builder,
 )
 from cargo.ssh import OutputLog, rsync_over_ssh, run_over_ssh
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 # Held to clone, pin or refresh the one clone of the apps repository, so none of them sees it half moved.
@@ -37,7 +37,7 @@ APPS_LOCK = "one_click_apps"
 APPS_LOCK_TIMEOUT = 120
 
 
-class OneClickImage(BuildMachineOwner, WorkflowBuilder):
+class OneClickImage(BuildMachineOwner, PipelineBuilder):
 	# common/scripts/900-cleanup.sh removes the build key and SSH host keys, then syncs the disk.
 	has_ssh_after_build = False
 
@@ -116,7 +116,7 @@ class OneClickImage(BuildMachineOwner, WorkflowBuilder):
 
 	def create_image(self):
 		"""Called by `sync_machines` once the build machine is running."""
-		self._create_image.run_as_workflow()
+		self._create_image.run_as_pipeline()
 
 	@property
 	def folders(self) -> list[str]:

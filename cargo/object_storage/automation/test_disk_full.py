@@ -227,9 +227,9 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 		):
 			self.grower.grow()
 
-		return grow.run_as_workflow.call_args.args[0] if grow.run_as_workflow.called else None
+		return grow.run_as_pipeline.call_args.args[0] if grow.run_as_pipeline.called else None
 
-	def test_the_first_growth_starts_the_workflow(self):
+	def test_the_first_growth_starts_the_pipeline(self):
 		self.assertEqual(self.grown_to(), 150)
 
 	def test_an_older_growth_lets_the_next_through(self):
@@ -265,21 +265,21 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 		with self.assertRaises(DiskAtMaxCapacityError):
 			self.grown_to()
 
-	def running_workflow(self):
+	def running_pipeline(self):
 		return patch(
-			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
-			return_value="workflow-1",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_pipeline",
+			return_value="pipeline-1",
 		)
 
-	def test_a_running_workflow_holds_off_the_growth(self):
-		with self.running_workflow(), self.assertRaisesRegex(frappe.ValidationError, "still running"):
+	def test_a_running_pipeline_holds_off_the_growth(self):
+		with self.running_pipeline(), self.assertRaisesRegex(frappe.ValidationError, "still running"):
 			self.grown_to()
 
-	def test_a_running_workflow_holds_off_adding_a_node(self):
+	def test_a_running_pipeline_holds_off_adding_a_node(self):
 		self.set_disks(500)
 
 		with (
-			self.running_workflow(),
+			self.running_pipeline(),
 			self.assertRaisesRegex(frappe.ValidationError, "still running") as raised,
 		):
 			self.grown_to()
@@ -288,7 +288,7 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 
 
 class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
-	"""The workflow `grow_disks` starts: Atlas, then the filesystems, then Garage's layout."""
+	"""The pipeline `grow_disks` starts: Atlas, then the filesystems, then Garage's layout."""
 
 	def cluster_doc(self) -> ObjectStorageCluster:
 		return frappe.get_doc("Object Storage Cluster", self.cluster.name)
@@ -384,10 +384,10 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 		self.setup = setup
 		return grow, add_node
 
-	def test_a_running_workflow_does_nothing(self):
+	def test_a_running_pipeline_does_nothing(self):
 		with patch(
-			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
-			return_value="workflow-1",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_pipeline",
+			return_value="pipeline-1",
 		):
 			grow, add_node = self.run_job([self.usage(used_gb=85)])
 
