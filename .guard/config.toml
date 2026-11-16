@@ -21,9 +21,9 @@ rule = "Every whitelisted endpoint is reachable only by an authenticated first-p
 severity = "low"
 
 [[rules]]
-id = "no-migration-patches"
-rule = "Cargo is not in production and has no installations to migrate, so a schema change needs no patch. Removing or renaming a DocType field, changing a Select's options, or adding a child table is complete without a cargo/patches entry and without backfilling existing rows. Do not ask for migration patches, data backfills, or backward compatibility with an older field layout."
-severity = "low"
+id = "migration-patches"
+rule = "Cargo runs in production, so a change that leaves existing rows wrong needs a patch in cargo/patches listed in cargo/patches.txt. This covers renaming or removing a DocType, field or module, changing a Select's options, moving data into a new field or child table, and a new mandatory field that existing rows lack. A patch must be safe to run again, and it goes under [pre_model_sync] when it reads a column the new schema drops, otherwise under [post_model_sync]. A change that only adds an optional field, or touches no stored data, needs no patch."
+severity = "high"
 
 [auto_approve]
 enabled = true
