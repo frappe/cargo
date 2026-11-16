@@ -4,12 +4,14 @@ import json
 import typing
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.pipeline.utils import deadlock_retry
+from cloudtoolkit.ssh.client import read_script
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Min
-from pipeline.pipeline.doctype.pipeline.decorators import flow, task
-from pipeline.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
-from pipeline.pipeline.utils import deadlock_retry
 
 from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, base_image_id
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
@@ -35,7 +37,6 @@ from cargo.image_builder.doctype.pilot_image.releases import (
 	get_frappe_release,
 	get_latest_pilot_release,
 )
-from cargo.ssh import OutputLog, script
 
 if typing.TYPE_CHECKING:
 	from collections.abc import Iterable
@@ -306,7 +307,7 @@ class PilotImage(BuildMachineOwner, PipelineBuilder):
 		image, so the script names those itself."""
 		proxy_subnet = f"fdaa:{int(self.build_settings.region_id or 0):x}::/64"
 		domain_provider = (
-			script(*DOMAIN_PROVIDER)
+			read_script("cargo", *DOMAIN_PROVIDER)
 			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.build_settings.wildcard_domain}"))
 			.replace('"__PROXY_SUBNET__"', json.dumps(proxy_subnet))
 		)

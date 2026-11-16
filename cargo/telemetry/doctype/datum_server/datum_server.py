@@ -8,17 +8,18 @@ import typing
 from functools import cached_property
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.ssh.client import read_script
+from cloudtoolkit.ssh.output_log import OutputLog, get_cache_key
 from frappe import _
 from frappe.utils import cint
-from pipeline.pipeline.doctype.pipeline.decorators import flow, task
-from pipeline.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
 
 from cargo.atlas_client import AtlasClient, base_image_id
 from cargo.caddy import require_public
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.issuer import generate_machine_token
-from cargo.ssh import OutputLog, cache_key, run_over_ssh, script
 from cargo.telemetry.agent import datum_refresh_script, install_script
 from cargo.telemetry.doctype.datum_server.proxy import (
 	DATUM_PORT,
@@ -193,7 +194,7 @@ class DatumServer(PipelineBuilder):
 		machine = frappe.get_doc("Machine", self.machine) if self.machine else None
 		require_public(machine, _("datum host"))
 		self.setup_log = None
-		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
+		frappe.cache.delete_value(get_cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Setting Up")
 		self._setup.run_as_pipeline()
 
@@ -203,17 +204,16 @@ class DatumServer(PipelineBuilder):
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				run_over_ssh(
-					machine.address,
-					script(
+				machine.ssh_client.run(
+					read_script(
+						"cargo",
 						"telemetry",
 						"conf",
 						"datum",
 						"install.sh",
 						environment=self.install_environment(commit=self.commit),
 					),
-					machine.get_password("ssh_private_key"),
-					timeout=SETUP_TIMEOUT,
+					timeout_seconds=SETUP_TIMEOUT,
 					on_output=log.write,
 				)
 			except Exception:
@@ -240,7 +240,6 @@ class DatumServer(PipelineBuilder):
 	def install_metrics_exporter(self, on_output: Callable[[str], None] | None = None) -> None:
 		"""Install the Datum agent on the host and the timer that fetches its own Datum token. Safe to repeat."""
 		machine: Machine = frappe.get_doc("Machine", self.machine)
-		key = machine.get_password("ssh_private_key")
 
 		# Atlas replaces the whole map, so the role set at creation is sent again.
 		AtlasClient.from_settings().replace_vm_metadata(
@@ -251,14 +250,9 @@ class DatumServer(PipelineBuilder):
 			},
 		)
 		# The agent only installs once the host holds its own Datum token.
-		run_over_ssh(machine.address, datum_refresh_script(), key, timeout=SETUP_TIMEOUT, on_output=on_output)
-		run_over_ssh(
-			machine.address,
-			install_script(TELEMETRY),
-			key,
-			timeout=SETUP_TIMEOUT,
-			on_output=on_output,
-		)
+		ssh = machine.ssh_client
+		ssh.run(datum_refresh_script(), timeout_seconds=SETUP_TIMEOUT, on_output=on_output)
+		ssh.run(install_script(TELEMETRY), timeout_seconds=SETUP_TIMEOUT, on_output=on_output)
 
 	@frappe.whitelist()
 	def update_datum(self, branch: str | None = None, commit: str | None = None) -> None:
@@ -270,7 +264,7 @@ class DatumServer(PipelineBuilder):
 			frappe.throw(_("Machine must be running to update datum."), frappe.ValidationError)
 
 		self.setup_log = None
-		frappe.cache.delete_value(cache_key(self.doctype, self.name, "setup_log"))
+		frappe.cache.delete_value(get_cache_key(self.doctype, self.name, "setup_log"))
 		self.mark("Updating")
 		self._update.run_as_pipeline((branch or "").strip() or self.branch, (commit or "").strip())
 
@@ -281,17 +275,16 @@ class DatumServer(PipelineBuilder):
 		machine: Machine = frappe.get_doc("Machine", self.machine)
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
-				run_over_ssh(
-					machine.address,
-					script(
+				machine.ssh_client.run(
+					read_script(
+						"cargo",
 						"telemetry",
 						"conf",
 						"datum",
 						"update.sh",
 						environment=self.install_environment(branch, commit),
 					),
-					machine.get_password("ssh_private_key"),
-					timeout=SETUP_TIMEOUT,
+					timeout_seconds=SETUP_TIMEOUT,
 					on_output=log.write,
 				)
 			except Exception:
@@ -307,11 +300,7 @@ class DatumServer(PipelineBuilder):
 	def get_datum_commit(self) -> str:
 		"""The commit datum runs at now."""
 		machine: Machine = frappe.get_doc("Machine", self.machine)
-		return run_over_ssh(
-			machine.address,
-			"su - frappe -c 'git -C datum rev-parse HEAD'",
-			machine.get_password("ssh_private_key"),
-		).strip()
+		return machine.ssh_client.run("su - frappe -c 'git -C datum rev-parse HEAD'").output.strip()
 
 	@flow
 	def _update(self, branch: str, commit: str) -> None:

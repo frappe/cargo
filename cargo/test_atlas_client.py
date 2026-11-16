@@ -1,8 +1,12 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
-from unittest.mock import Mock, patch
+import json
+from contextlib import contextmanager
+from unittest.mock import patch
 
+import attrs
+import httpx
 from frappe.tests import UnitTestCase
 
 from cargo.atlas_client import (
@@ -19,32 +23,55 @@ from cargo.client_models import PlacementRule
 TENANT_ID = 7
 
 
-def response(status: int, payload=None, text: str = "") -> Mock:
-	answer = Mock(status_code=status, ok=200 <= status < 300, text=text)
-	answer.json.return_value = payload if payload is not None else {}
-	if payload is None:
-		answer.json.side_effect = ValueError("no body")
+class Request:
+	"""The last request Atlas was sent."""
 
-	return answer
+	def __init__(self) -> None:
+		self.request: httpx.Request | None = None
+
+	@property
+	def method(self) -> str:
+		return self.request.method
+
+	@property
+	def url(self) -> str:
+		return str(self.request.url)
+
+	@property
+	def body(self):
+		return json.loads(self.request.content)
 
 
 class UnitTestAtlasClient(UnitTestCase):
 	def setUp(self):
 		self.client = AtlasClient("https://atlas.test/", "atlas-token", TENANT_ID)
 
-	def call(self, answer: Mock):
-		return patch("cargo.atlas_client.requests.request", return_value=answer)
+	@contextmanager
+	def answer(self, status: int, payload=None):
+		"""Atlas answers every request with `status` and `payload`."""
+		sent = Request()
+
+		def handler(request: httpx.Request) -> httpx.Response:
+			sent.request = request
+			return httpx.Response(status, json=payload) if payload is not None else httpx.Response(status)
+
+		original = self.client.client
+		self.client.client = attrs.evolve(original, httpx_args={"transport": httpx.MockTransport(handler)})
+		try:
+			yield sent
+		finally:
+			self.client.client = original
 
 	def test_every_request_carries_the_credentials_and_the_tenant(self):
-		with self.call(response(200, {"id": "vm-1"})) as request:
+		with self.answer(200, {"id": "vm-1"}) as request:
 			self.client.get_vm("vm-1")
 
-		headers = request.call_args.kwargs["headers"]
+		headers = request.request.headers
 		self.assertEqual(headers["Authorization"], "Bearer atlas-token")
 		self.assertEqual(headers["X-Tenant-ID"], str(TENANT_ID))
 
 	def test_create_asks_for_one_machine_of_the_given_shape(self):
-		with self.call(response(201, {"id": "vm-9"})) as request:
+		with self.answer(201, {"id": "vm-9"}) as request:
 			created = self.client.create_vm(
 				image_id="ubuntu-24.04",
 				cpu_millicores=2000,
@@ -56,7 +83,7 @@ class UnitTestAtlasClient(UnitTestCase):
 			)
 
 		self.assertEqual(created["id"], "vm-9")
-		body = request.call_args.kwargs["json"]
+		body = request.body
 		self.assertEqual(body["cpu_millicores"], 2000)
 		self.assertEqual(body["ssh_keys"], ["ssh-ed25519 AAAA"])
 		self.assertEqual(body["metadata"], {"role": "storage"})
@@ -72,7 +99,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertNotIn("egress", body)
 
 	def test_create_asks_atlas_to_pick_a_public_ipv4_when_wanted(self):
-		with self.call(response(201, {"id": "vm-9"})) as request:
+		with self.answer(201, {"id": "vm-9"}) as request:
 			self.client.create_vm(
 				image_id="ubuntu-24.04",
 				cpu_millicores=1000,
@@ -84,7 +111,7 @@ class UnitTestAtlasClient(UnitTestCase):
 				is_privileged=True,
 			)
 
-		body = request.call_args.kwargs["json"]
+		body = request.body
 		self.assertEqual(body["public_ipv4"], "auto")
 		self.assertTrue(body["is_privileged"])
 		self.assertTrue(body["ipv4_internet_access"])
@@ -95,7 +122,7 @@ class UnitTestAtlasClient(UnitTestCase):
 				resource="virtual_machine", operator="has_not", tags={"role": "storage"}, within="rack"
 			)
 		]
-		with self.call(response(201, {"id": "vm-9"})) as request:
+		with self.answer(201, {"id": "vm-9"}) as request:
 			self.client.create_vm(
 				image_id="ubuntu-24.04",
 				cpu_millicores=1000,
@@ -107,7 +134,7 @@ class UnitTestAtlasClient(UnitTestCase):
 				placement_rules=rules,
 			)
 
-		body = request.call_args.kwargs["json"]
+		body = request.body
 		self.assertEqual(body["tags"], {"role": "storage"})
 		self.assertEqual(
 			body["placement_rules"],
@@ -122,7 +149,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		)
 
 	def test_create_asks_atlas_to_protect_the_machine(self):
-		with self.call(response(201, {"id": "vm-9"})) as request:
+		with self.answer(201, {"id": "vm-9"}) as request:
 			self.client.create_vm(
 				image_id="ubuntu-24.04",
 				cpu_millicores=1000,
@@ -133,60 +160,58 @@ class UnitTestAtlasClient(UnitTestCase):
 				is_termination_protected=True,
 			)
 
-		self.assertTrue(request.call_args.kwargs["json"]["is_termination_protected"])
+		self.assertTrue(request.body["is_termination_protected"])
 
 	def test_attaching_a_public_ip_puts_the_versioned_route(self):
 		for version, route in (("IPv4", "public-ipv4"), ("IPv6", "public-ipv6")):
-			with self.subTest(version=version), self.call(response(202, {"id": "vm-1"})) as request:
+			with self.subTest(version=version), self.answer(202, {"id": "vm-1"}) as request:
 				self.client.attach_public_ip("vm-1", version)
 
-			method, url = request.call_args.args
+			method, url = request.method, request.url
 			self.assertEqual(method, "PUT")
 			self.assertEqual(url, f"https://atlas.test/api/atlas/virtual-machines/vm-1/{route}")
-			self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "auto"})
+			self.assertEqual(request.body, {"public_ip": "auto"})
 
 	def test_a_reserved_allocation_is_attached_by_id(self):
-		with self.call(response(202, {"id": "vm-1"})) as request:
+		with self.answer(202, {"id": "vm-1"}) as request:
 			self.client.attach_public_ip("vm-1", "IPv4", "alloc-7")
 
-		self.assertEqual(request.call_args.kwargs["json"], {"public_ip": "alloc-7"})
+		self.assertEqual(request.body, {"public_ip": "alloc-7"})
 
 	def test_detaching_a_public_ip_deletes_the_versioned_route(self):
-		with self.call(response(202, {"id": "vm-1"})) as request:
+		with self.answer(202, {"id": "vm-1"}) as request:
 			self.client.detach_public_ip("vm-1", "IPv6")
 
-		method, url = request.call_args.args
+		method, url = request.method, request.url
 		self.assertEqual(method, "DELETE")
 		self.assertEqual(url, "https://atlas.test/api/atlas/virtual-machines/vm-1/public-ipv6")
 
 	def test_protecting_a_machine_patches_the_vm(self):
-		with self.call(response(202, {"id": "vm-1"})) as request:
+		with self.answer(202, {"id": "vm-1"}) as request:
 			self.client.set_vm_termination_protection("vm-1", enabled=True)
 
-		self.assertEqual(request.call_args.args[0], "PATCH")
-		self.assertTrue(request.call_args.args[1].endswith("/virtual-machines/vm-1/termination-protection"))
-		self.assertEqual(request.call_args.kwargs["json"], {"enabled": True})
+		self.assertEqual(request.method, "PATCH")
+		self.assertTrue(request.url.endswith("/virtual-machines/vm-1/termination-protection"))
+		self.assertEqual(request.body, {"enabled": True})
 
 	def test_replacing_metadata_puts_the_whole_map(self):
-		with self.call(response(202, {"id": "vm-1"})) as request:
+		with self.answer(202, {"id": "vm-1"}) as request:
 			self.client.replace_vm_metadata("vm-1", {"role": "storage", "datum-credential": "token"})
 
-		self.assertEqual(request.call_args.args[0], "PUT")
-		self.assertTrue(request.call_args.args[1].endswith("/virtual-machines/vm-1/metadata"))
-		self.assertEqual(
-			request.call_args.kwargs["json"], {"metadata": {"role": "storage", "datum-credential": "token"}}
-		)
+		self.assertEqual(request.method, "PUT")
+		self.assertTrue(request.url.endswith("/virtual-machines/vm-1/metadata"))
+		self.assertEqual(request.body, {"metadata": {"role": "storage", "datum-credential": "token"}})
 
 	def test_a_dns_record_is_put_by_name(self):
-		with self.call(response(204)) as request:
+		with self.answer(204) as request:
 			self.client.set_dns_record("internal-s3-svc.example.test", "fdaa:1::7")
 
-		self.assertEqual(request.call_args.args[0], "PUT")
-		self.assertTrue(request.call_args.args[1].endswith("/dns-records/internal-s3-svc.example.test"))
-		self.assertEqual(request.call_args.kwargs["json"], {"address": "fdaa:1::7"})
+		self.assertEqual(request.method, "PUT")
+		self.assertTrue(request.url.endswith("/dns-records/internal-s3-svc.example.test"))
+		self.assertEqual(request.body, {"address": "fdaa:1::7"})
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
-		with self.call(response(201, {})), self.assertRaises(AtlasError):
+		with self.answer(201, {}), self.assertRaises(AtlasError):
 			self.client.create_vm(
 				image_id="ubuntu-24.04",
 				cpu_millicores=1000,
@@ -197,13 +222,13 @@ class UnitTestAtlasClient(UnitTestCase):
 			)
 
 	def test_a_snapshot_asks_for_a_cached_image_with_a_warm_template(self):
-		with self.call(response(201, {"id": "img-4"})) as request:
+		with self.answer(201, {"id": "img-4"}) as request:
 			created = self.client.create_snapshot(
 				"vm-1", "pilot golden", cache_image=True, memory_snapshot=True
 			)
 
 		self.assertEqual(created, "img-4")
-		body = request.call_args.kwargs["json"]
+		body = request.body
 		self.assertEqual(
 			body,
 			{
@@ -216,37 +241,37 @@ class UnitTestAtlasClient(UnitTestCase):
 		)
 
 	def test_a_snapshot_carries_the_tags_it_is_given(self):
-		with self.call(response(201, {"id": "img-6"})) as request:
+		with self.answer(201, {"id": "img-6"}) as request:
 			self.client.create_snapshot("vm-1", "pilot golden", tags={"purpose": "pilot"})
 
-		self.assertEqual(request.call_args.kwargs["json"]["tags"], {"purpose": "pilot"})
+		self.assertEqual(request.body["tags"], {"purpose": "pilot"})
 
 	def test_clearing_termination_protection_patches_the_image(self):
-		with self.call(response(202, {"id": "img-1"})) as request:
+		with self.answer(202, {"id": "img-1"}) as request:
 			self.client.set_image_termination_protection("img-1", enabled=False)
 
-		self.assertEqual(request.call_args.args[0], "PATCH")
-		self.assertTrue(request.call_args.args[1].endswith("/images/img-1/termination-protection"))
-		self.assertEqual(request.call_args.kwargs["json"], {"enabled": False})
+		self.assertEqual(request.method, "PATCH")
+		self.assertTrue(request.url.endswith("/images/img-1/termination-protection"))
+		self.assertEqual(request.body, {"enabled": False})
 
 	def test_a_snapshot_asks_for_neither_host_flag_by_default(self):
-		with self.call(response(201, {"id": "img-5"})) as request:
+		with self.answer(201, {"id": "img-5"}) as request:
 			self.client.create_snapshot("vm-1", "plain")
 
-		body = request.call_args.kwargs["json"]
+		body = request.body
 		self.assertEqual(body["image_type"], "machine")
 		self.assertFalse(body["cache_image"])
 		self.assertFalse(body["memory_snapshot"])
 
 	def test_the_system_image_is_found_by_its_tags(self):
 		payload = {"items": [{"id": "0p0ap0f857", "status": "available"}]}
-		with self.call(response(200, payload)) as request:
+		with self.answer(200, payload) as request:
 			found = self.client.find_system_image(BASE_IMAGE_TAGS)
 
 		self.assertEqual(found, "0p0ap0f857")
-		url = request.call_args.args[1]
-		self.assertIn("image_type=system", url)
-		self.assertIn("tag=purpose:base,os:Ubuntu,os_version:24.04", url)
+		params = request.request.url.params
+		self.assertEqual(params["image_type"], "system")
+		self.assertEqual(params["tag"], "purpose:base,os:Ubuntu,os_version:24.04")
 
 	def test_the_newest_available_image_wins(self):
 		payload = {
@@ -255,15 +280,15 @@ class UnitTestAtlasClient(UnitTestCase):
 				{"id": "img-old", "status": "available"},
 			]
 		}
-		with self.call(response(200, payload)):
+		with self.answer(200, payload):
 			self.assertEqual(self.client.find_system_image(BASE_IMAGE_TAGS), "img-old")
 
 	def test_an_image_that_is_not_available_yet_is_not_offered(self):
-		with self.call(response(200, {"items": [{"id": "img-1", "status": "pending"}]})):
+		with self.answer(200, {"items": [{"id": "img-1", "status": "pending"}]}):
 			self.assertIsNone(self.client.find_system_image(BASE_IMAGE_TAGS))
 
 	def test_no_system_image_at_all_is_not_an_error(self):
-		with self.call(response(200, {"items": [], "has_more": False})):
+		with self.answer(200, {"items": [], "has_more": False}):
 			self.assertIsNone(self.client.find_system_image(BASE_IMAGE_TAGS))
 
 	def test_the_base_image_is_minimal_or_full_by_its_tag(self):
@@ -276,13 +301,13 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(asked, ["true", "false"])
 
 	def test_a_missing_machine_is_its_own_error(self):
-		with self.call(response(404, {"error": {"code": "not_found", "message": "gone"}})):
+		with self.answer(404, {"error": {"code": "not_found", "message": "gone"}}):
 			with self.assertRaises(AtlasNotFound):
 				self.client.get_vm("vm-1")
 
 	def test_a_refusal_carries_atlas_own_message(self):
 		payload = {"error": {"code": "conflict", "message": "attached", "fields": []}}
-		with self.call(response(409, payload)):
+		with self.answer(409, payload):
 			with self.assertRaises(AtlasError) as raised:
 				self.client.terminate_vm("vm-1")
 

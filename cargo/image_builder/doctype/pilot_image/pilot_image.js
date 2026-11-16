@@ -115,7 +115,7 @@ function follow_build_log(frm) {
 	}
 
 	frappe
-		.xcall("cargo.ssh.get_live_output", {
+		.xcall("cloudtoolkit.ssh.output_log.get_live_output", {
 			doctype: frm.doctype,
 			name: frm.doc.name,
 			fieldname: "build_log",

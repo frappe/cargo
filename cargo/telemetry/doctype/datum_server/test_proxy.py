@@ -2,6 +2,7 @@ import os
 from unittest.mock import Mock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import SSHClient
 from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import TELEMETRY
@@ -66,17 +67,17 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		with (
 			patch("cargo.caddy.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
-			patch("cargo.caddy.run_over_ssh") as run,
+			patch.object(SSHClient, "run", autospec=True) as run,
 		):
 			self.proxy().install()
 
-		self.assertEqual(run.call_args.args[0], "fdaa:1::9")
+		self.assertEqual(run.call_args.args[0].host, "fdaa:1::9")
 
 	def test_a_host_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.machine.name, "public_ipv4", None)
 
 		with (
-			patch("cargo.caddy.run_over_ssh") as run,
+			patch.object(SSHClient, "run", autospec=True) as run,
 			self.assertRaisesRegex(frappe.ValidationError, "public IPv4"),
 		):
 			self.proxy().install()
@@ -85,7 +86,7 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 
 	def test_the_server_points_its_names_at_the_datum_host_again(self):
 		domain = SETTINGS["wildcard_domain"]
-		with patch("cargo.caddy.AtlasClient") as atlas, patch("cargo.caddy.run_over_ssh") as run:
+		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			frappe.get_single("Datum Server").update_dns_records()
 
 		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
