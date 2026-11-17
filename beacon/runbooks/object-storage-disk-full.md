@@ -1,4 +1,4 @@
-# Object storage disk almost full
+# Object storage disk is almost full
 
 A data or metadata disk of a Garage node has less than 10% free space. Garage stops writes when a disk is full.
 

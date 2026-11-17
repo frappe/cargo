@@ -1,4 +1,5 @@
 -- title: Telemetry read certificate expiring
+-- description: The certificate for the telemetry read endpoint expires in under 14 days. Beacon cannot read the region.
 -- severity: Medium
 -- host: telemetry-read-svc.{wildcard_domain}
 -- region: all

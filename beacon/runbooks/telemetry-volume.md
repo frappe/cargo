@@ -1,4 +1,4 @@
-# Telemetry volume grew
+# Telemetry volume more than doubled
 
 A sender sent more than 2 times its 7-day median of samples and log lines yesterday. The alert key is the resource ID of the sender. The data does not have a gap, but the storage cost grows.
 

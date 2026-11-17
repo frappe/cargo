@@ -1,4 +1,5 @@
 -- title: Object storage certificate expiring
+-- description: The certificate for the S3 endpoint expires in under 14 days. Customers will see TLS errors.
 -- severity: Medium
 -- host: s3-svc.{wildcard_domain}
 -- region: all

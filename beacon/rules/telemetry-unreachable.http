@@ -1,4 +1,5 @@
 -- title: Telemetry endpoint unreachable
+-- description: The Datum status route did not answer for 3 minutes. No machine in the region can send telemetry.
 -- severity: High
 -- url: https://telemetry-svc.{wildcard_domain}/health
 -- region: all

@@ -1,4 +1,4 @@
-# Object storage health
+# Object storage cluster is unhealthy
 
 Cargo reads the health of each object storage cluster from its gateway every minute. The cluster is Critical (High), Degraded or Unknown (Medium), or Cargo sent no verdict for 10 minutes (Medium).
 

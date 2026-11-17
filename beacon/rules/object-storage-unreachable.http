@@ -1,4 +1,5 @@
 -- title: Object storage unreachable
+-- description: The Garage status route did not answer for 3 minutes. Customers cannot upload or download files.
 -- severity: High
 -- url: https://s3-admin-svc.{wildcard_domain}/health
 -- region: all

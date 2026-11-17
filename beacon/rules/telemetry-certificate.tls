@@ -1,4 +1,5 @@
 -- title: Telemetry certificate expiring
+-- description: The certificate for the telemetry endpoint expires in under 14 days. Machines cannot send telemetry.
 -- severity: Medium
 -- host: telemetry-svc.{wildcard_domain}
 -- region: all

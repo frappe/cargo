@@ -1,4 +1,4 @@
-# Object storage errors
+# Object storage returns 5xx errors
 
 More than 1% of S3 requests to Garage failed with a 5xx status in 10 minutes.
 

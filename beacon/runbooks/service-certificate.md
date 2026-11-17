@@ -1,4 +1,4 @@
-# Cargo certificate expiring
+# Service certificate expiring
 
 Caddy on the object storage gateway or the Datum host obtains and renews the certificate of each public name itself. This alert means that a certificate has fewer than 14 days left, or that it does not verify for its name. The alert detail names the host.
 
