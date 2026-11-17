@@ -1,4 +1,5 @@
 -- title: Object storage unavailable
+-- description: Garage has no write quorum or a node stopped reporting. Backups, site files and images fail.
 -- severity: Critical
 -- resource_type: Cargo Server
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-unavailable.md
@@ -8,7 +9,7 @@
 -- Garage is available while every partition has a write quorum. Each storage and gateway node that Cargo lists must report it.
 -- A node with no report in the last 5 minutes counts as down, so the alert resolves only on a fresh report that the cluster is available.
 SELECT 'cargo' AS resource_id, '' AS alert_key, countIf(is_up) AS value,
-       concat('Garage is unavailable or silent on ', toString(countIf(NOT is_up)), ' of ', toString(count()), ' nodes') AS detail
+       concat('Garage is down or not reporting on ', toString(countIf(NOT is_up)), ' of ', toString(count()), ' nodes') AS detail
 FROM (
     SELECT expected.machine AS machine, reports.is_up AS is_up
     FROM (

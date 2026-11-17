@@ -1,4 +1,4 @@
-# Telemetry dropped on machine
+# Telemetry events dropped
 
 The Datum agent on the machine dropped 100 or more events in 1 hour. The alert key is the reason. The data of the machine has a gap, so a rule that reads it can miss a problem.
 

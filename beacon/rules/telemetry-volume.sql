@@ -1,4 +1,5 @@
--- title: Telemetry volume grew
+-- title: Telemetry volume more than doubled
+-- description: A sender sent over twice its 7-day median yesterday. Storage cost is growing.
 -- severity: Low
 -- resource_type: Region
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/telemetry-volume.md
@@ -7,7 +8,7 @@
 -- resolve_after: 7200
 -- Datum counts the samples and log lines of each sender each day. A sender that sent more than 2 times its median of the 7 days before, and more than 100,000 rows, often runs a new version that sends a new metric or logs too much. The rule finds it before the storage cost does. A sender needs 3 days before yesterday, so a partial first day does not count as growth.
 SELECT {region:String} AS resource_id, sender AS alert_key, toFloat64(yesterday) AS value,
-       concat(sender, ' sent ', toString(yesterday), ' rows on ', toString(yesterday()), ', ', toString(round(yesterday / median, 1)), ' times its 7-day median') AS detail
+       concat(sender, ' sent ', toString(yesterday), ' rows on ', toString(yesterday()), ', ', toString(round(yesterday / median, 1)), ' times its 7-day median (limit 2x)') AS detail
 FROM (
     SELECT sender, sumIf(rows, date = yesterday()) AS yesterday, medianIf(rows, date < yesterday()) AS median,
            countIf(date < yesterday()) AS history_days

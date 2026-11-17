@@ -1,4 +1,5 @@
--- title: Object storage disk almost full
+-- title: Object storage disk is almost full
+-- description: A Garage disk has less than 10% free space. Garage stops writes when it fills.
 -- severity: High
 -- resource_type: Cargo Server
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-disk-full.md
@@ -6,7 +7,7 @@
 -- pending_for: 600
 -- resolve_after: 900
 SELECT 'cargo' AS resource_id, concat(machine, ' ', volume) AS alert_key, 100 * avail / total AS value,
-       concat('the ', volume, ' disk of ', machine, ' has ', toString(round(value, 1)), '% free') AS detail
+       concat(volume, ' disk of ', machine, ' has ', toString(round(value, 1)), '% free (limit 10%)') AS detail
 FROM (
     SELECT resource_id AS machine, labels['volume'] AS volume,
            argMaxIf(value, ts, metric = 'garage_local_disk_avail') AS avail,
