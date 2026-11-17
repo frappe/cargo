@@ -2,6 +2,7 @@
 -- description: The newest build of an image failed. New VMs of that image cannot be created.
 -- severity: Medium
 -- resource_type: Cargo Server
+-- charts: cargo-failed-builds
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

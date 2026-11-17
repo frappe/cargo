@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Cargo Server
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-health.md
+-- charts: object-storage-nodes, object-storage-partitions
 -- interval: 60
 -- pending_for: 180
 -- resolve_after: 300
