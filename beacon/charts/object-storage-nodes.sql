@@ -1,7 +1,7 @@
 -- title: Storage Nodes
 -- resource_type: Cargo Server
 -- section: Object Storage
--- unit: 
+-- unit:
 -- style: Line
 -- is_key_chart: 1
 -- sort_order: 10

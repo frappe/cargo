@@ -1,7 +1,7 @@
 -- title: Failed Builds
 -- resource_type: Cargo Server
 -- section: Images
--- unit: 
+-- unit:
 -- style: Bar
 -- is_key_chart: 0
 -- sort_order: 20
