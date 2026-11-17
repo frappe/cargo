@@ -2,6 +2,7 @@
 -- description: A storage node is down or blocks failed to copy. The cluster still serves data but can lose it.
 -- severity: Medium
 -- resource_type: Cargo Server
+-- charts: object-storage-nodes, object-storage-resync
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 600

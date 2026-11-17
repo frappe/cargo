@@ -3,6 +3,7 @@
 -- severity: High
 -- resource_type: Cargo Server
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-disk-full.md
+-- charts: object-storage-disk
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 900

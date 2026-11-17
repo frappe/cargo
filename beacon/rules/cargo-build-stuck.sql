@@ -2,6 +2,7 @@
 -- description: An image build has run for over 2 hours. New VMs of that image wait.
 -- severity: Medium
 -- resource_type: Cargo Server
+-- charts: cargo-image-age
 -- interval: 300
 -- pending_for: 300
 -- resolve_after: 3600

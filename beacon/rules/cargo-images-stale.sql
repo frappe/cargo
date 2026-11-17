@@ -2,6 +2,7 @@
 -- description: The newest usable image is over 2 days old. New VMs get an old image.
 -- severity: Medium
 -- resource_type: Cargo Server
+-- charts: cargo-image-age
 -- interval: 900
 -- pending_for: 900
 -- resolve_after: 3600

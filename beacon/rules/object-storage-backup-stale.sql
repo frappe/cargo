@@ -3,6 +3,7 @@
 -- severity: Medium
 -- resource_type: Cargo Server
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/object-storage-backup-stale.md
+-- charts: object-storage-backup-age
 -- interval: 900
 -- pending_for: 900
 -- resolve_after: 3600
