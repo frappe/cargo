@@ -1,6 +1,6 @@
 -- title: Datum stores no new samples
 -- description: Datum stored no sample for 3 minutes. Every machine in the region has no telemetry.
--- severity: High
+-- severity: Critical
 -- resource_type: Region
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/datum-ingest-stopped.md
 -- interval: 60
