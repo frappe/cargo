@@ -13,7 +13,7 @@ from frappe import _
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Min
 
-from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, PILOT_OS_VERSION, base_image_id
+from cargo.atlas_client import PILOT_IMAGE_OS_TAGS, base_image_id
 from cargo.cargo.doctype.machine.machine import Machine as MachineDoc
 from cargo.image_builder.doctype.build_machine import BuildMachineOwner
 from cargo.image_builder.doctype.pilot_image.apps import (
@@ -103,7 +103,7 @@ class PilotImage(BuildMachineOwner, PipelineBuilder):
 		"""Base boots on Ubuntu, or on the branch's newest Base image when Cargo Settings updates
 		Pilot in place. Site boots on the Base image of its build, and Apps on its Site image."""
 		if self.image_type == "Base":
-			return self.previous_base_image or base_image_id(minimal=True, os_version=PILOT_OS_VERSION)
+			return self.previous_base_image or base_image_id(minimal=True)
 
 		boot_image_type = "Base" if self.image_type == "Site" else "Site"
 		snapshot_id = frappe.db.get_value(

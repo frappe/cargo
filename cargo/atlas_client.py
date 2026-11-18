@@ -64,10 +64,9 @@ MIB_PER_GB = 1024
 MINIMUM_CPU_MILLICORES = 100
 MAXIMUM_CPU_MILLICORES = 32_000
 # Atlas names an image by a generated id, so the one to boot on is found by its tags.
-BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "24.04"}
-# Pilot images bake on a newer Ubuntu than Cargo's own machines, and are tagged with it.
-PILOT_OS_VERSION = "26.04"
-PILOT_IMAGE_OS_TAGS = {"os": BASE_IMAGE_TAGS["os"], "os_version": PILOT_OS_VERSION}
+BASE_IMAGE_TAGS = {"purpose": "base", "os": "Ubuntu", "os_version": "26.04"}
+# A Pilot image bakes on the base image, so it carries the same operating system.
+PILOT_IMAGE_OS_TAGS = {key: BASE_IMAGE_TAGS[key] for key in ("os", "os_version")}
 # The most a list route returns in one page.
 IMAGE_PAGE_LIMIT = 100
 POWER_ACTIONS = {
@@ -300,10 +299,10 @@ class AtlasClient:
 		return self.call(get_image, image_id)
 
 
-def base_image_id(minimal: bool = False, os_version: str = BASE_IMAGE_TAGS["os_version"]) -> str:
+def base_image_id(minimal: bool = False) -> str:
 	"""The Ubuntu system image a Cargo machine boots on, minimal or full. Throws when Atlas
 	has none."""
-	tags = {**BASE_IMAGE_TAGS, "os_version": os_version, "minimal": "true" if minimal else "false"}
+	tags = {**BASE_IMAGE_TAGS, "minimal": "true" if minimal else "false"}
 	image_id = AtlasClient.from_settings().find_system_image(tags)
 	if not image_id:
 		frappe.throw(

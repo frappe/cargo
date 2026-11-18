@@ -271,7 +271,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(found, "0p0ap0f857")
 		params = request.request.url.params
 		self.assertEqual(params["image_type"], "system")
-		self.assertEqual(params["tag"], "purpose:base,os:Ubuntu,os_version:24.04")
+		self.assertEqual(params["tag"], "purpose:base,os:Ubuntu,os_version:26.04")
 
 	def test_the_newest_available_image_wins(self):
 		payload = {
@@ -299,15 +299,6 @@ class UnitTestAtlasClient(UnitTestCase):
 
 		asked = [call.args[0]["minimal"] for call in client.return_value.find_system_image.call_args_list]
 		self.assertEqual(asked, ["true", "false"])
-
-	def test_the_base_image_is_24_04_unless_another_ubuntu_is_asked_for(self):
-		with patch("cargo.atlas_client.AtlasClient.from_settings") as client:
-			client.return_value.find_system_image.return_value = "img-1"
-			base_image_id()
-			base_image_id(minimal=True, os_version="26.04")
-
-		asked = [call.args[0]["os_version"] for call in client.return_value.find_system_image.call_args_list]
-		self.assertEqual(asked, ["24.04", "26.04"])
 
 	def test_a_missing_machine_is_its_own_error(self):
 		with self.answer(404, {"error": {"code": "not_found", "message": "gone"}}):
