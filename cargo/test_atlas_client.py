@@ -271,7 +271,7 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(found, "0p0ap0f857")
 		params = request.request.url.params
 		self.assertEqual(params["image_type"], "system")
-		self.assertEqual(params["tag"], "purpose:base,os:Ubuntu,os_version:24.04")
+		self.assertEqual(params["tag"], "purpose:base,os:Ubuntu,os_version:26.04")
 
 	def test_the_newest_available_image_wins(self):
 		payload = {

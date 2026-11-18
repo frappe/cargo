@@ -151,7 +151,7 @@ Cargo terminates the build machine once the build finishes, so the image must no
 
 ## Finding the base image — `GET /images?image_type=system&tag=...&limit=100`
 
-Cargo boots its machines and builds its images on the Ubuntu System image. Atlas names an image by a generated id, so Cargo filters by tags: `purpose:base`, `os:Ubuntu`, `os_version:24.04`, and `minimal:true` or `minimal:false`. Atlas returns enabled images newest first, and Cargo takes the first one whose `status` is `available`.
+Cargo boots its machines and builds its images on the Ubuntu System image. Atlas names an image by a generated id, so Cargo filters by tags: `purpose:base`, `os:Ubuntu`, `os_version:26.04`, and `minimal:true` or `minimal:false`. Atlas returns enabled images newest first, and Cargo takes the first one whose `status` is `available`.
 
 Cargo stops with a clear error when no such image exists, rather than asking Atlas for a machine that cannot boot.
 

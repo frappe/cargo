@@ -33,6 +33,19 @@ class TestFakeAtlas(unittest.TestCase):
 		self.assertEqual(response.status, 200)
 		self.assertEqual(payload["items"][0]["id"], "ubuntu-24.04")
 
+	def test_a_pilot_build_finds_the_minimal_26_04_image(self):
+		connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
+		self.addCleanup(connection.close)
+		connection.request(
+			"GET",
+			"/api/atlas/images?image_type=system&tag=purpose:base,os:Ubuntu,os_version:26.04,minimal:true&limit=100",
+			headers={"Authorization": "Bearer test", "X-Tenant-ID": "1"},
+		)
+
+		payload = json.load(connection.getresponse())
+
+		self.assertEqual([image["id"] for image in payload["items"]], ["ubuntu-26.04-minimal"])
+
 
 if __name__ == "__main__":
 	unittest.main()

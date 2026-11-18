@@ -10,7 +10,7 @@ A **Pilot Image** is one build machine and the one Atlas image it was snapshotte
 
 | Type | Boots on | Adds |
 |---|---|---|
-| Base | Ubuntu 24.04 | The bench user, Pilot, and the bench `default-bench` initialised at `frappe_commit`. No site. |
+| Base | Ubuntu 26.04 minimal | The bench user, Pilot, and the bench `default-bench` initialised at `frappe_commit`. No site. |
 | Site | The Base image of its build | A bare site `site.local` with no apps. |
 | Apps | The newest Site image of its branch when it was created | One signup app and the apps it requires, installed on the site. |
 
