@@ -36,11 +36,13 @@ CONTAINER_PREFIX = "cargo-fake"
 IMAGES = {
 	"ubuntu-24.04": "ubuntu:24.04",
 	"ubuntu-24.04-minimal": "ubuntu:24.04",
+	"ubuntu-26.04": "ubuntu:26.04",
+	"ubuntu-26.04-minimal": "ubuntu:26.04",
 	"ubuntu-22.04": "ubuntu:22.04",
 }
 # What `GET /images` offers as the System image to bake on. Cargo asks for a full or a minimal
 # one by the `minimal` tag; both are the same Ubuntu here.
-SYSTEM_IMAGE_IDS = ("ubuntu-24.04", "ubuntu-24.04-minimal")
+SYSTEM_IMAGE_IDS = ("ubuntu-24.04", "ubuntu-24.04-minimal", "ubuntu-26.04", "ubuntu-26.04-minimal")
 SYSTEM_IMAGE = {
 	"id": "ubuntu-24.04",
 	"title": "Ubuntu 24.04",
@@ -157,11 +159,17 @@ def docker_images() -> list[tuple[str, dict]]:
 def image_response(image_id: str, inspected: dict | None = None) -> dict:
 	if image_id in IMAGES:
 		minimal = image_id.endswith("-minimal")
+		os_version = IMAGES[image_id].split(":")[1]
+		title = f"Ubuntu {os_version}"
 		return {
 			**SYSTEM_IMAGE,
 			"id": image_id,
-			"title": f"{SYSTEM_IMAGE['title']} Minimal" if minimal else SYSTEM_IMAGE["title"],
-			"tags": {**SYSTEM_IMAGE["tags"], "minimal": "true" if minimal else "false"},
+			"title": f"{title} Minimal" if minimal else title,
+			"tags": {
+				**SYSTEM_IMAGE["tags"],
+				"os_version": os_version,
+				"minimal": "true" if minimal else "false",
+			},
 		}
 
 	inspected = inspected or inspect_image(image_id)

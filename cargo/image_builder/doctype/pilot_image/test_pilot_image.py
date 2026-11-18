@@ -214,7 +214,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		):
 			image.request_build_machine()
 
-		base_image.assert_called_once_with(minimal=True)
+		base_image.assert_called_once_with(minimal=True, os_version="26.04")
 		self.assertEqual(request.call_args.kwargs["spec"].role, "builder")
 		self.assertEqual(request.call_args.kwargs["base_image"], "img-1")
 		self.assertEqual(image.status, "Provisioning")
@@ -236,7 +236,7 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 		with patch(f"{CONTROLLER}.base_image_id", return_value="img-ubuntu") as base_image:
 			self.assertEqual(self.image("Base").get_boot_image(), "img-ubuntu")
 
-		base_image.assert_called_once_with(minimal=True)
+		base_image.assert_called_once_with(minimal=True, os_version="26.04")
 
 	def test_a_base_image_boots_on_ubuntu_unless_updated_in_place(self):
 		self.completed(self.image("Base"), "img-old")
