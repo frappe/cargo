@@ -991,12 +991,17 @@ class IntegrationTestPilotImage(IntegrationTestCase):
 
 		head.assert_called_once()
 
-	def test_a_newer_site_image_alone_does_not_rebuild_an_app(self):
+	def test_a_newer_site_image_rebuilds_the_same_release(self):
 		set_signup_apps(("erpnext",))
 		self.image("Apps", "Completed", signup_app="erpnext")
 		self.completed_site(frappe_commit=NEW_COMMIT)
 
-		self.assertEqual(self.start_apps(), [])
+		started = self.start_apps()
+
+		self.assertEqual(
+			frappe.db.get_value("Pilot Image", started[0], ["app_commit", "frappe_commit"]),
+			("erpnext-commit", NEW_COMMIT),
+		)
 
 	def test_a_new_app_release_builds_on_the_newest_site_image(self):
 		set_signup_apps(("erpnext",))
