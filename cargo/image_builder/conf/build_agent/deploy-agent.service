@@ -1,0 +1,11 @@
+[Unit]
+Description=Claim one build from Central and run it
+Wants=network-online.target
+After=network-online.target
+# Central writes this through cloud-init when it creates the VM.
+ConditionPathExists=/etc/deploy-agent/agent.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/deploy-agent/agent.env
+ExecStart=/usr/bin/python3 /usr/local/lib/deploy-agent/agent.py
