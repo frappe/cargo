@@ -18,7 +18,6 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 	from cargo.nginx import Nginx
 
-SETTINGS = "Cargo Settings"
 RENEW_WITHIN_DAYS = 30
 
 
@@ -87,7 +86,7 @@ def get_service_certificate(name: str, domains: tuple[str, ...]) -> ServiceCerti
 
 
 def get_letsencrypt() -> LetsEncrypt:
-	settings: CargoSettings = frappe.get_single(SETTINGS)
+	settings: CargoSettings = frappe.get_single("Cargo Settings")
 	return LetsEncrypt(
 		get_account_key(settings),
 		settings.letsencrypt_email,
