@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, PropertyMock, patch
 
 import frappe
+import requests
 from cloudtoolkit.tls.letsencrypt import IssuedCertificate
 from frappe.tests import IntegrationTestCase
 from frappe.utils import add_to_date, get_datetime, now_datetime
@@ -12,6 +13,7 @@ from cargo.tls.doctype.service_certificate.service_certificate import (
 	get_account_key,
 	get_service_certificate,
 	renew_certificates,
+	ship_certificates,
 )
 
 MODULE = "cargo.tls.doctype.service_certificate.service_certificate"
@@ -159,3 +161,32 @@ class IntegrationTestServiceCertificate(IntegrationTestCase):
 
 		with self.assertRaisesRegex(frappe.ValidationError, "No service serves"):
 			certificate.proxy
+
+	def test_each_certificate_status_is_shipped_with_its_days_left(self):
+		self.add_certificate("object-storage", expires_in_days=10)
+		frappe.db.set_value("Service Certificate", "object-storage", "status", "Failed")
+
+		with patch(f"{MODULE}.send_to_datum") as send:
+			ship_certificates()
+
+		[sample] = send.call_args.args[1]["samples"]
+		self.assertEqual(sample["metric"], "cargo_service_certificate")
+		self.assertEqual(sample["labels"], {"certificate": "object-storage", "status": "Failed"})
+		self.assertAlmostEqual(sample["value"], 10, delta=0.1)
+
+	def test_nothing_is_shipped_without_certificates(self):
+		with patch(f"{MODULE}.send_to_datum") as send:
+			ship_certificates()
+
+		send.assert_not_called()
+
+	def test_an_unreachable_datum_is_only_a_warning(self):
+		self.add_certificate("object-storage", expires_in_days=10)
+
+		with (
+			patch(f"{MODULE}.send_to_datum", side_effect=requests.ConnectionError("refused")),
+			patch("frappe.log_error") as logged,
+		):
+			ship_certificates()
+
+		logged.assert_not_called()
