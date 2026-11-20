@@ -41,11 +41,11 @@ class Proxy(Nginx):
 	def domains(self) -> tuple[str, ...]:
 		return self.server.proxy_domains
 
-	def get_environment(self, machine: Machine) -> dict[str, str]:
+	def get_context(self, machine: Machine) -> dict[str, str]:
 		return {
-			"WILDCARD_DOMAIN": self.server.wildcard_domain,
-			"DATUM_UPSTREAM": host_port(LOOPBACK, DATUM_PORT),
-			"CLICKHOUSE_UPSTREAM": host_port(LOOPBACK, self.server.clickhouse_port),
+			"domain": self.server.wildcard_domain,
+			"datum_upstream": host_port(LOOPBACK, DATUM_PORT),
+			"clickhouse_upstream": host_port(LOOPBACK, self.server.clickhouse_port),
 		}
 
 	@property
