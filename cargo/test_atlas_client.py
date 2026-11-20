@@ -209,7 +209,8 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(request.method, "PUT")
 		self.assertTrue(request.url.endswith("/dns-records/internal-s3-svc.example.test"))
 		self.assertEqual(
-			request.body, {"addresses": ["fdaa:1::7", "fdaa:1::8"], "health_check_url": None, "ttl": 300}
+			request.body,
+			{"type": "AAAA", "values": ["fdaa:1::7", "fdaa:1::8"], "health_check": None, "ttl": 300},
 		)
 
 	def test_a_health_check_is_sent_with_the_records(self):
@@ -223,8 +224,9 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertEqual(
 			request.body,
 			{
-				"addresses": ["203.0.113.7"],
-				"health_check_url": "https://s3-admin-svc.example.test/health",
+				"type": "A",
+				"values": ["203.0.113.7"],
+				"health_check": {"host": "s3-admin-svc.example.test", "path": "/health"},
 				"ttl": 300,
 			},
 		)

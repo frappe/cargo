@@ -129,7 +129,7 @@ These two machines are created with `is_privileged: true`, so tenant VMs can rea
 
 ## Naming a service — `PUT /dns-records/{name}`
 
-Send `{"addresses": ["..."], "health_check_url": "https://..."}`. The addresses replace whatever the name had. Atlas picks A or AAAA records from the addresses and sets a 300 second TTL. With `health_check_url`, Atlas gives each address a Route53 health check that asks that URL's host and path at the address, and Route53 leaves out an address that stops answering. Cargo sends it on every setup and when an operator selects **Update DNS Records**, so it must be safe to call twice.
+Send `{"type": "A", "values": ["..."], "health_check": {"host": "...", "path": "/health"}}`, with `AAAA` for mesh addresses. The values replace whatever the name had, with a 300 second TTL. With `health_check`, Atlas gives each address a Route53 HTTPS check on port 443 that asks that host and path at the address, and Route53 leaves out an address that stops answering. Cargo sends it on every setup and when an operator selects **Update DNS Records**, so it must be safe to call twice.
 
 For each service domain, such as `s3-svc.<wildcard-domain>`, Cargo points the name at every serving machine's public IPv4, and `internal-<name>` at their mesh addresses, without a health check: Route53 cannot reach the mesh. For object storage those machines are the running gateways, checked on `https://s3-admin-svc.<wildcard-domain>/health`. Cargo sends these calls after nginx is installed on every machine, and again when a gateway dies or is released.
 
