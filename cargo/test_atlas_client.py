@@ -229,6 +229,21 @@ class UnitTestAtlasClient(UnitTestCase):
 			},
 		)
 
+	def test_a_txt_record_is_put_with_its_values(self):
+		with self.answer(204) as request:
+			self.client.set_txt_record("_acme-challenge.s3-svc.example.test", ["token-a", "token-b"])
+
+		self.assertEqual(request.method, "PUT")
+		self.assertTrue(request.url.endswith("/dns-records/_acme-challenge.s3-svc.example.test"))
+		self.assertEqual(request.body, {"type": "TXT", "values": ["token-a", "token-b"], "ttl": 300})
+
+	def test_a_txt_record_is_removed_by_name(self):
+		with self.answer(204) as request:
+			self.client.remove_txt_record("_acme-challenge.s3-svc.example.test")
+
+		self.assertEqual(request.method, "DELETE")
+		self.assertTrue(request.url.endswith("/dns-records/_acme-challenge.s3-svc.example.test"))
+
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.answer(201, {}), self.assertRaises(AtlasError):
 			self.client.create_vm(

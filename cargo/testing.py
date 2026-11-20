@@ -105,14 +105,19 @@ def reset_datum_server() -> None:
 
 @contextmanager
 def nginx_over_ssh() -> Generator[tuple[Mock, dict[str, str]]]:
-	"""SSH that runs nothing, and the nginx config each host would have been sent, by host."""
+	"""SSH that runs nothing, a certificate that is already issued, and the nginx config each host
+	would have been sent, by host."""
 	configs: dict[str, str] = {}
 
 	def put(client: SSHClient, source: Path, destination: str, **_) -> None:
-		configs[client.host] = Path(source).read_text()
+		if destination.endswith(".conf"):
+			configs[client.host] = Path(source).read_text()
 
+	certificate = Mock(certificate="certificate-pem")
+	certificate.get_password.return_value = "private-key-pem"
 	with (
 		patch.object(SSHClient, "run", autospec=True) as run,
 		patch.object(SSHClient, "rsync", autospec=True, side_effect=put),
+		patch("cargo.nginx.get_service_certificate", return_value=certificate),
 	):
 		yield run, configs

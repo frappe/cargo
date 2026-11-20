@@ -7,7 +7,7 @@ from typing import Any, Literal, Self
 import frappe
 import httpx
 from atlas_client import AuthenticatedClient
-from atlas_client.api.dns_records import set_dns_record
+from atlas_client.api.dns_records import remove_dns_record, set_dns_record
 from atlas_client.api.images import (
 	delete_image,
 	get_image,
@@ -38,6 +38,7 @@ from atlas_client.models import (
 	CreateVirtualMachinePayload,
 	DiskUpdatePayload,
 	DnsRecordPayload,
+	DnsRecordPayloadTypeType0,
 	ListImagesImageTypeType0,
 	MetadataReplacementPayload,
 	NetworkUpdatePayload,
@@ -142,6 +143,15 @@ class AtlasClient:
 		address and leaves out one that stops answering."""
 		payload = DnsRecordPayload(addresses=addresses, health_check_url=health_check_url)
 		self.call(set_dns_record, name, body=payload)
+
+	def set_txt_record(self, name: str, values: list[str]) -> None:
+		"""Replace the TXT values of a regional name, such as an ACME challenge. Values go unquoted."""
+		payload = DnsRecordPayload(type_=DnsRecordPayloadTypeType0.TXT, values=values)
+		self.call(set_dns_record, name, body=payload)
+
+	def remove_txt_record(self, name: str) -> None:
+		"""Remove a name Cargo set TXT values on. Atlas removes every record of the name."""
+		self.call(remove_dns_record, name)
 
 	def set_vm_firewall(self, vm_id: str, firewall: dict[str, Any]) -> None:
 		"""Replace the VM's whole firewall. Atlas answers before Metal applies it."""

@@ -13,6 +13,10 @@ from frappe import _
 from jinja2 import StrictUndefined, Template
 
 from cargo.atlas_client import ANYWHERE, AtlasClient, AtlasError
+from cargo.tls.doctype.service_certificate.service_certificate import (
+	ServiceCertificate,
+	get_service_certificate,
+)
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -20,6 +24,7 @@ if typing.TYPE_CHECKING:
 INSTALL_SCRIPT = ("nginx", "install.sh")
 CONFIG_DIRECTORY = "/etc/nginx/conf.d"
 CERTIFICATE_DIRECTORY = "/etc/nginx/tls"
+RELOAD = "nginx -t && systemctl reload nginx"
 PROBE_TIMEOUT_SECONDS = 10
 PROBE_ATTEMPTS = 6
 PROBE_INTERVAL_SECONDS = 10
@@ -27,8 +32,8 @@ PROBE_INTERVAL_SECONDS = 10
 
 class Nginx:
 	"""nginx on a service's public machines, all of them in DNS. A subclass names the machines,
-	its domains, the config template, what fills it in, and how to tell the service answers. nginx
-	serves the certificate files under `CERTIFICATE_DIRECTORY`; it never obtains one itself."""
+	its domains, the config template, what fills it in, and how to tell the service answers. Its
+	Service Certificate, named like its config, is copied to `CERTIFICATE_DIRECTORY` on each machine."""
 
 	name: str
 	template: tuple[str, ...]
@@ -55,10 +60,12 @@ class Nginx:
 		raise NotImplementedError
 
 	def install(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Render every machine's config, then on each machine set the firewall, install nginx and
-		put the config, then publish DNS. Rendering goes first so a bad template changes nothing,
-		and DNS last so it only points at machines that serve. Safe to repeat."""
+		"""Render every machine's config and get the certificate, then on each machine set the
+		firewall, install nginx and put the certificate and config, then publish DNS. Rendering and
+		issuing go first so a failure there changes no machine, and DNS last so it only points at
+		machines that serve. Safe to repeat."""
 		configs = [(machine, self.render(machine)) for machine in self.machines]
+		certificate = get_service_certificate(self.name, self.domains)
 		for machine, config in configs:
 			machine.set_firewall(
 				inbound=[
@@ -71,6 +78,7 @@ class Nginx:
 			)
 			# Install nginx first on the machines.
 			machine.ssh_client.run(read_script("cargo", *INSTALL_SCRIPT), on_output=on_output)
+			self.put_certificate(machine, certificate, on_output=on_output)
 			# Move the config on to the machines.
 			self.put_config(machine, config, on_output=on_output)
 
@@ -98,22 +106,44 @@ class Nginx:
 		self, machine: Machine, config: str, on_output: Callable[[str], None] | None = None
 	) -> None:
 		"""Copy the config to the machine, and reload nginx only if it passes `nginx -t`."""
-		with tempfile.NamedTemporaryFile("w", suffix=".conf") as file:
-			file.write(config)
-			file.flush()
-			machine.ssh_client.rsync(
-				Path(file.name), f"{CONFIG_DIRECTORY}/{self.name}.conf", on_output=on_output
-			)
+		put_file(machine, config, f"{CONFIG_DIRECTORY}/{self.name}.conf", on_output=on_output)
+		machine.ssh_client.run(RELOAD, on_output=on_output)
 
-		machine.ssh_client.run("nginx -t && systemctl reload nginx", on_output=on_output)
+	def put_certificate(
+		self,
+		machine: Machine,
+		certificate: ServiceCertificate,
+		on_output: Callable[[str], None] | None = None,
+	) -> None:
+		"""Copy the certificate and its key into a folder only root can read."""
+		machine.ssh_client.run(f"install -d -m 700 {CERTIFICATE_DIRECTORY}", on_output=on_output)
+		put_file(machine, certificate.certificate, self.certificate_path, on_output=on_output)
+		put_file(
+			machine, certificate.get_password("private_key"), self.certificate_key_path, on_output=on_output
+		)
+
+	def renew_certificate(self) -> None:
+		"""Re-issue the certificate if it is due, then put it on every machine and reload nginx."""
+		certificate = get_service_certificate(self.name, self.domains)
+		for machine in self.machines:
+			self.put_certificate(machine, certificate)
+			machine.ssh_client.run(RELOAD)
+
+	@property
+	def certificate_path(self) -> str:
+		return f"{CERTIFICATE_DIRECTORY}/{self.name}.crt"
+
+	@property
+	def certificate_key_path(self) -> str:
+		return f"{CERTIFICATE_DIRECTORY}/{self.name}.key"
 
 	def render(self, machine: Machine) -> str:
 		"""The nginx config for one machine. A value the template names and the context lacks
 		raises, rather than writing a server with a hole in it."""
 		context = {
 			**self.get_context(machine),
-			"certificate": f"{CERTIFICATE_DIRECTORY}/{self.name}.crt",
-			"certificate_key": f"{CERTIFICATE_DIRECTORY}/{self.name}.key",
+			"certificate": self.certificate_path,
+			"certificate_key": self.certificate_key_path,
 		}
 		return Template(self.template_path.read_text(), undefined=StrictUndefined).render(context)
 
@@ -129,6 +159,15 @@ class Nginx:
 			time.sleep(PROBE_INTERVAL_SECONDS)
 
 		return False
+
+
+def put_file(
+	machine: Machine, content: str, destination: str, on_output: Callable[[str], None] | None = None
+) -> None:
+	with tempfile.NamedTemporaryFile("w") as file:
+		file.write(content)
+		file.flush()
+		machine.ssh_client.rsync(Path(file.name), destination, on_output=on_output)
 
 
 def require_public(machine: Machine | None, label: str) -> Machine:
