@@ -71,11 +71,11 @@ class ServiceCertificate(Document):
 def get_service_certificate(name: str, domains: tuple[str, ...]) -> ServiceCertificate:
 	"""The certificate for `name`, issued first when it is new, due, or names other domains."""
 	if not frappe.db.exists("Service Certificate", name):
-		certificate = frappe.get_doc(
+		certificate: ServiceCertificate = frappe.get_doc(
 			{"doctype": "Service Certificate", "name": name, "domains": "\n".join(domains)}
 		).insert()
 	else:
-		certificate = frappe.get_doc("Service Certificate", name)
+		certificate: ServiceCertificate = frappe.get_doc("Service Certificate", name)
 		if certificate.dns_names != list(domains):
 			certificate.update({"domains": "\n".join(domains), "status": "Pending"})
 			certificate.save()
@@ -108,12 +108,10 @@ def get_account_key(settings: CargoSettings) -> str:
 	return account_key
 
 
-def renew_due_certificates() -> None:
-	"""Daily: re-issue each due certificate whose service is Active, and put it on that service's machines."""
+def renew_certificates() -> None:
+	"""Daily: put each certificate on every machine of its Active service, re-issued first when due. A
+	machine missed one day gets it the next."""
 	for name in frappe.get_all("Service Certificate", pluck="name"):
-		if not frappe.get_doc("Service Certificate", name).is_due:
-			continue
-
 		try:
 			proxy = get_serving_proxy(name)
 			if proxy:
