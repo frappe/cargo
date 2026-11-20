@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -66,7 +67,7 @@ class UnitTestNginx(UnitTestCase):
 	def test_install_publishes_every_machine_once_each_serves(self):
 		with patch("cargo.nginx.AtlasClient") as atlas, nginx_over_ssh() as (run, _):
 			atlas.from_settings.return_value.set_dns_records.side_effect = lambda *_, **__: self.assertEqual(
-				run.call_count, 4
+				run.call_count, 6
 			)
 			SiteNginx().install()
 
@@ -132,7 +133,53 @@ class UnitTestNginx(UnitTestCase):
 
 		scripts = [call.args[1] for call in run.call_args_list if call.args[0].host == "fdaa:1::7"]
 		self.assertIn("apt-get install -y nginx", scripts[0])
-		self.assertEqual(scripts[1], "nginx -t && systemctl reload nginx")
+		self.assertEqual(scripts[1], "install -d -m 700 /etc/nginx/tls")
+		self.assertEqual(scripts[2], "nginx -t && systemctl reload nginx")
+
+	def test_the_certificate_and_key_land_where_the_config_reads_them(self):
+		proxy = SiteNginx()
+		certificate = Mock(certificate="certificate-pem")
+		certificate.get_password.return_value = "private-key-pem"
+		copied = {}
+
+		def put(client, source, destination, **_):
+			copied[destination] = Path(source).read_text()
+
+		with (
+			patch.object(SSHClient, "run", autospec=True),
+			patch.object(SSHClient, "rsync", autospec=True, side_effect=put),
+		):
+			proxy.put_certificate(proxy.nodes[0], certificate)
+
+		rendered = proxy.render(proxy.nodes[0])
+		self.assertEqual(copied[proxy.certificate_path], "certificate-pem")
+		self.assertEqual(copied[proxy.certificate_key_path], "private-key-pem")
+		self.assertIn(f"ssl_certificate {proxy.certificate_path};", rendered)
+		self.assertIn(f"ssl_certificate_key {proxy.certificate_key_path};", rendered)
+		certificate.get_password.assert_called_once_with("private_key")
+
+	def test_a_certificate_that_cannot_be_issued_changes_no_machine(self):
+		proxy = SiteNginx()
+		with (
+			patch("cargo.nginx.AtlasClient") as atlas,
+			patch("cargo.nginx.get_service_certificate", side_effect=RuntimeError("acme refused")),
+			patch.object(SSHClient, "run", autospec=True) as run,
+			self.assertRaisesRegex(RuntimeError, "acme refused"),
+		):
+			proxy.install()
+
+		proxy.nodes[0].set_firewall.assert_not_called()
+		atlas.from_settings.return_value.set_dns_records.assert_not_called()
+		run.assert_not_called()
+
+	def test_renewing_puts_the_certificate_on_every_machine_and_reloads(self):
+		with nginx_over_ssh() as (run, _):
+			SiteNginx().renew_certificate()
+
+		scripts = [(call.args[0].host, call.args[1]) for call in run.call_args_list]
+		for host in ("fdaa:1::7", "fdaa:1::8"):
+			self.assertIn((host, "install -d -m 700 /etc/nginx/tls"), scripts)
+			self.assertIn((host, "nginx -t && systemctl reload nginx"), scripts)
 
 	def test_waiting_retries_until_the_domain_answers(self):
 		with (

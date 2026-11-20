@@ -301,4 +301,5 @@ scheduler_events = {
 		"cargo.telemetry.credential.renew_datum_token",
 	],
 	"hourly_long": ["cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry"],
+	"daily_long": ["cargo.tls.doctype.service_certificate.service_certificate.renew_due_certificates"],
 }

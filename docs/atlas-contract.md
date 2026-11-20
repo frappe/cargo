@@ -133,6 +133,10 @@ Send `{"addresses": ["..."], "health_check_url": "https://..."}`. The addresses 
 
 For each service domain, such as `s3-svc.<wildcard-domain>`, Cargo points the name at every serving machine's public IPv4, and `internal-<name>` at their mesh addresses, without a health check: Route53 cannot reach the mesh. For object storage those machines are the running gateways, checked on `https://s3-admin-svc.<wildcard-domain>/health`. Cargo sends these calls after nginx is installed on every machine, and again when a gateway dies or is released.
 
+## Proving a domain to Let's Encrypt — TXT on `PUT /dns-records/{name}`
+
+To issue a Service Certificate, Cargo sends `{"type": "TXT", "values": ["..."]}` for `_acme-challenge.<service domain>`, unquoted, and removes the name with `DELETE /dns-records/{name}` once Let's Encrypt has checked it, also when issuing fails. Cargo waits 30 seconds after setting the values, so Atlas must publish them by then.
+
 ## Photographing a machine — `POST /virtual-machines/{id}/actions/snapshot`
 
 Cargo builds images by provisioning a build machine, stopping it, and snapshotting its disk. That snapshot is the image; Atlas boots later machines from it by `image_id`.

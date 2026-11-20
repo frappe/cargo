@@ -21,6 +21,10 @@
   "atlas_token",
   "atlas_tenant_id",
   "wildcard_domain",
+  "letsencrypt_section",
+  "letsencrypt_email",
+  "is_letsencrypt_staging",
+  "letsencrypt_account_key",
   "image_build_tab",
   "release_tracking_section",
   "track_pilot_releases",
@@ -161,6 +165,33 @@
    "fieldtype": "Data",
    "label": "Wildcard Domain",
    "reqd": 1
+  },
+  {
+   "fieldname": "letsencrypt_section",
+   "fieldtype": "Section Break",
+   "label": "Let's Encrypt"
+  },
+  {
+   "description": "The ACME account email. Service Certificates are issued under it.",
+   "fieldname": "letsencrypt_email",
+   "fieldtype": "Data",
+   "label": "Let's Encrypt Email",
+   "options": "Email"
+  },
+  {
+   "default": "0",
+   "description": "Issue from Let's Encrypt's staging server. Its certificates are not trusted by browsers.",
+   "fieldname": "is_letsencrypt_staging",
+   "fieldtype": "Check",
+   "label": "Use Let's Encrypt Staging"
+  },
+  {
+   "description": "Created on the first issue.",
+   "fieldname": "letsencrypt_account_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Let's Encrypt Account Key",
+   "length": 512
   },
   {
    "default": "0",
@@ -348,7 +379,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-14 12:00:00.000000",
+ "modified": "2026-11-20 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",
