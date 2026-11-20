@@ -6,6 +6,6 @@ systemctl disable --now caddy 2> /dev/null || true
 
 apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
-rm -f /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/*
 
 systemctl enable --now nginx
