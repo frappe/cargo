@@ -11,7 +11,7 @@ dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
     "boto3~=1.35",  # S3 uploads: Garage's admin API moves no object bytes.
     "datum @ git+https://github.com/frappe/datum@main",
-    "atlas-client @ git+https://github.com/frappe/atlas.git@cecf4b8b5dc230c4a4e0a8f462f728a212498bd9#subdirectory=clients/atlas-client",
+    "atlas-client @ git+https://github.com/frappe/atlas.git@75107bbb39d88fb85387dd7898104fa00497e64c#subdirectory=clients/atlas-client",
 ]
 
 [build-system]

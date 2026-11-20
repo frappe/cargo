@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import typing
 from types import ModuleType
 from typing import Any, Literal, Self
+from urllib.parse import urlsplit
 
 import frappe
 import httpx
@@ -38,7 +40,8 @@ from atlas_client.models import (
 	CreateVirtualMachinePayload,
 	DiskUpdatePayload,
 	DnsRecordPayload,
-	DnsRecordPayloadTypeType0,
+	DnsRecordPayloadType,
+	HealthCheck,
 	ListImagesImageTypeType0,
 	MetadataReplacementPayload,
 	NetworkUpdatePayload,
@@ -138,15 +141,20 @@ class AtlasClient:
 		return payload
 
 	def set_dns_records(self, name: str, addresses: list[str], health_check_url: str | None = None) -> None:
-		"""Point a regional service name at every address, replacing the ones it had. Atlas picks A
-		or AAAA and a 300 second TTL. With `health_check_url`, Route53 asks that URL at each
-		address and leaves out one that stops answering."""
-		payload = DnsRecordPayload(addresses=addresses, health_check_url=health_check_url)
+		"""Point a regional service name at every address, replacing the ones it had, with a 300
+		second TTL. With `health_check_url`, Route53 asks that URL at each address and leaves out
+		one that stops answering."""
+		is_ipv4 = ipaddress.ip_address(addresses[0]).version == 4
+		payload = DnsRecordPayload(
+			type_=DnsRecordPayloadType.A if is_ipv4 else DnsRecordPayloadType.AAAA,
+			values=addresses,
+			health_check=get_health_check(health_check_url) if health_check_url else None,
+		)
 		self.call(set_dns_record, name, body=payload)
 
 	def set_txt_record(self, name: str, values: list[str]) -> None:
 		"""Replace the TXT values of a regional name, such as an ACME challenge. Values go unquoted."""
-		payload = DnsRecordPayload(type_=DnsRecordPayloadTypeType0.TXT, values=values)
+		payload = DnsRecordPayload(type_=DnsRecordPayloadType.TXT, values=values)
 		self.call(set_dns_record, name, body=payload)
 
 	def remove_txt_record(self, name: str) -> None:
@@ -325,6 +333,12 @@ def base_image_id(minimal: bool = False) -> str:
 		)
 
 	return image_id
+
+
+def get_health_check(url: str) -> HealthCheck:
+	"""Route53 asks the URL's host and path over HTTPS on port 443."""
+	parts = urlsplit(url)
+	return HealthCheck(host=parts.hostname, path=parts.path or "/")
 
 
 def host_port(address: str, port: int | str) -> str:
