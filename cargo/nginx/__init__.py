@@ -80,7 +80,7 @@ class Nginx:
 				outbound=[{"protocol": "any", "cidrs": ANYWHERE}],
 			)
 			machine.ssh_client.run(read_script("cargo", *INSTALL_SCRIPT), on_output=on_output)
-			self.put_certificate(machine, certificate, on_output=on_output)
+			self.add_certificate(machine, certificate, on_output=on_output)
 			self.put_config(machine, config, on_output=on_output)
 
 		self.publish_dns(self.machines, self.domains)
@@ -110,7 +110,7 @@ class Nginx:
 		put_file(machine, config, f"{CONFIG_DIRECTORY}/{self.name}.conf", on_output=on_output)
 		machine.ssh_client.run(RELOAD, on_output=on_output)
 
-	def put_certificate(
+	def add_certificate(
 		self,
 		machine: Machine,
 		certificate: ServiceCertificate,
@@ -123,11 +123,10 @@ class Nginx:
 			machine, certificate.get_password("private_key"), self.certificate_key_path, on_output=on_output
 		)
 
-	def renew_certificate(self) -> None:
-		"""Put the certificate on every machine and reload nginx, re-issued first if it is due."""
-		certificate = get_service_certificate(self.name, self.domains)
+	def add_certificate_to_machines(self, certificate: ServiceCertificate) -> None:
+		"""Put the certificate on every machine and reload nginx."""
 		for machine in self.machines:
-			self.put_certificate(machine, certificate)
+			self.add_certificate(machine, certificate)
 			machine.ssh_client.run(RELOAD)
 
 	@property

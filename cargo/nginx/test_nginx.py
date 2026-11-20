@@ -150,7 +150,7 @@ class UnitTestNginx(UnitTestCase):
 			patch.object(SSHClient, "run", autospec=True),
 			patch.object(SSHClient, "rsync", autospec=True, side_effect=put),
 		):
-			proxy.put_certificate(proxy.nodes[0], certificate)
+			proxy.add_certificate(proxy.nodes[0], certificate)
 
 		rendered = proxy.render(proxy.nodes[0])
 		self.assertEqual(copied[proxy.certificate_path], "certificate-pem")
@@ -173,9 +173,11 @@ class UnitTestNginx(UnitTestCase):
 		atlas.from_settings.return_value.set_dns_records.assert_not_called()
 		run.assert_not_called()
 
-	def test_renewing_puts_the_certificate_on_every_machine_and_reloads(self):
+	def test_adding_puts_the_certificate_on_every_machine_and_reloads(self):
+		certificate = Mock(certificate="certificate-pem")
+		certificate.get_password.return_value = "private-key-pem"
 		with nginx_over_ssh() as (run, _):
-			SiteNginx().renew_certificate()
+			SiteNginx().add_certificate_to_machines(certificate)
 
 		scripts = [(call.args[0].host, call.args[1]) for call in run.call_args_list]
 		for host in ("fdaa:1::7", "fdaa:1::8"):
