@@ -1,6 +1,6 @@
 # Object storage cluster is unhealthy
 
-Cargo reads the health of each object storage cluster from its gateway every minute. The cluster is Critical (High), Degraded or Unknown (Medium), or Cargo sent no verdict for 10 minutes (Medium).
+Cargo reads the health of each object storage cluster from its gateway every minute. The cluster is Critical or Degraded (High), Unknown (Medium), or Cargo sent no verdict for 10 minutes (Medium).
 
 1. In Cargo Desk, open the Object Storage Cluster. **Health Reason** names the machine and the problem.
 2. For a machine that is down or full, follow the object storage unavailable or disk full runbooks.
