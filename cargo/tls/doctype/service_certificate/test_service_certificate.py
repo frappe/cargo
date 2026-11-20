@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import frappe
 from cloudtoolkit.tls.letsencrypt import IssuedCertificate
@@ -8,9 +8,9 @@ from frappe.utils import add_to_date, get_datetime, now_datetime
 
 from cargo.testing import use_test_settings
 from cargo.tls.doctype.service_certificate.service_certificate import (
+	ServiceCertificate,
 	get_account_key,
 	get_service_certificate,
-	get_serving_proxy,
 	renew_certificates,
 )
 
@@ -86,6 +86,10 @@ class IntegrationTestServiceCertificate(IntegrationTestCase):
 			get_service_certificate("object-storage", DOMAINS)
 
 		self.assertEqual(frappe.db.get_value("Service Certificate", "object-storage", "status"), "Failed")
+		logged = frappe.get_all(
+			"Error Log", filters={"reference_doctype": "Service Certificate"}, pluck="method", limit=1
+		)
+		self.assertEqual(logged, ["Could not issue the object-storage certificate"])
 
 	def test_the_issued_expiry_is_stored_in_system_time(self):
 		certificate, _ = self.issue("object-storage", DOMAINS)
@@ -103,43 +107,59 @@ class IntegrationTestServiceCertificate(IntegrationTestCase):
 		self.assertIn("PRIVATE KEY", first)
 		self.assertEqual(first, second)
 
-	def test_renewal_puts_every_certificate_on_its_serving_service(self):
-		"""Not only due ones: a machine missed while renewing gets the stored certificate the next day."""
+	def test_only_due_certificates_are_renewed(self):
 		self.add_certificate("object-storage", expires_in_days=10)
 		self.add_certificate("telemetry", expires_in_days=60)
-		proxy = Mock()
 
-		with patch(f"{MODULE}.get_serving_proxy", return_value=proxy) as serving:
+		with patch.object(ServiceCertificate, "renew", autospec=True) as renew:
 			renew_certificates()
 
-		self.assertEqual({call.args[0] for call in serving.call_args_list}, {"object-storage", "telemetry"})
-		self.assertEqual(proxy.renew_certificate.call_count, 2)
+		self.assertEqual([call.args[0].name for call in renew.call_args_list], ["object-storage"])
 
-	def test_a_service_that_is_not_active_is_skipped(self):
-		self.add_certificate("object-storage", expires_in_days=10)
+	def test_renewing_issues_then_adds_it_to_the_serving_machines(self):
+		certificate = self.add_certificate("object-storage", expires_in_days=10)
+		proxy = Mock()
+		proxy.add_certificate_to_machines.side_effect = lambda added: self.assertEqual(
+			added.certificate, "certificate-pem"
+		)
 
 		with (
-			patch(f"{MODULE}.get_serving_proxy", return_value=None),
+			patch.object(ServiceCertificate, "proxy", new_callable=PropertyMock, return_value=proxy),
 			patch(f"{MODULE}.LetsEncrypt") as letsencrypt,
 		):
-			renew_certificates()
+			letsencrypt.return_value.issue_certificate.return_value = ISSUED
+			certificate.renew()
+
+		proxy.add_certificate_to_machines.assert_called_once_with(certificate)
+
+	def test_a_service_that_is_not_active_is_skipped(self):
+		certificate = self.add_certificate("object-storage", expires_in_days=10)
+
+		with (
+			patch.object(ServiceCertificate, "proxy", new_callable=PropertyMock, return_value=None),
+			patch(f"{MODULE}.LetsEncrypt") as letsencrypt,
+		):
+			certificate.renew()
 
 		letsencrypt.assert_not_called()
 
 	def test_one_failed_renewal_is_logged_and_the_rest_still_renew(self):
 		self.add_certificate("object-storage", expires_in_days=10)
 		self.add_certificate("telemetry", expires_in_days=10)
-		proxy = Mock(**{"renew_certificate.side_effect": [RuntimeError("acme refused"), None]})
 
 		with (
-			patch(f"{MODULE}.get_serving_proxy", return_value=proxy),
+			patch.object(
+				ServiceCertificate, "renew", autospec=True, side_effect=[RuntimeError("acme refused"), None]
+			) as renew,
 			patch("frappe.log_error") as logged,
 		):
 			renew_certificates()
 
-		self.assertEqual(proxy.renew_certificate.call_count, 2)
+		self.assertEqual(renew.call_count, 2)
 		logged.assert_called_once()
 
 	def test_a_certificate_no_service_serves_is_refused(self):
+		certificate = frappe.get_doc({"doctype": "Service Certificate", "name": "mail"})
+
 		with self.assertRaisesRegex(frappe.ValidationError, "No service serves"):
-			get_serving_proxy("mail")
+			certificate.proxy

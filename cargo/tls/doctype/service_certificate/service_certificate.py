@@ -51,11 +51,36 @@ class ServiceCertificate(Document):
 
 		return get_datetime(self.expires_on) - now_datetime() < timedelta(days=RENEW_WITHIN_DAYS)
 
+	@property
+	def proxy(self) -> Nginx | None:
+		"""The nginx that serves this certificate, or None while its service is not Active."""
+		if self.name == "object-storage":
+			cluster = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
+			return frappe.get_doc("Object Storage Cluster", cluster).proxy if cluster else None
+
+		if self.name == "telemetry":
+			server = frappe.get_single("Datum Server")
+			return server.proxy if server.status == "Active" else None
+
+		frappe.throw(_("No service serves the {0} certificate.").format(self.name))
+
+	def renew(self) -> None:
+		"""Re-issue, then put it on every machine of its Active service."""
+		if proxy := self.proxy:
+			self.issue()
+			proxy.add_certificate_to_machines(self)
+
 	def issue(self) -> None:
-		"""Issue over dns-01, with the challenge records set through Atlas. A failure is kept as Failed."""
+		"""Issue over dns-01, with the challenge records set through Atlas. A failure is kept as Failed and
+		logged, which Beacon pages on."""
 		try:
 			issued = get_letsencrypt().issue_certificate(self.dns_names)
 		except Exception:
+			frappe.log_error(
+				title=f"Could not issue the {self.name} certificate",
+				reference_doctype=self.doctype,
+				reference_name=self.name,
+			)
 			self.status = "Failed"
 			self.save()
 			raise
@@ -108,25 +133,13 @@ def get_account_key(settings: CargoSettings) -> str:
 
 
 def renew_certificates() -> None:
-	"""Daily: put each certificate on every machine of its Active service, re-issued first when due. A
-	machine missed one day gets it the next."""
+	"""Daily: renew each due certificate."""
 	for name in frappe.get_all("Service Certificate", pluck="name"):
+		certificate: ServiceCertificate = frappe.get_doc("Service Certificate", name)
+		if not certificate.is_due:
+			continue
+
 		try:
-			proxy = get_serving_proxy(name)
-			if proxy:
-				proxy.renew_certificate()
+			certificate.renew()
 		except Exception:
 			frappe.log_error(title=f"Unable to renew the {name} certificate")
-
-
-def get_serving_proxy(name: str) -> Nginx | None:
-	"""The nginx that serves certificate `name`, or None while its service is not Active."""
-	if name == "object-storage":
-		cluster = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
-		return frappe.get_doc("Object Storage Cluster", cluster).proxy if cluster else None
-
-	if name == "telemetry":
-		server = frappe.get_single("Datum Server")
-		return server.proxy if server.status == "Active" else None
-
-	frappe.throw(_("No service serves the {0} certificate.").format(name))
