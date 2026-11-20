@@ -1,4 +1,10 @@
+from collections.abc import Generator
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import Mock, patch
+
 import frappe
+from cloudtoolkit.ssh.client import SSHClient
 from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
 SETTINGS = {
@@ -95,3 +101,23 @@ def reset_datum_server() -> None:
 		remove_encrypted_password("Datum Server", "Datum Server", field)
 
 	frappe.clear_document_cache("Datum Server", "Datum Server")
+
+
+@contextmanager
+def nginx_over_ssh() -> Generator[tuple[Mock, dict[str, str]]]:
+	"""SSH that runs nothing, a certificate that is already issued, and the nginx config each host
+	would have been sent, by host."""
+	configs: dict[str, str] = {}
+
+	def put(client: SSHClient, source: Path, destination: str, **_) -> None:
+		if destination.endswith(".conf"):
+			configs[client.host] = Path(source).read_text()
+
+	certificate = Mock(certificate="certificate-pem")
+	certificate.get_password.return_value = "private-key-pem"
+	with (
+		patch.object(SSHClient, "run", autospec=True) as run,
+		patch.object(SSHClient, "rsync", autospec=True, side_effect=put),
+		patch("cargo.nginx.get_service_certificate", return_value=certificate),
+	):
+		yield run, configs

@@ -36,8 +36,11 @@ class CargoSettings(Document):
 		compliance_apps: DF.Table[ComplianceApp]
 		first_storage_disk_growth_percent: DF.Percent
 		frappe_branches: DF.Table[FrappeBranch]
+		is_letsencrypt_staging: DF.Check
 		jwks_url: DF.Data
 		last_repository_refresh: DF.Datetime | None
+		letsencrypt_account_key: DF.Password | None
+		letsencrypt_email: DF.Data | None
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
 		one_click_repository_branch: DF.Data | None

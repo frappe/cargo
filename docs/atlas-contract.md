@@ -53,7 +53,7 @@ Cargo sends these fields only when they are set, because an Atlas without affini
 
 Send back the machine, including its `id`. Don't wait for it to boot; Cargo polls.
 
-Only the two service machines ask for a public IPv4, because Caddy on them serves the internet and obtains certificates from Let's Encrypt. Every other machine has no public address. Everything Cargo itself does to a machine, such as SSH, Garage's admin API and Garage peering, goes over the mesh.
+Only the two service machines ask for a public IPv4, because nginx on them serves the internet. Every other machine has no public address. Everything Cargo itself does to a machine, such as SSH, Garage's admin API and Garage peering, goes over the mesh.
 
 ## Checking on a machine — `GET /virtual-machines/{id}`
 
@@ -69,7 +69,7 @@ Only the two service machines ask for a public IPv4, because Caddy on them serve
 | `disk.size_mib` | The current disk size |
 | `is_termination_protected` | The current protection |
 
-Cargo reads the shape, disk and protection on every sync, because they can change at Atlas without Cargo asking. It reads the addresses only while the machine runs. A service machine must have its public IPv4 before setup installs Caddy, or setup stops with an error.
+Cargo reads the shape, disk and protection on every sync, because they can change at Atlas without Cargo asking. It reads the addresses only while the machine runs. A service machine must have its public IPv4 before setup installs nginx, or setup stops with an error.
 
 A machine that is `running` with no mesh address is marked **Broken** rather than waited on. Atlas says it is up, so an address that never came is a fault, not a delay. Cargo derives nothing about the address itself: it records the one Atlas reports, because a wrong address is worse than none.
 
@@ -123,15 +123,19 @@ An operator can attach or detach a public address from the **Machine** form. To 
 
 ## Firewalling a service machine — `PATCH /virtual-machines/{id}/network`
 
-Before it installs Caddy, setup sends `{"firewall": {...}}` for the object storage gateway and the datum host. The firewall replaces the whole previous one. It admits TCP 80, TCP 443 and ICMP from any address, and all traffic from the machine's own `/64`, which holds the tenant-0 VMs in the region. Atlas answers before Metal applies the rules.
+Before it installs nginx, setup sends `{"firewall": {...}}` for each object storage gateway and the datum host. The firewall replaces the whole previous one. It admits TCP 80, TCP 443 and ICMP from any address, and all traffic from the machine's own `/64`, which holds the tenant-0 VMs in the region. Atlas answers before Metal applies the rules.
 
 These two machines are created with `is_privileged: true`, so tenant VMs can reach them over the mesh. Atlas accepts it from tenant `0` only.
 
 ## Naming a service — `PUT /dns-records/{name}`
 
-Send `{"address": "..."}`. Atlas picks an A or AAAA record from the address and sets a 300 second TTL. Cargo sends it on every setup and when an operator selects **Update DNS Records**, so it must be safe to call twice.
+Send `{"addresses": ["..."], "health_check_url": "https://..."}`. The addresses replace whatever the name had. Atlas picks A or AAAA records from the addresses and sets a 300 second TTL. With `health_check_url`, Atlas gives each address a Route53 health check that asks that URL's host and path at the address, and Route53 leaves out an address that stops answering. Cargo sends it on every setup and when an operator selects **Update DNS Records**, so it must be safe to call twice.
 
-For each service domain, such as `s3-svc.<wildcard-domain>`, Cargo points the name at the machine's public IPv4, and `internal-<name>` at its mesh address. Cargo sends these calls after the Caddyfile renders and the firewall is set, and before it installs Caddy.
+For each service domain, such as `s3-svc.<wildcard-domain>`, Cargo points the name at every serving machine's public IPv4, and `internal-<name>` at their mesh addresses, without a health check: Route53 cannot reach the mesh. For object storage those machines are the running gateways, checked on `https://s3-admin-svc.<wildcard-domain>/health`. Cargo sends these calls after nginx is installed on every machine, and again when a gateway dies or is released.
+
+## Proving a domain to Let's Encrypt — TXT on `PUT /dns-records/{name}`
+
+To issue a Service Certificate, Cargo sends `{"type": "TXT", "values": ["..."]}` for `_acme-challenge.<service domain>`, unquoted, and removes the name with `DELETE /dns-records/{name}` once Let's Encrypt has checked it, also when issuing fails. Cargo waits 30 seconds after setting the values, so Atlas must publish them by then.
 
 ## Photographing a machine — `POST /virtual-machines/{id}/actions/snapshot`
 

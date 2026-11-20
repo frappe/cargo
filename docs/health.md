@@ -8,8 +8,11 @@ Code lives in `cargo/object_storage/health/live.py`.
 
 ## What it asks
 
-Two calls to the gateway's admin API, `GetClusterHealth` and `GetClusterStatus`. Both go to
-the gateway only, which is the one node Cargo can reach. Nothing is installed on any node.
+Two calls to the gateway's admin API, `GetClusterHealth` and `GetClusterStatus`. Cargo asks
+the running gateways in order, and moves to the next only when one refuses or times out the
+connection. A gateway that is down is Degraded like any node; every gateway down is Critical. Nothing is installed on any node.
+
+The admin API is reached over the mesh, so it skips nginx. Cargo also asks `https://s3-admin-svc.<wildcard-domain>/health` at each running gateway's public IPv4, with the certificate checked against that name, as the Route53 health check does. Route53 quietly drops a gateway that fails this from DNS, so this is the only way Cargo hears of nginx, its certificate or the public address breaking on one gateway.
 
 The read happens once per run and every check reads the same copy, so two checks can never
 disagree about what the cluster looked like.
@@ -24,6 +27,8 @@ disagree about what the cluster looked like.
 | A node has been down longer than `node_offline_seconds` | **Degraded** |
 | A volume is below `disk_critical_percent` free | **Critical** |
 | A volume is below `disk_degraded_percent` free | **Degraded** |
+| A gateway does not answer 200 on its public address | **Degraded** |
+| No gateway answers 200 on its public address | **Critical** |
 
 The cluster's verdict is the worst of these. Nothing wrong means **Healthy**.
 

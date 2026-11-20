@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Each region runs one Garage cluster, and Cargo owns it. A cluster is one gateway machine and the storage machines behind it. Benches speak S3 to the gateway; Central asks Cargo for buckets and keys. This document covers the cluster's lifecycle. For what the cluster reports about itself once it runs, read [cluster health](health.md).
+Each region runs one Garage cluster, and Cargo owns it. A cluster is one or more gateway machines and the storage machines behind them. The first machine added is always a gateway. DNS names every running gateway, and benches speak S3 to whichever answers; Central asks Cargo for buckets and keys. This document covers the cluster's lifecycle. For what the cluster reports about itself once it runs, read [cluster health](health.md).
 
 ## Records
 
@@ -31,7 +31,7 @@ Each new machine boots from the Ubuntu system image that Atlas serves when the m
 4. Wait. `sync_all_machines` moves each machine to Running when Atlas reports it up with a mesh address.
 5. Select **Set Up Cluster**.
 
-Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts Caddy on the gateway, and waits until `s3-svc` and `s3-admin-svc` answer over HTTPS. The gateway has a public IPv4 from Atlas. Before it installs Caddy, setup replaces the gateway's Atlas firewall and asks Atlas to point both names at that address, and their `internal-` names at the gateway's mesh address. You do not set DNS by hand. To publish the records again without a full setup, select **Update DNS Records**. Caddy obtains and renews the certificates itself. Garage listens on each node's mesh address only, so the public address reaches Caddy alone. Caddy allows no origins of its own: Garage answers CORS for each bucket, as [browser access](#browser-access) explains. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
+Setup installs Garage on each machine that has not joined, gateway first, records the peers, applies the layout, puts nginx on every gateway, and waits until `s3-svc` and `s3-admin-svc` answer over HTTPS. Every gateway must run and have a public IPv4 from Atlas. Setup replaces each gateway's Atlas firewall, installs nginx routed to that gateway's own Garage, then asks Atlas to point both names at every gateway's public address, each with a Route53 health check, and their `internal-` names at their mesh addresses. You do not set DNS by hand. To publish the records again without a full setup, select **Update DNS Records**. nginx serves the certificate files at `/etc/nginx/tls/<name>.crt` and `.key`, which setup copies from the service's Service Certificate, as [bootstrapping](bootstrapping.md) explains. Garage listens on each node's mesh address only, so the public address reaches nginx alone. nginx allows no origins of its own: Garage answers CORS for each bucket, as [browser access](#browser-access) explains. It is idempotent: setting up again picks up whatever has not joined, so it is also how a failed run is retried. The machines are kept on a failure, because releasing them is the operator's call.
 
 When setup applies the layout, it also removes each Garage node that no machine of the cluster holds: the node of a released machine, and the old node of a machine that came back with a new node id after it lost its metadata. The old node is removed only once the new one is up, so a machine that is down keeps its role. On every run, if Garage still waits for nodes that are down and no longer in the layout, and no node in the layout is down, setup tells Garage to stop waiting for them (`ClusterLayoutSkipDeadNodes`). A skip that failed or had to wait is tried again on the next run. Garage refuses this when the remaining nodes do not hold a full copy. Run setup after you release a machine or replace a node.
 
@@ -43,15 +43,15 @@ Cargo writes the origins to Garage as the bucket's CORS rules, through the admin
 
 The origin of `central_url` is always added, so the Central dashboard can upload and download on every bucket. It is not stored on the bucket. Cargo writes the rules when it creates a bucket and when the allowed origins change. Buckets are only changed through Cargo, so the rules cannot drift. The `apply_bucket_cors_rules` patch wrote them once for the buckets made before this.
 
-Caddy passes every request through, the unsigned preflight `OPTIONS` among them. Garage reads the bucket from the path and answers from that bucket's rules: it refuses a preflight from any other origin with a 403. The signature still authorizes each request. CORS only lets the browser send it and read the answer.
+nginx passes every request through, the unsigned preflight `OPTIONS` among them. Garage reads the bucket from the path and answers from that bucket's rules: it refuses a preflight from any other origin with a 403. The signature still authorizes each request. CORS only lets the browser send it and read the answer.
 
 Garage before v2.3.0 accepts CORS rules on `UpdateBucket` and ignores them. Cargo reads each node's version from the cluster status first:
 
-- Setup is refused before it changes anything when a node runs an older Garage, so the cluster keeps its status and its old Caddy. Upgrade Garage on every node, then set up again. Setup installs Garage only on a machine that has not joined, so changing the cluster's **Version** does not upgrade the nodes that joined.
+- Setup is refused before it changes anything when a node runs an older Garage, so the cluster keeps its status and its old proxy. Upgrade Garage on every node, then set up again. Setup installs Garage only on a machine that has not joined, so changing the cluster's **Version** does not upgrade the nodes that joined.
 - A change to a bucket's allowed origins is refused with the version found.
 - A new bucket is still created, without rules. Its cluster still runs the old Caddy, which answers CORS for the dashboard. After upgrading Garage, set the bucket's allowed origins again to write them.
 
-Garage v2.3.0 sends neither `Access-Control-Max-Age` nor `Vary: Origin`, so Caddy adds both on `s3-svc`: `Max-Age: 3600` on preflight answers, and `Vary: Origin` on every answer, since `Access-Control-Allow-Origin` now depends on the caller.
+Garage v2.3.0 sends neither `Access-Control-Max-Age` nor `Vary: Origin`, so nginx adds both on `s3-svc`: `Max-Age: 3600` on preflight answers, and `Vary: Origin` on every answer, since `Access-Control-Allow-Origin` now depends on the caller.
 
 ## Releasing a machine
 
@@ -62,7 +62,7 @@ Select **Release Machines** to give machines back to Atlas. A machine that is no
 3. Cargo waits until no running node has blocks in its resync queue or blocks it failed to fetch. Garage does not include blocks in the Draining status. A node that does not answer counts as not done.
 4. Cargo terminates the machine and removes its row.
 
-Cargo refuses the release when the joined storage nodes that stay are fewer than `replication_factor`, and it never releases the gateway of a cluster that joined. To replace a storage node, add the new node, run setup, then release the old one. Setup and release cannot run at the same time.
+Cargo refuses the release when the joined storage nodes that stay are fewer than `replication_factor`, and it never releases the last gateway, so a cluster always keeps one. When a gateway stops answering, Route53 leaves it out and admin calls skip it. When it dies or is released, Cargo takes it out of DNS; the cluster fails only when every gateway is dead. To add a gateway, select **Add > Gateway Node**, then set up again. To replace a storage node, add the new node, run setup, then release the old one. Setup and release cannot run at the same time.
 
 ## Auto spawn
 
@@ -77,7 +77,7 @@ Cargo can bring the cluster up on its own. Put `default_storage_cluster_config` 
 }
 ```
 
-Every value is required, and each must be a whole number of at least 1. `storage_node_count` must be at least `replication_factor`, because a cluster with fewer storage nodes than a full copy needs is one every setup run refuses. The cluster takes its replication factor from here, so the two can never disagree.
+Every value is required, and each must be a whole number of at least 1. The optional `gateway_node_count` sets how many gateways the cluster keeps, and defaults to 1. `storage_node_count` must be at least `replication_factor`, because a cluster with fewer storage nodes than a full copy needs is one every setup run refuses. The cluster takes its replication factor from here, so the two can never disagree.
 
 An unusable config is logged once and nothing is built. Without the key, Cargo builds nothing and the desk flow above is the only way in.
 

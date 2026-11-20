@@ -7,13 +7,13 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import TELEMETRY
 from cargo.telemetry.doctype.datum_server.proxy import DATUM_PORT, Proxy
-from cargo.testing import SETTINGS, use_test_settings
+from cargo.testing import SETTINGS, nginx_over_ssh, use_test_settings
 
 PROXY_MODULE = "cargo.telemetry.doctype.datum_server.proxy"
 
 
 class IntegrationTestTelemetryProxy(IntegrationTestCase):
-	"""Caddy on the datum host serves both domains and keeps ClickHouse's own UIs internal."""
+	"""nginx on the datum host serves both domains and keeps ClickHouse's own UIs internal."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -47,31 +47,34 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		return Proxy(frappe.get_single("Datum Server"))
 
 	def test_datum_and_clickhouse_stay_on_loopback(self):
-		environment = self.proxy().environment
+		proxy = self.proxy()
+		context = proxy.get_context(proxy.machines[0])
 
-		self.assertEqual(environment["DATUM_UPSTREAM"], f"127.0.0.1:{DATUM_PORT}")
-		self.assertEqual(environment["CLICKHOUSE_UPSTREAM"], f"127.0.0.1:{self.server.clickhouse_port}")
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
+		self.assertEqual(context["datum_upstream"], f"127.0.0.1:{DATUM_PORT}")
+		self.assertEqual(context["clickhouse_upstream"], f"127.0.0.1:{self.server.clickhouse_port}")
+		self.assertEqual(context["domain"], SETTINGS["wildcard_domain"])
 
-	def test_the_caddyfile_keeps_clickhouse_uis_internal(self):
-		rendered = self.proxy().render()
+	def test_the_config_keeps_clickhouse_uis_internal(self):
+		proxy = self.proxy()
+		rendered = proxy.render(proxy.machines[0])
 		domain = SETTINGS["wildcard_domain"]
 
-		self.assertIn(f"telemetry-svc.{domain} {{", rendered)
-		self.assertIn(f"http://internal-telemetry-svc.{domain} {{", rendered)
-		self.assertIn(f"telemetry-read-svc.{domain} {{", rendered)
-		self.assertIn("@allowed path / /ping", rendered)
-		self.assertIn("not query query=*", rendered)
+		self.assertIn(f"server_name telemetry-svc.{domain};", rendered)
+		self.assertIn(f"server_name internal-telemetry-svc.{domain};", rendered)
+		self.assertIn(f"server_name telemetry-read-svc.{domain};", rendered)
+		self.assertIn("location = /ping {", rendered)
+		self.assertIn("if ($arg_query) {", rendered)
+		self.assertIn("ssl_certificate /etc/nginx/tls/telemetry.crt;", rendered)
 
-	def test_caddy_runs_on_the_datum_host(self):
+	def test_nginx_runs_on_the_datum_host(self):
 		with (
-			patch("cargo.caddy.AtlasClient"),
+			patch("cargo.nginx.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
-			patch.object(SSHClient, "run", autospec=True) as run,
+			nginx_over_ssh() as (_, configs),
 		):
 			self.proxy().install()
 
-		self.assertEqual(run.call_args.args[0].host, "fdaa:1::9")
+		self.assertEqual(list(configs), ["fdaa:1::9"])
 
 	def test_a_host_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.machine.name, "public_ipv4", None)
@@ -86,12 +89,15 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 
 	def test_the_server_points_its_names_at_the_datum_host_again(self):
 		domain = SETTINGS["wildcard_domain"]
-		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
+		with patch("cargo.nginx.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			frappe.get_single("Datum Server").update_dns_records()
 
-		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
-		self.assertIn((f"telemetry-svc.{domain}", "203.0.113.20"), published)
-		self.assertIn((f"internal-telemetry-read-svc.{domain}", "fdaa:1::9"), published)
+		published = {
+			call.args[0]: call.args[1]
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(published[f"telemetry-svc.{domain}"], ["203.0.113.20"])
+		self.assertEqual(published[f"internal-telemetry-read-svc.{domain}"], ["fdaa:1::9"])
 		run.assert_not_called()
 
 	def test_only_a_writer_can_update_the_dns_records(self):
@@ -99,7 +105,7 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		frappe.set_user("Guest")
 		self.addCleanup(frappe.set_user, "Administrator")
 
-		with patch("cargo.caddy.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
+		with patch("cargo.nginx.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
 			server.update_dns_records()
 
 		atlas.from_settings.assert_not_called()
@@ -122,8 +128,5 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 	def test_a_domain_that_never_answers_is_not_serving(self):
 		self.assertFalse(self.probe(None, Mock(ok=True)))
 
-	def test_the_caddyfile_ships_with_the_app(self):
-		path = self.proxy().caddyfile_path
-
-		self.assertEqual(path.name, "Caddyfile")
-		self.assertTrue(path.is_file())
+	def test_the_config_ships_with_the_app(self):
+		self.assertTrue(self.proxy().template_path.is_file())

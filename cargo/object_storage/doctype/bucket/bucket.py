@@ -69,7 +69,7 @@ class Bucket(Document):
 
 	def on_update(self) -> None:
 		if self.flags.in_insert:
-			# Caddy still answers CORS for a cluster on an older Garage, until setup moves it.
+			# A cluster on an older Garage cannot hold bucket CORS rules until it is upgraded.
 			if cors.supported_by(self.garage):
 				self.apply_cors_rules()
 		elif self.origins_changed():
