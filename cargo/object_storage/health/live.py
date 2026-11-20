@@ -219,11 +219,7 @@ def is_expired(line: str, cutoff: str) -> bool:
 
 
 def increase_disk_size_if_required():
-	from cargo.object_storage.automation.disk_full import (
-		DiskAtMaxCapacityError,
-		GrowStorageNodeDisks,
-		add_storage_node,
-	)
+	from cargo.object_storage.automation.disk_full import GrowStorageNodeDisks
 	from cargo.object_storage.doctype.object_storage_cluster.utils import get_running_pipeline
 
 	cluster_name = frappe.db.get_value("Object Storage Cluster", {"status": "Active"})
@@ -234,7 +230,7 @@ def increase_disk_size_if_required():
 	if get_running_pipeline(cluster):
 		return
 
-	# A node added at the max disk size boots first, then joins here on a later run.
+	# A booting node joins here on a later run.
 	if any(node.status == "Pending" for node in cluster.storage_nodes):
 		return
 
@@ -256,7 +252,4 @@ def increase_disk_size_if_required():
 
 	free_ratio = 1 - fullest_node_samples[-1].used_bytes / fullest_node_samples[-1].total_bytes
 	if free_ratio < cluster_settings.disk_degraded_percent / 100:
-		try:
-			grow_storage_node_disks.grow()
-		except DiskAtMaxCapacityError:
-			add_storage_node(cluster)
+		grow_storage_node_disks.grow()
