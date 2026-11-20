@@ -202,7 +202,7 @@ function ask_to_detach(frm, versions) {
 			{
 				fieldtype: "HTML",
 				options: `<p class="text-muted">${__(
-					"Anything this machine serves on the address, such as its Caddy domains, stops answering."
+					"Anything this machine serves on the address, such as its public domains, stops answering."
 				)}</p>`,
 			},
 			version_field(versions),

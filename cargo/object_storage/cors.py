@@ -1,4 +1,4 @@
-"""Which websites may call a bucket from a browser. Garage enforces this per bucket; Caddy
+"""Which websites may call a bucket from a browser. Garage enforces this per bucket; nginx
 passes the browser's preflight through to it."""
 
 from __future__ import annotations

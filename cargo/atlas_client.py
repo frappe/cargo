@@ -136,9 +136,12 @@ class AtlasClient:
 
 		return payload
 
-	def set_dns_record(self, name: str, address: str) -> None:
-		"""Point a regional service name at an address. Atlas picks A or AAAA and a 300 second TTL."""
-		self.call(set_dns_record, name, body=DnsRecordPayload.from_dict({"address": address}))
+	def set_dns_records(self, name: str, addresses: list[str], health_check_url: str | None = None) -> None:
+		"""Point a regional service name at every address, replacing the ones it had. Atlas picks A
+		or AAAA and a 300 second TTL. With `health_check_url`, Route53 asks that URL at each
+		address and leaves out one that stops answering."""
+		payload = DnsRecordPayload(addresses=addresses, health_check_url=health_check_url)
+		self.call(set_dns_record, name, body=payload)
 
 	def set_vm_firewall(self, vm_id: str, firewall: dict[str, Any]) -> None:
 		"""Replace the VM's whole firewall. Atlas answers before Metal applies it."""

@@ -8,8 +8,9 @@ Code lives in `cargo/object_storage/health/live.py`.
 
 ## What it asks
 
-Two calls to the gateway's admin API, `GetClusterHealth` and `GetClusterStatus`. Both go to
-the gateway only, which is the one node Cargo can reach. Nothing is installed on any node.
+Two calls to the gateway's admin API, `GetClusterHealth` and `GetClusterStatus`. Cargo asks
+the running gateways in order, and moves to the next only when one refuses or times out the
+connection. A gateway that is down is Degraded like any node; every gateway down is Critical. Nothing is installed on any node.
 
 The read happens once per run and every check reads the same copy, so two checks can never
 disagree about what the cluster looked like.

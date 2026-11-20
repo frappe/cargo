@@ -339,7 +339,7 @@ class IntegrationTestTelemetryWebhook(IntegrationTestCase):
 
 
 class IntegrationTestTelemetryRouting(IntegrationTestCase):
-	"""A host is Active only once its public domains answer through Caddy."""
+	"""A host is Active only once its public domains answer through nginx."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -376,21 +376,21 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 				start_setup_on_machine=Mock(return_value=installed),
 				get_datum_commit=Mock(return_value="c" * 40),
 			),
-			patch.object(DatumServer, "install_caddy", return_value=routed),
+			patch.object(DatumServer, "install_proxy", return_value=routed),
 			patch.object(DatumServer, "check_if_proxy_is_configured", return_value=serving),
 		)
 
 	def test_an_install_that_failed_is_never_routed_to(self):
-		install, caddy, probe = self.steps(installed=False)
-		with install, caddy as installed_caddy, probe as probed:
+		install, proxy, probe = self.steps(installed=False)
+		with install, proxy as installed_proxy, probe as probed:
 			self.server._setup()
 
-		installed_caddy.assert_not_called()
+		installed_proxy.assert_not_called()
 		probed.assert_not_called()
 
-	def test_a_host_caddy_would_not_serve_is_never_probed(self):
-		install, caddy, probe = self.steps(routed=False)
-		with install, caddy, probe as probed:
+	def test_a_host_nginx_would_not_serve_is_never_probed(self):
+		install, proxy, probe = self.steps(routed=False)
+		with install, proxy, probe as probed:
 			self.server._setup()
 
 		probed.assert_not_called()
@@ -398,8 +398,8 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.assertNotEqual(self.server.status, "Active")
 
 	def test_setup_records_the_commit_it_installed(self):
-		install, caddy, probe = self.steps()
-		with install, caddy, probe:
+		install, proxy, probe = self.steps()
+		with install, proxy, probe:
 			self.server._setup()
 
 		self.server.reload()
@@ -421,28 +421,28 @@ class IntegrationTestTelemetryRouting(IntegrationTestCase):
 		self.assertEqual(self.server.branch, "main")
 
 	def test_a_host_is_active_once_every_step_lands(self):
-		install, caddy, probe = self.steps()
-		with install, caddy, probe:
+		install, proxy, probe = self.steps()
+		with install, proxy, probe:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Active")
 
 	def test_a_host_that_does_not_answer_publicly_is_not_active(self):
-		install, caddy, probe = self.steps(serving=False)
-		with install, caddy, probe:
+		install, proxy, probe = self.steps(serving=False)
+		with install, proxy, probe:
 			self.server._setup()
 
 		self.server.reload()
 		self.assertNotEqual(self.server.status, "Active")
 
-	def test_a_host_caddy_refuses_says_so(self):
-		with patch.object(Proxy, "install", side_effect=RuntimeError("caddy validate failed")):
-			self.assertFalse(self.server.install_caddy())
+	def test_a_host_nginx_refuses_says_so(self):
+		with patch.object(Proxy, "install", side_effect=RuntimeError("nginx -t failed")):
+			self.assertFalse(self.server.install_proxy())
 
 		self.server.reload()
 		self.assertEqual(self.server.status, "Failed")
-		self.assertIn("Caddy", self.server.error)
+		self.assertIn("nginx", self.server.error)
 
 	def test_a_host_that_never_answers_names_the_dns_to_point(self):
 		with patch.object(Proxy, "wait_until_serving", return_value=False):
