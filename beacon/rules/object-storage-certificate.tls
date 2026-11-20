@@ -8,4 +8,4 @@
 -- pending_for: 900
 -- resolve_after: 1800
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/service-certificate.md
--- Beacon reads the certificate that Caddy serves. Customers reach their buckets on this name.
+-- Beacon reads the certificate that nginx serves. Customers reach their buckets on this name.
