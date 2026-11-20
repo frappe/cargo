@@ -8,4 +8,4 @@
 -- pending_for: 180
 -- resolve_after: 300
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/telemetry-unreachable.md
--- Beacon calls the Datum health route from outside the region. It fails when DNS, Caddy or Datum is down, or when Datum cannot reach ClickHouse. No machine of the region can send telemetry then, so the other rules go silent.
+-- Beacon calls the Datum health route from outside the region. It fails when DNS, nginx or Datum is down, or when Datum cannot reach ClickHouse. No machine of the region can send telemetry then, so the other rules go silent.
