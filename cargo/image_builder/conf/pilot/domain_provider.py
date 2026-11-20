@@ -4,6 +4,7 @@
 import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,8 @@ DOMAIN_ROUTE = {
 
 METADATA = "http://169.254.169.254/latest"
 TIMEOUT_SECONDS = 30
+ATTEMPTS = 10
+RETRY_DELAY_SECONDS = 1
 # Cloudflare refuses the default Python-urllib user agent with HTTP 403.
 USER_AGENT = "bench-domain-provider/1"
 
@@ -60,6 +63,20 @@ def call(method: str, http_method: str, domain: str):
 		return json.loads(response.read() or b"{}").get("message")
 
 
+def call_with_retry(method: str, http_method: str, domain: str):
+	"""Retry network errors and 5xx; Central's domain register and deregister are safe to repeat."""
+	for attempt in range(1, ATTEMPTS + 1):
+		try:
+			return call(method, http_method, domain)
+		except urllib.error.HTTPError as error:
+			if error.code < 500 or attempt == ATTEMPTS:
+				raise
+		except OSError:
+			if attempt == ATTEMPTS:
+				raise
+		time.sleep(RETRY_DELAY_SECONDS)
+
+
 def error_message(error: urllib.error.HTTPError) -> str:
 	"""The first user-facing message Frappe sent, without the traceback."""
 	try:
@@ -86,11 +103,11 @@ def run(arguments: argparse.Namespace) -> int:
 	if arguments.command == "generate-dns-records":
 		print(json.dumps(call("domain_records", "GET", arguments.domain) or {}))
 	elif arguments.command == "register":
-		call("register_domain", "POST", arguments.domain)
+		call_with_retry("register_domain", "POST", arguments.domain)
 		print(json.dumps(route_policy(arguments.domain)))
 	elif arguments.command == "deregister":
 		try:
-			call("deregister_domain", "POST", arguments.domain)
+			call_with_retry("deregister_domain", "POST", arguments.domain)
 		except (OSError, ValueError, KeyError, TypeError) as error:
 			print(f"Warning: could not release {arguments.domain}: {error}", file=sys.stderr)
 	elif arguments.command == "proxy-servers":
