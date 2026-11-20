@@ -16,10 +16,10 @@ from frappe import _
 from frappe.utils import cint
 
 from cargo.atlas_client import AtlasClient, base_image_id
-from cargo.caddy import require_public
 from cargo.cargo.doctype.machine.machine import DEAD_MACHINE_STATES, Machine
 from cargo.client_models import TELEMETRY, NodeSpec
 from cargo.issuer import generate_machine_token
+from cargo.nginx import require_public
 from cargo.telemetry.agent import datum_refresh_script, install_script
 from cargo.telemetry.doctype.datum_server.proxy import (
 	DATUM_PORT,
@@ -326,8 +326,8 @@ class DatumServer(PipelineBuilder):
 		return Proxy(self)
 
 	@task(queue="long", timeout=3 * SETUP_TIMEOUT)
-	def install_caddy(self) -> bool:
-		"""Caddy on the host, in front of datum and ClickHouse. Run on every setup, so setting
+	def install_proxy(self) -> bool:
+		"""nginx on the host, in front of datum and ClickHouse. Run on every setup, so setting
 		up again is also how a failed one is retried."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -337,14 +337,14 @@ class DatumServer(PipelineBuilder):
 					title=f"{self.name} proxy setup failed",
 					message=frappe.get_traceback(with_context=True),
 				)
-				self.mark("Failed", _("Caddy did not come up. See the Setup Log, then set up again."))
+				self.mark("Failed", _("nginx did not come up. See the Setup Log, then set up again."))
 				return False
 
 		return True
 
 	@task
 	def check_if_proxy_is_configured(self) -> bool:
-		"""Whether the host answers on its public domains with a certificate Caddy obtained."""
+		"""Whether the host answers on its public domains over HTTPS."""
 		if self.proxy.wait_until_serving():
 			return True
 
@@ -385,7 +385,7 @@ class DatumServer(PipelineBuilder):
 
 		self.commit = self.get_datum_commit()
 
-		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
+		if not (self.install_proxy() and self.check_if_proxy_is_configured()):
 			return
 
 		self.mark("Active")

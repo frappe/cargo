@@ -95,11 +95,9 @@ class ObjectStorageCluster(PipelineBuilder):
 		return frappe.db.get_single_value("Cargo Settings", "region", cache=True)
 
 	@cached_property
-	def gateway_node(self) -> Machine | None:
-		"""The one machine that has the gateway role."""
-		return next(
-			(frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == GATEWAY), None
-		)
+	def gateway_nodes(self) -> list[Machine]:
+		"""Every machine that has the gateway role."""
+		return [frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == GATEWAY]
 
 	@cached_property
 	def storage_nodes(self) -> list[Machine]:
@@ -112,16 +110,18 @@ class ObjectStorageCluster(PipelineBuilder):
 		return [frappe.get_doc("Machine", row.machine) for row in self.machines]
 
 	@property
-	def gateway_address(self) -> str:
-		"""Where this cluster answers: every S3 and admin call goes through the gateway."""
-		gateway = self.gateway_node
-		if not gateway:
-			frappe.throw(_("This cluster has no gateway to reach it at."))
+	def running_gateways(self) -> list[Machine]:
+		"""Gateways that run, in the order they were added. DNS names all of them."""
+		return [gateway for gateway in self.gateway_nodes if gateway.status == "Running" and gateway.address]
 
-		if not gateway.address:
-			frappe.throw(_("This cluster's gateway has not booted yet."))
+	@property
+	def gateway_addresses(self) -> list[str]:
+		"""Where this cluster answers admin calls: every gateway that runs, tried in order."""
+		addresses = [gateway.address for gateway in self.running_gateways]
+		if not addresses:
+			frappe.throw(_("This cluster has no running gateway to reach it at."))
 
-		return gateway.address
+		return addresses
 
 	@cached_property
 	def garage_setup(self) -> Setup:
@@ -146,7 +146,7 @@ class ObjectStorageCluster(PipelineBuilder):
 
 	@property
 	def service_endpoint(self) -> str:
-		"""The S3 URL users reach this cluster at, served by Caddy on the gateway."""
+		"""The S3 URL users reach this cluster at, served by nginx on the gateways."""
 		return f"https://{S3_SITE_NAME}.{self.wildcard_domain}"
 
 	def validate(self) -> None:
@@ -221,7 +221,7 @@ class ObjectStorageCluster(PipelineBuilder):
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
-		"""Can add a gateway node to this cluster? Throws if not."""
+		"""Add a gateway node to this cluster. Setting up again puts it behind nginx."""
 		can_add_gateway_node(self)
 
 		self.add_node(GATEWAY, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
@@ -248,6 +248,7 @@ class ObjectStorageCluster(PipelineBuilder):
 	def _setup(self) -> None:
 		machines_to_setup = self.discover_machines_to_setup()
 		failed_storage_node_setup = []
+		failed_gateway_node_setup = []
 		for machine in machines_to_setup:
 			machine_doc = frappe.get_doc("Machine", machine)
 			was_successful = self.start_setup_on_machine(machine_doc)
@@ -255,13 +256,21 @@ class ObjectStorageCluster(PipelineBuilder):
 			# The machines are left alone: setup is idempotent, so a retry picks up whatever
 			# has not joined. Releasing them is the operator's call.
 			if not was_successful and machine_doc.role == GATEWAY:
-				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
-				return
+				failed_gateway_node_setup.append(machine_doc.name)
 
 			if not was_successful and machine_doc.role == STORAGE:
 				failed_storage_node_setup.append(machine_doc.name)
 
-			if len(self.all_nodes) - len(failed_storage_node_setup) < self.replication_factor:
+			if len(failed_gateway_node_setup) == len(self.gateway_nodes):
+				self.mark_cluster_status(
+					"Failed",
+					_("Every gateway node failed to set up: {0}").format(
+						", ".join(failed_gateway_node_setup)
+					),
+				)
+				return
+
+			if len(self.storage_nodes) - len(failed_storage_node_setup) < self.replication_factor:
 				self.mark_cluster_status(
 					"Failed",
 					_(
@@ -277,8 +286,8 @@ class ObjectStorageCluster(PipelineBuilder):
 		if not self.verify_connected_nodes():
 			return
 
-		# Caddy last: it only routes to a gateway ready to take its traffic.
-		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
+		# The proxy last: it only routes to gateways ready to take their traffic.
+		if not (self.install_proxy() and self.check_if_proxy_is_configured()):
 			return
 
 		self.mark_cluster_status("Active", None)
@@ -321,8 +330,8 @@ class ObjectStorageCluster(PipelineBuilder):
 		return True
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
-	def install_caddy(self) -> bool:
-		"""Caddy on the gateway, in front of Garage. Run on every setup, so setting up
+	def install_proxy(self) -> bool:
+		"""nginx on every gateway, in front of its Garage. Run on every setup, so setting up
 		again is also how a failed one is retried."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -335,7 +344,7 @@ class ObjectStorageCluster(PipelineBuilder):
 				self.mark_cluster_status(
 					"Failed",
 					_(
-						"Proxy (Caddy) setup failed. Garage itself is up: see the Setup Log, then set up again."
+						"Proxy (nginx) setup failed. Garage itself is up: see the Setup Log, then set up again."
 					),
 				)
 				return False
@@ -344,7 +353,7 @@ class ObjectStorageCluster(PipelineBuilder):
 
 	@task
 	def check_if_proxy_is_configured(self) -> bool:
-		"""Whether the cluster answers on its public domain with a certificate Caddy obtained."""
+		"""Whether the cluster answers on its public domain over HTTPS."""
 		if self.proxy.wait_until_serving():
 			return True
 
@@ -352,7 +361,11 @@ class ObjectStorageCluster(PipelineBuilder):
 			"Failed",
 			_(
 				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
-			).format(self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4),
+			).format(
+				self.service_endpoint,
+				", ".join(self.proxy_domains),
+				", ".join(gateway.public_ipv4 for gateway in self.proxy.machines),
+			),
 		)
 		return False
 
@@ -411,6 +424,7 @@ class ObjectStorageCluster(PipelineBuilder):
 		"""Hand the named machines back to Atlas and drop them from this cluster. A machine that
 		joined Garage is drained first, so its data reaches the other nodes before it goes."""
 		joined_machines = can_release_machines(self, machines)
+		self.remove_gateways_from_dns(machines)
 
 		unjoined_machines = []
 		for name in machines:
@@ -422,6 +436,17 @@ class ObjectStorageCluster(PipelineBuilder):
 
 		if joined_machines:
 			self._drain_and_release.run_as_pipeline(joined_machines)
+
+	def remove_gateways_from_dns(self, machines: list[str]) -> None:
+		"""Take released gateways out of DNS before they drain, so traffic leaves them first."""
+		if not self.is_live or not any(gateway.name in machines for gateway in self.gateway_nodes):
+			return
+
+		staying = [gateway for gateway in self.proxy.machines if gateway.name not in machines]
+		if not staying:
+			frappe.throw(_("No running gateway would stay in DNS. Start one before releasing these."))
+
+		self.proxy.publish_dns(staying, self.proxy_domains)
 
 	@flow
 	def _drain_and_release(self, machines: list[str]) -> None:
@@ -602,9 +627,10 @@ class ObjectStorageCluster(PipelineBuilder):
 		if not self.is_live:
 			return
 
-		# Gateway machine dead?
-		if self.gateway_node and self.gateway_node.status in DEAD_MACHINE_STATES:
-			self.mark_cluster_status("Failed", _("Gateway machine is dead."))
+		# Every gateway dead? One dead gateway is Degraded, which the health check reports.
+		dead_gateways = [gateway for gateway in self.gateway_nodes if gateway.status in DEAD_MACHINE_STATES]
+		if len(dead_gateways) == len(self.gateway_nodes):
+			self.mark_cluster_status("Failed", _("Every gateway machine is dead."))
 			return
 
 		# Machines less than the replication factor are dead?
@@ -616,6 +642,10 @@ class ObjectStorageCluster(PipelineBuilder):
 				"Failed", _("Not enough storage nodes are alive to satisfy the replication factor.")
 			)
 			return
+
+		# We will publish the dns routes incase of dead machines.
+		if dead_gateways:
+			self.proxy.publish_dns(self.proxy.machines, self.proxy_domains)
 
 	@property
 	def is_live(self) -> bool:

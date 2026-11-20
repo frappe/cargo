@@ -209,8 +209,8 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		asked = []
 
 		def healthy_nodes(garage):
-			asked.append(garage.url)
-			return set(self.storage) if "10.0.0.2" in garage.url else set()
+			asked.append(garage.urls[0])
+			return set(self.storage) if "10.0.0.2" in garage.urls[0] else set()
 
 		with (
 			patch.object(Setup, "healthy_nodes", autospec=True, side_effect=healthy_nodes),

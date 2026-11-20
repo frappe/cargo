@@ -202,13 +202,32 @@ class UnitTestAtlasClient(UnitTestCase):
 		self.assertTrue(request.url.endswith("/virtual-machines/vm-1/metadata"))
 		self.assertEqual(request.body, {"metadata": {"role": "storage", "datum-credential": "token"}})
 
-	def test_a_dns_record_is_put_by_name(self):
+	def test_dns_records_are_put_by_name(self):
 		with self.answer(204) as request:
-			self.client.set_dns_record("internal-s3-svc.example.test", "fdaa:1::7")
+			self.client.set_dns_records("internal-s3-svc.example.test", ["fdaa:1::7", "fdaa:1::8"])
 
 		self.assertEqual(request.method, "PUT")
 		self.assertTrue(request.url.endswith("/dns-records/internal-s3-svc.example.test"))
-		self.assertEqual(request.body, {"address": "fdaa:1::7"})
+		self.assertEqual(
+			request.body, {"addresses": ["fdaa:1::7", "fdaa:1::8"], "health_check_url": None, "ttl": 300}
+		)
+
+	def test_a_health_check_is_sent_with_the_records(self):
+		with self.answer(204) as request:
+			self.client.set_dns_records(
+				"s3-svc.example.test",
+				["203.0.113.7"],
+				health_check_url="https://s3-admin-svc.example.test/health",
+			)
+
+		self.assertEqual(
+			request.body,
+			{
+				"addresses": ["203.0.113.7"],
+				"health_check_url": "https://s3-admin-svc.example.test/health",
+				"ttl": 300,
+			},
+		)
 
 	def test_a_created_machine_without_an_id_is_a_failure(self):
 		with self.answer(201, {}), self.assertRaises(AtlasError):

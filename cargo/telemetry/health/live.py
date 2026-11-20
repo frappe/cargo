@@ -32,7 +32,7 @@ def ping_host_machine() -> None:
 
 def get_unreachable_reason(server: DatumServer) -> str | None:
 	"""Why datum or ClickHouse on the host does not answer, or None when both do. Goes through
-	the public domains and Caddy, the route pilots take, and reads as Insights does."""
+	the public domains and nginx, the route pilots take, and reads as Insights does."""
 	try:
 		request_host(server, TELEMETRY_WRITE_SITE_NAME, "GET", "/health")
 	except requests.RequestException as error:
@@ -64,7 +64,7 @@ def request_host(
 	headers: dict | None = None,
 	**kwargs,
 ) -> requests.Response:
-	"""One request to a subdomain Caddy serves. Raises unless it succeeds."""
+	"""One request to a subdomain nginx serves. Raises unless it succeeds."""
 	response = requests.request(
 		method,
 		f"https://{site_name}.{server.wildcard_domain}{path}",

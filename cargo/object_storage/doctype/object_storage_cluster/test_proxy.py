@@ -11,11 +11,14 @@ from cargo.testing import SETTINGS, use_test_settings
 
 GATEWAY_ADDRESS = "fdaa:1::10"
 PUBLIC_IPV4 = "203.0.113.10"
+SECOND_GATEWAY_ADDRESS = "fdaa:1::11"
+SECOND_PUBLIC_IPV4 = "203.0.113.11"
 PROXY_MODULE = "cargo.object_storage.doctype.object_storage_cluster.proxy"
 
 
 class IntegrationTestProxy(IntegrationTestCase):
-	"""Caddy on the gateway routes the public S3 domains to Garage on its mesh address."""
+	"""nginx on each gateway routes the public S3 domains to that gateway's Garage on its mesh
+	address, and DNS names the first gateway."""
 
 	def setUp(self):
 		frappe.set_user("Administrator")
@@ -50,7 +53,8 @@ class IntegrationTestProxy(IntegrationTestCase):
 		return Proxy(frappe.get_doc("Object Storage Cluster", self.cluster.name))
 
 	def test_upstreams_are_the_gateway_garage_ports(self):
-		environment = self.proxy().environment
+		proxy = self.proxy()
+		environment = proxy.get_environment(proxy.machines[0])
 
 		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
 		self.assertEqual(environment["S3_UPSTREAM"], f"[{GATEWAY_ADDRESS}]:{self.cluster.s3_port}")
@@ -60,27 +64,71 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
 
 		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
-			self.proxy().environment
+			proxy = self.proxy()
+			proxy.get_environment(proxy.machines[0])
 
-	def test_the_caddyfile_runs_on_the_gateway(self):
+	def test_the_config_runs_on_the_gateway(self):
 		with (
-			patch("cargo.caddy.AtlasClient"),
+			patch("cargo.nginx.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
 			patch.object(SSHClient, "run", autospec=True) as run,
 		):
 			self.proxy().install()
 
 		client, sent = run.call_args.args[:2]
-		address = client.host
 		domain = SETTINGS["wildcard_domain"]
-		self.assertEqual(address, GATEWAY_ADDRESS)
-		self.assertIn(f"s3-svc.{domain} {{", sent)
-		self.assertIn(f"s3-admin-svc.{domain} {{", sent)
-		self.assertIn(f"reverse_proxy [{GATEWAY_ADDRESS}]:{self.cluster.s3_port}", sent)
-		# Garage answers CORS per bucket; a header Caddy set would override every bucket's origins.
+		self.assertEqual(client.host, GATEWAY_ADDRESS)
+		self.assertIn(f"server_name s3-svc.{domain};", sent)
+		self.assertIn(f"server_name s3-admin-svc.{domain};", sent)
+		self.assertIn(f"proxy_pass http://[{GATEWAY_ADDRESS}]:{self.cluster.s3_port};", sent)
+		# Garage answers CORS per bucket; a header nginx set would override every bucket's origins.
 		self.assertNotIn("Access-Control-Allow-", sent)
-		self.assertIn("header @preflight Access-Control-Max-Age 3600", sent)
-		self.assertIn("header Vary Origin", sent)
+		self.assertIn("OPTIONS 3600;", sent)
+		self.assertIn("add_header Vary Origin always;", sent)
+
+	def test_every_gateway_routes_to_its_own_garage_and_is_in_dns(self):
+		self.add_machine(GATEWAY, SECOND_GATEWAY_ADDRESS, public_ipv4=SECOND_PUBLIC_IPV4)
+		with (
+			patch("cargo.nginx.AtlasClient") as atlas,
+			patch("cargo.atlas_client.AtlasClient"),
+			patch.object(SSHClient, "run", autospec=True) as run,
+		):
+			self.proxy().install()
+
+		sent = {call.args[0].host: call.args[1] for call in run.call_args_list}
+		self.assertIn(
+			f"proxy_pass http://[{SECOND_GATEWAY_ADDRESS}]:{self.cluster.s3_port};",
+			sent[SECOND_GATEWAY_ADDRESS],
+		)
+		self.assertIn(f"proxy_pass http://[{GATEWAY_ADDRESS}]:{self.cluster.s3_port};", sent[GATEWAY_ADDRESS])
+		domain = SETTINGS["wildcard_domain"]
+		published = {
+			call.args[0]: call.args[1]
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(published[f"s3-svc.{domain}"], [PUBLIC_IPV4, SECOND_PUBLIC_IPV4])
+		self.assertEqual(published[f"internal-s3-svc.{domain}"], [GATEWAY_ADDRESS, SECOND_GATEWAY_ADDRESS])
+
+	def test_route53_checks_each_public_gateway_on_the_admin_health_route(self):
+		with patch("cargo.nginx.AtlasClient") as atlas:
+			proxy = self.proxy()
+			proxy.publish_dns(proxy.machines, proxy.domains)
+
+		domain = SETTINGS["wildcard_domain"]
+		calls = {
+			call.args[0]: call.kwargs
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(
+			calls[f"s3-svc.{domain}"], {"health_check_url": f"https://s3-admin-svc.{domain}/health"}
+		)
+		self.assertEqual(calls[f"internal-s3-svc.{domain}"], {})
+
+	def test_a_stopped_gateway_leaves_dns(self):
+		self.add_machine(GATEWAY, SECOND_GATEWAY_ADDRESS, public_ipv4=SECOND_PUBLIC_IPV4)
+		frappe.db.set_value("Machine", self.gateway, "status", "Stopped")
+
+		self.assertEqual([gateway.address for gateway in self.proxy().machines], [SECOND_GATEWAY_ADDRESS])
 
 	def test_a_gateway_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
@@ -98,22 +146,26 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.get_doc({"doctype": "Object Storage Cluster"}).insert().db_set("status", "Setting Up")
 
 		with (
-			patch("cargo.caddy.AtlasClient") as atlas,
+			patch("cargo.nginx.AtlasClient") as atlas,
 			patch("cargo.atlas_client.AtlasClient"),
+			patch.object(SSHClient, "run", autospec=True),
 			self.assertRaisesRegex(frappe.ValidationError, "is Setting Up"),
 		):
 			self.proxy().install()
 
-		atlas.from_settings.return_value.set_dns_record.assert_not_called()
+		atlas.from_settings.return_value.set_dns_records.assert_not_called()
 
 	def test_the_cluster_points_its_names_at_the_gateway_again(self):
 		domain = SETTINGS["wildcard_domain"]
-		with patch("cargo.caddy.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
+		with patch("cargo.nginx.AtlasClient") as atlas, patch.object(SSHClient, "run", autospec=True) as run:
 			frappe.get_doc("Object Storage Cluster", self.cluster.name).update_dns_records()
 
-		published = [call.args for call in atlas.from_settings.return_value.set_dns_record.call_args_list]
-		self.assertIn((f"s3-svc.{domain}", PUBLIC_IPV4), published)
-		self.assertIn((f"internal-s3-admin-svc.{domain}", GATEWAY_ADDRESS), published)
+		published = {
+			call.args[0]: call.args[1]
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(published[f"s3-svc.{domain}"], [PUBLIC_IPV4])
+		self.assertEqual(published[f"internal-s3-admin-svc.{domain}"], [GATEWAY_ADDRESS])
 		run.assert_not_called()
 
 	def test_only_a_writer_can_update_the_dns_records(self):
@@ -121,7 +173,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.set_user("Guest")
 		self.addCleanup(frappe.set_user, "Administrator")
 
-		with patch("cargo.caddy.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
+		with patch("cargo.nginx.AtlasClient") as atlas, self.assertRaises(frappe.PermissionError):
 			cluster.update_dns_records()
 
 		atlas.from_settings.assert_not_called()
@@ -130,7 +182,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 		frappe.db.set_value("Machine", self.gateway, "status", "Stopped")
 
 		with self.assertRaisesRegex(frappe.ValidationError, "gateway is not running"):
-			self.proxy().machine
+			self.proxy().machines
 
 	def probe(self, admin: Mock | None = None, s3: Mock | None = None) -> tuple[bool, list]:
 		"""`is_serving` against the given answers, None meaning the request never got one."""
@@ -155,7 +207,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 			with self.subTest(status=status):
 				self.assertTrue(self.probe(admin=Mock(ok=True), s3=Mock(status_code=status))[0])
 
-	def test_a_gateway_caddy_cannot_reach_is_not_serving(self):
+	def test_a_garage_nginx_cannot_reach_is_not_serving(self):
 		self.assertFalse(self.probe(admin=Mock(ok=True), s3=Mock(status_code=502))[0])
 
 	def test_an_unhealthy_admin_api_is_not_serving(self):
@@ -164,8 +216,5 @@ class IntegrationTestProxy(IntegrationTestCase):
 	def test_a_domain_that_never_answers_is_not_serving(self):
 		self.assertFalse(self.probe(admin=None, s3=None)[0])
 
-	def test_the_caddyfile_ships_with_the_app(self):
-		path = self.proxy().caddyfile_path
-
-		self.assertEqual(path.name, "Caddyfile")
-		self.assertTrue(path.is_file())
+	def test_the_config_ships_with_the_app(self):
+		self.assertTrue(self.proxy().template_path.is_file())

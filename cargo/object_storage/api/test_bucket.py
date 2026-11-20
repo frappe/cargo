@@ -302,7 +302,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		return [rule["AllowedOrigin"] for rule in rules]
 
 	def test_a_new_bucket_takes_browser_calls_from_the_dashboard(self):
-		"""Caddy no longer answers CORS, so the dashboard's own uploads need the bucket's rules."""
+		"""The proxy leaves CORS to Garage, so the dashboard's own uploads need the bucket's rules."""
 		with self.caller() as garage:
 			create_bucket(name=BUCKET, region=self.region)
 
