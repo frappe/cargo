@@ -15,7 +15,6 @@ from cargo.object_storage.health.live import history_file
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.cargo.doctype.machine.machine import Machine
 	from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import (
 		ObjectStorageCluster,
 	)
@@ -25,7 +24,7 @@ if typing.TYPE_CHECKING:
 
 
 class DiskAtMaxCapacityError(frappe.ValidationError):
-	"""A node's disk is full enough that it should be grown before it fills completely."""
+	"""The storage disks are already at the max size, so a node must be added by hand."""
 
 
 @dataclass(frozen=True)
@@ -44,15 +43,6 @@ class Extention:
 	timestamp: datetime
 	old: int
 	new: int
-
-
-def add_storage_node(cluster: ObjectStorageCluster) -> None:
-	"""Add a storage node to the cluster with the same resources as the last node.
-	The scheduled job sets it up once it has booted."""
-	last_storage_node: Machine = cluster.storage_nodes[-1]
-	cluster.add_storage_node(
-		last_storage_node.cpu_millicores, last_storage_node.ram_gb, last_storage_node.disk_size_gb
-	)
 
 
 class GrowStorageNodeDisks:
@@ -88,12 +78,10 @@ class GrowStorageNodeDisks:
 		if last_extention and frappe.utils.now_datetime() - last_extention.timestamp < timedelta(
 			hours=self.settings.storage_disk_min_hours_between_growth
 		):
-			# This also protects us from adding storage nodes too quickly
 			frappe.throw("The cluster's disks were grown recently. Please wait before growing them again.")
 
 		current_gb = min((machine["disk_size_gb"] for machine in self.storage_machines), default=0)
 		if current_gb >= self.settings.max_storage_node_disk:
-			# Already at max capacity therefore handling of this exception should add a node.
 			raise DiskAtMaxCapacityError(
 				_("The cluster's disks are already at {0}. Please add another node.").format(
 					self.settings.max_storage_node_disk
