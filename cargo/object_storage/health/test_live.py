@@ -63,7 +63,7 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 	def tearDown(self):
 		history_file().unlink(missing_ok=True)
 
-	def add_machine(self, role: str) -> str:
+	def add_machine(self, role: str, public_ipv4: str | None = None) -> str:
 		machine = frappe.get_doc(
 			{
 				"doctype": "Machine",
@@ -73,6 +73,7 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 				"disk_size_gb": 20,
 				"vm_id": f"vm-{frappe.generate_hash(length=8)}",
 				"address": "10.0.0.1",
+				"public_ipv4": public_ipv4,
 				"status": "Running",
 			}
 		).insert()
@@ -97,6 +98,13 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 			self.addCleanup(patcher.stop)
 
 		return LiveHealth(self.cluster)
+
+	def answering(self, statuses: dict[str, int | None]):
+		"""Each gateway's public address answers with the status the test gives it."""
+		patcher = patch.object(live_module, "answers_at", side_effect=lambda address, _: statuses[address])
+		self.addCleanup(patcher.stop)
+
+		return patcher.start()
 
 	def test_a_cluster_with_nothing_wrong_is_healthy(self):
 		self.assertEqual(self.health().check().severity, HEALTHY)
@@ -186,6 +194,52 @@ class IntegrationTestLiveHealth(IntegrationTestCase):
 			self.health().record()
 
 		written.assert_not_called()
+
+	def test_every_gateway_answering_publicly_is_healthy(self):
+		self.add_machine(GATEWAY, "203.0.113.7")
+		self.add_machine(GATEWAY, "203.0.113.8")
+		probe = self.answering({"203.0.113.7": 200, "203.0.113.8": 200})
+
+		self.assertEqual(self.health().check().severity, HEALTHY)
+		self.assertEqual(
+			{call.args for call in probe.call_args_list},
+			{(address, self.cluster.proxy.health_check_url) for address in ("203.0.113.7", "203.0.113.8")},
+		)
+
+	def test_one_gateway_silent_on_its_public_address_is_degraded(self):
+		"""nginx down on one gateway: the admin API still answers over the mesh."""
+		self.add_machine(GATEWAY, "203.0.113.7")
+		silent = self.add_machine(GATEWAY, "203.0.113.8")
+		self.answering({"203.0.113.7": 200, "203.0.113.8": None})
+
+		finding = self.health().check()
+
+		self.assertEqual(finding.severity, DEGRADED)
+		self.assertIn(silent, finding.reason)
+
+	def test_a_gateway_answering_with_an_error_is_silent(self):
+		self.add_machine(GATEWAY, "203.0.113.7")
+		self.add_machine(GATEWAY, "203.0.113.8")
+		self.answering({"203.0.113.7": 200, "203.0.113.8": 502})
+
+		self.assertEqual(self.health().check().severity, DEGRADED)
+
+	def test_every_gateway_silent_on_its_public_address_is_critical(self):
+		self.add_machine(GATEWAY, "203.0.113.7")
+		self.add_machine(GATEWAY, "203.0.113.8")
+		self.answering({"203.0.113.7": None, "203.0.113.8": None})
+
+		finding = self.health().check()
+
+		self.assertEqual(finding.severity, CRITICAL)
+		self.assertIn("no gateway", finding.reason)
+
+	def test_a_gateway_without_a_public_address_is_not_probed(self):
+		self.add_machine(GATEWAY)
+		probe = self.answering({})
+
+		self.assertEqual(self.health().check().severity, HEALTHY)
+		probe.assert_not_called()
 
 
 class IntegrationTestHealthHistory(IntegrationTestCase):
