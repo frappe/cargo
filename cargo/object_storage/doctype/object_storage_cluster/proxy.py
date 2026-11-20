@@ -52,11 +52,11 @@ class Proxy(Nginx):
 		ensure_no_other_cluster_serving_or_setting_up(self.cluster)
 		super().publish_dns(machines, domains)
 
-	def get_environment(self, machine: Machine) -> dict[str, str]:
+	def get_context(self, machine: Machine) -> dict[str, str]:
 		return {
-			"WILDCARD_DOMAIN": self.cluster.wildcard_domain,
-			"S3_UPSTREAM": host_port(machine.address, self.cluster.s3_port),
-			"ADMIN_UPSTREAM": host_port(machine.address, self.cluster.admin_port),
+			"domain": self.cluster.wildcard_domain,
+			"s3_upstream": host_port(machine.address, self.cluster.s3_port),
+			"admin_upstream": host_port(machine.address, self.cluster.admin_port),
 		}
 
 	@property

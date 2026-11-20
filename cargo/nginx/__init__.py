@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import tempfile
 import time
 import typing
 from collections.abc import Callable
 from pathlib import Path
-from string import Template
 
 import frappe
 import requests
 from cloudtoolkit.ssh.client import read_script
 from frappe import _
+from jinja2 import StrictUndefined, Template
 
 from cargo.atlas_client import ANYWHERE, AtlasClient, AtlasError
 
@@ -17,6 +18,7 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
 
 INSTALL_SCRIPT = ("nginx", "install.sh")
+CONFIG_DIRECTORY = "/etc/nginx/conf.d"
 CERTIFICATE_DIRECTORY = "/etc/nginx/tls"
 PROBE_TIMEOUT_SECONDS = 10
 PROBE_ATTEMPTS = 6
@@ -45,7 +47,7 @@ class Nginx:
 	def domains(self) -> tuple[str, ...]:
 		raise NotImplementedError
 
-	def get_environment(self, machine: Machine) -> dict[str, str]:
+	def get_context(self, machine: Machine) -> dict[str, str]:
 		raise NotImplementedError
 
 	@property
@@ -53,9 +55,9 @@ class Nginx:
 		raise NotImplementedError
 
 	def install(self, on_output: Callable[[str], None] | None = None) -> None:
-		"""Render every machine's config, then apply each firewall and install nginx, then publish
-		DNS. Rendering goes first so a bad template changes nothing, and DNS last so it only
-		points at a machine that serves. Safe to repeat."""
+		"""Render every machine's config, then on each machine set the firewall, install nginx and
+		put the config, then publish DNS. Rendering goes first so a bad template changes nothing,
+		and DNS last so it only points at machines that serve. Safe to repeat."""
 		configs = [(machine, self.render(machine)) for machine in self.machines]
 		for machine, config in configs:
 			machine.set_firewall(
@@ -67,10 +69,10 @@ class Nginx:
 				],
 				outbound=[{"protocol": "any", "cidrs": ANYWHERE}],
 			)
-			environment = {"NGINX_CONFIG": config, "CONFIG_NAME": self.name}
-			machine.ssh_client.run(
-				read_script("cargo", *INSTALL_SCRIPT, environment=environment), on_output=on_output
-			)
+			# Install nginx first on the machines.
+			machine.ssh_client.run(read_script("cargo", *INSTALL_SCRIPT), on_output=on_output)
+			# Move the config on to the machines.
+			self.put_config(machine, config, on_output=on_output)
 
 		self.publish_dns(self.machines, self.domains)
 
@@ -92,15 +94,28 @@ class Nginx:
 		except AtlasError as exception:
 			frappe.throw(_("Atlas would not update the DNS records: {0}").format(str(exception)))
 
+	def put_config(
+		self, machine: Machine, config: str, on_output: Callable[[str], None] | None = None
+	) -> None:
+		"""Copy the config to the machine, and reload nginx only if it passes `nginx -t`."""
+		with tempfile.NamedTemporaryFile("w", suffix=".conf") as file:
+			file.write(config)
+			file.flush()
+			machine.ssh_client.rsync(
+				Path(file.name), f"{CONFIG_DIRECTORY}/{self.name}.conf", on_output=on_output
+			)
+
+		machine.ssh_client.run("nginx -t && systemctl reload nginx", on_output=on_output)
+
 	def render(self, machine: Machine) -> str:
-		"""The nginx config for one machine. A variable the template names and the environment
-		lacks raises, rather than writing a server with a hole in it."""
-		environment = {
-			**self.get_environment(machine),
-			"CERTIFICATE": f"{CERTIFICATE_DIRECTORY}/{self.name}.crt",
-			"CERTIFICATE_KEY": f"{CERTIFICATE_DIRECTORY}/{self.name}.key",
+		"""The nginx config for one machine. A value the template names and the context lacks
+		raises, rather than writing a server with a hole in it."""
+		context = {
+			**self.get_context(machine),
+			"certificate": f"{CERTIFICATE_DIRECTORY}/{self.name}.crt",
+			"certificate_key": f"{CERTIFICATE_DIRECTORY}/{self.name}.key",
 		}
-		return Template(self.template_path.read_text()).substitute(environment)
+		return Template(self.template_path.read_text(), undefined=StrictUndefined).render(context)
 
 	@property
 	def template_path(self) -> Path:

@@ -7,7 +7,7 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import TELEMETRY
 from cargo.telemetry.doctype.datum_server.proxy import DATUM_PORT, Proxy
-from cargo.testing import SETTINGS, use_test_settings
+from cargo.testing import SETTINGS, nginx_over_ssh, use_test_settings
 
 PROXY_MODULE = "cargo.telemetry.doctype.datum_server.proxy"
 
@@ -48,11 +48,11 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 
 	def test_datum_and_clickhouse_stay_on_loopback(self):
 		proxy = self.proxy()
-		environment = proxy.get_environment(proxy.machines[0])
+		context = proxy.get_context(proxy.machines[0])
 
-		self.assertEqual(environment["DATUM_UPSTREAM"], f"127.0.0.1:{DATUM_PORT}")
-		self.assertEqual(environment["CLICKHOUSE_UPSTREAM"], f"127.0.0.1:{self.server.clickhouse_port}")
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
+		self.assertEqual(context["datum_upstream"], f"127.0.0.1:{DATUM_PORT}")
+		self.assertEqual(context["clickhouse_upstream"], f"127.0.0.1:{self.server.clickhouse_port}")
+		self.assertEqual(context["domain"], SETTINGS["wildcard_domain"])
 
 	def test_the_config_keeps_clickhouse_uis_internal(self):
 		proxy = self.proxy()
@@ -70,11 +70,11 @@ class IntegrationTestTelemetryProxy(IntegrationTestCase):
 		with (
 			patch("cargo.nginx.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
-			patch.object(SSHClient, "run", autospec=True) as run,
+			nginx_over_ssh() as (_, configs),
 		):
 			self.proxy().install()
 
-		self.assertEqual(run.call_args.args[0].host, "fdaa:1::9")
+		self.assertEqual(list(configs), ["fdaa:1::9"])
 
 	def test_a_host_without_a_public_address_is_refused(self):
 		frappe.db.set_value("Machine", self.machine.name, "public_ipv4", None)

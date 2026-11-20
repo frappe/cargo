@@ -7,7 +7,7 @@ from frappe.tests import IntegrationTestCase
 
 from cargo.client_models import GATEWAY
 from cargo.object_storage.doctype.object_storage_cluster.proxy import Proxy
-from cargo.testing import SETTINGS, use_test_settings
+from cargo.testing import SETTINGS, nginx_over_ssh, use_test_settings
 
 GATEWAY_ADDRESS = "fdaa:1::10"
 PUBLIC_IPV4 = "203.0.113.10"
@@ -54,30 +54,29 @@ class IntegrationTestProxy(IntegrationTestCase):
 
 	def test_upstreams_are_the_gateway_garage_ports(self):
 		proxy = self.proxy()
-		environment = proxy.get_environment(proxy.machines[0])
+		context = proxy.get_context(proxy.machines[0])
 
-		self.assertEqual(environment["WILDCARD_DOMAIN"], SETTINGS["wildcard_domain"])
-		self.assertEqual(environment["S3_UPSTREAM"], f"[{GATEWAY_ADDRESS}]:{self.cluster.s3_port}")
-		self.assertEqual(environment["ADMIN_UPSTREAM"], f"[{GATEWAY_ADDRESS}]:{self.cluster.admin_port}")
+		self.assertEqual(context["domain"], SETTINGS["wildcard_domain"])
+		self.assertEqual(context["s3_upstream"], f"[{GATEWAY_ADDRESS}]:{self.cluster.s3_port}")
+		self.assertEqual(context["admin_upstream"], f"[{GATEWAY_ADDRESS}]:{self.cluster.admin_port}")
 
 	def test_a_proxy_cannot_be_set_up_without_a_domain(self):
 		frappe.db.set_single_value("Cargo Settings", "wildcard_domain", "")
 
 		with self.assertRaisesRegex(frappe.ValidationError, "Wildcard Domain"):
 			proxy = self.proxy()
-			proxy.get_environment(proxy.machines[0])
+			proxy.get_context(proxy.machines[0])
 
 	def test_the_config_runs_on_the_gateway(self):
 		with (
 			patch("cargo.nginx.AtlasClient"),
 			patch("cargo.atlas_client.AtlasClient"),
-			patch.object(SSHClient, "run", autospec=True) as run,
+			nginx_over_ssh() as (_, configs),
 		):
 			self.proxy().install()
 
-		client, sent = run.call_args.args[:2]
+		sent = configs[GATEWAY_ADDRESS]
 		domain = SETTINGS["wildcard_domain"]
-		self.assertEqual(client.host, GATEWAY_ADDRESS)
 		self.assertIn(f"server_name s3-svc.{domain};", sent)
 		self.assertIn(f"server_name s3-admin-svc.{domain};", sent)
 		self.assertIn(f"proxy_pass http://[{GATEWAY_ADDRESS}]:{self.cluster.s3_port};", sent)
@@ -91,11 +90,10 @@ class IntegrationTestProxy(IntegrationTestCase):
 		with (
 			patch("cargo.nginx.AtlasClient") as atlas,
 			patch("cargo.atlas_client.AtlasClient"),
-			patch.object(SSHClient, "run", autospec=True) as run,
+			nginx_over_ssh() as (_, sent),
 		):
 			self.proxy().install()
 
-		sent = {call.args[0].host: call.args[1] for call in run.call_args_list}
 		self.assertIn(
 			f"proxy_pass http://[{SECOND_GATEWAY_ADDRESS}]:{self.cluster.s3_port};",
 			sent[SECOND_GATEWAY_ADDRESS],
@@ -148,7 +146,7 @@ class IntegrationTestProxy(IntegrationTestCase):
 		with (
 			patch("cargo.nginx.AtlasClient") as atlas,
 			patch("cargo.atlas_client.AtlasClient"),
-			patch.object(SSHClient, "run", autospec=True),
+			nginx_over_ssh(),
 			self.assertRaisesRegex(frappe.ValidationError, "is Setting Up"),
 		):
 			self.proxy().install()
