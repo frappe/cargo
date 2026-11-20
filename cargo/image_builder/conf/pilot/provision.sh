@@ -55,7 +55,7 @@ as_bench_user() {
 }
 
 # Pilot checks site and admin domains against the provider's wildcard domains, which the .local
-# names reached through an alias never match. The parent image carries it, so remove it until the end.
+# names reached through an alias never match. The parent image carries it, so remove it until `setup central`.
 rm -f "$PROVIDER_SCRIPT"
 
 BENCH_PATH="/home/$BENCH_USER/pilot/benches/$BENCH"
@@ -253,6 +253,16 @@ if [ "$IMAGE_TYPE" != Base ]; then
 	probe_site
 fi
 
+# Pilot asks this provider where a custom domain routes. Cargo bakes the zone and the
+# proxy subnet into it, because neither changes for a VM of this image. It must be in place
+# before `setup central` renders nginx: the alias trusts the edge's https only from the proxy subnet.
+printf '%s' "$DOMAIN_PROVIDER" > "$PROVIDER_SCRIPT"
+chmod 755 "$PROVIDER_SCRIPT"
+
+# A silent miss would ship a provider that routes nothing.
+"$PROVIDER_SCRIPT" wildcard-domains | grep -q "$WILDCARD_DOMAIN"
+"$PROVIDER_SCRIPT" proxy-servers | grep -q "$PROXY_SUBNET"
+
 # This hands the host to Central and writes the hostname aliases. Site runs it again for
 # the site alias, which Base had no site to write. It rewrites nginx itself.
 as_bench_user "pilot --yes -b '$BENCH' setup central --admin-pattern 'admin-vm-*.$WILDCARD_DOMAIN' --site-pattern '*.$WILDCARD_DOMAIN'"
@@ -394,15 +404,6 @@ PREWARM_UNIT
 
 systemctl daemon-reload
 systemctl enable --quiet "$(basename "$PREWARM_UNIT")"
-
-# Pilot asks this provider where a custom domain routes. Cargo bakes the zone and the
-# proxy subnet into it, because neither changes for a VM of this image.
-printf '%s' "$DOMAIN_PROVIDER" > "$PROVIDER_SCRIPT"
-chmod 755 "$PROVIDER_SCRIPT"
-
-# A silent miss would ship a provider that routes nothing.
-"$PROVIDER_SCRIPT" wildcard-domains | grep -q "$WILDCARD_DOMAIN"
-"$PROVIDER_SCRIPT" proxy-servers | grep -q "$PROXY_SUBNET"
 
 # Build litter only.
 as_bench_user "yarn cache clean" > /dev/null 2>&1 || true
