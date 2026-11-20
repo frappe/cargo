@@ -4,12 +4,13 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import frappe
 import requests
+import urllib3
 from cloudtoolkit.ssh.client import SSHClient
 from frappe.tests import UnitTestCase
 from jinja2 import UndefinedError
 
 from cargo.atlas_client import AtlasError
-from cargo.nginx import PROBE_ATTEMPTS, Nginx, answers
+from cargo.nginx import PROBE_ATTEMPTS, Nginx, answers, answers_at
 from cargo.testing import nginx_over_ssh
 
 
@@ -203,3 +204,22 @@ class UnitTestNginx(UnitTestCase):
 		for error in (requests.ConnectionError("no route"), requests.exceptions.SSLError("self-signed")):
 			with self.subTest(error=type(error).__name__), patch("requests.request", side_effect=error):
 				self.assertIsNone(answers("https://example.test/health"))
+
+	def test_asking_one_address_still_checks_the_certificate_against_the_name(self):
+		with patch("urllib3.HTTPSConnectionPool") as pool:
+			pool.return_value.request.return_value.status = 200
+			status = answers_at("203.0.113.7", "https://s3-admin-svc.example.test/health")
+
+		self.assertEqual(status, 200)
+		self.assertEqual(pool.call_args.args, ("203.0.113.7", 443))
+		self.assertEqual(pool.call_args.kwargs["assert_hostname"], "s3-admin-svc.example.test")
+		self.assertEqual(pool.call_args.kwargs["server_hostname"], "s3-admin-svc.example.test")
+		pool.return_value.request.assert_called_once_with(
+			"GET", "/health", headers={"Host": "s3-admin-svc.example.test"}
+		)
+
+	def test_an_address_that_never_answered_is_none(self):
+		with patch("urllib3.HTTPSConnectionPool") as pool:
+			pool.return_value.request.side_effect = urllib3.exceptions.SSLError("hostname mismatch")
+
+			self.assertIsNone(answers_at("203.0.113.7", "https://s3-admin-svc.example.test/health"))

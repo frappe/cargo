@@ -5,9 +5,12 @@ import time
 import typing
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import certifi
 import frappe
 import requests
+import urllib3
 from cloudtoolkit.ssh.client import read_script
 from frappe import _
 from jinja2 import StrictUndefined, Template
@@ -185,3 +188,24 @@ def answers(url: str, method: str = "GET") -> requests.Response | None:
 		return requests.request(method, url, timeout=PROBE_TIMEOUT_SECONDS)
 	except requests.RequestException:
 		return None
+
+
+def answers_at(address: str, url: str) -> int | None:
+	"""The status `url` answers with at one `address`, its certificate still checked against the
+	URL's host. None when it never got an answer. DNS would pick any of the addresses."""
+	host = urlsplit(url).hostname
+	pool = urllib3.HTTPSConnectionPool(
+		address,
+		443,
+		server_hostname=host,
+		assert_hostname=host,
+		ca_certs=certifi.where(),
+		timeout=PROBE_TIMEOUT_SECONDS,
+		retries=False,
+	)
+	try:
+		return pool.request("GET", urlsplit(url).path or "/", headers={"Host": host}).status
+	except urllib3.exceptions.HTTPError:
+		return None
+	finally:
+		pool.close()

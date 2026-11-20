@@ -10,6 +10,7 @@ from pathlib import Path
 import frappe
 from frappe.utils.synchronization import filelock
 
+from cargo.nginx import answers_at
 from cargo.object_storage.client import Client, Error
 
 if typing.TYPE_CHECKING:
@@ -92,7 +93,22 @@ class LiveHealth(Client):
 		if reading.error:
 			return [Finding(CRITICAL, f"the gateway's admin API could not be reached: {reading.error}")]
 
-		return [*self.quorum_findings(reading.health), *self.node_findings(reading.nodes)]
+		return [
+			*self.quorum_findings(reading.health),
+			*self.node_findings(reading.nodes),
+			*self.gateway_findings(),
+		]
+
+	def gateway_findings(self) -> list[Finding]:
+		"""nginx on each gateway, asked at its public address as Route53 does. The admin API skips
+		nginx, and DNS drops a gateway that fails, so nothing else notices one going."""
+		url = self.cluster.proxy.health_check_url
+		gateways = [gateway for gateway in self.cluster.running_gateways if gateway.public_ipv4]
+		silent = [gateway.name for gateway in gateways if answers_at(gateway.public_ipv4, url) != 200]
+		if silent and len(silent) == len(gateways):
+			return [Finding(CRITICAL, "no gateway answers on its public address")]
+
+		return [Finding(DEGRADED, f"{name} does not answer on its public address") for name in silent]
 
 	def quorum_findings(self, health: dict) -> list[Finding]:
 		"""Partitions are the keyspace, not the nodes. Losing quorum on some means the objects
