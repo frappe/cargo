@@ -76,10 +76,8 @@ class Nginx:
 				],
 				outbound=[{"protocol": "any", "cidrs": ANYWHERE}],
 			)
-			# Install nginx first on the machines.
 			machine.ssh_client.run(read_script("cargo", *INSTALL_SCRIPT), on_output=on_output)
 			self.put_certificate(machine, certificate, on_output=on_output)
-			# Move the config on to the machines.
 			self.put_config(machine, config, on_output=on_output)
 
 		self.publish_dns(self.machines, self.domains)
@@ -123,7 +121,7 @@ class Nginx:
 		)
 
 	def renew_certificate(self) -> None:
-		"""Re-issue the certificate if it is due, then put it on every machine and reload nginx."""
+		"""Put the certificate on every machine and reload nginx, re-issued first if it is due."""
 		certificate = get_service_certificate(self.name, self.domains)
 		for machine in self.machines:
 			self.put_certificate(machine, certificate)

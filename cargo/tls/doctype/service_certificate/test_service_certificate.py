@@ -11,7 +11,7 @@ from cargo.tls.doctype.service_certificate.service_certificate import (
 	get_account_key,
 	get_service_certificate,
 	get_serving_proxy,
-	renew_due_certificates,
+	renew_certificates,
 )
 
 MODULE = "cargo.tls.doctype.service_certificate.service_certificate"
@@ -103,16 +103,28 @@ class IntegrationTestServiceCertificate(IntegrationTestCase):
 		self.assertIn("PRIVATE KEY", first)
 		self.assertEqual(first, second)
 
-	def test_renewal_puts_a_due_certificate_on_its_serving_service(self):
+	def test_renewal_puts_every_certificate_on_its_serving_service(self):
+		"""Not only due ones: a machine missed while renewing gets the stored certificate the next day."""
 		self.add_certificate("object-storage", expires_in_days=10)
 		self.add_certificate("telemetry", expires_in_days=60)
 		proxy = Mock()
 
 		with patch(f"{MODULE}.get_serving_proxy", return_value=proxy) as serving:
-			renew_due_certificates()
+			renew_certificates()
 
-		serving.assert_called_once_with("object-storage")
-		proxy.renew_certificate.assert_called_once_with()
+		self.assertEqual({call.args[0] for call in serving.call_args_list}, {"object-storage", "telemetry"})
+		self.assertEqual(proxy.renew_certificate.call_count, 2)
+
+	def test_a_service_that_is_not_active_is_skipped(self):
+		self.add_certificate("object-storage", expires_in_days=10)
+
+		with (
+			patch(f"{MODULE}.get_serving_proxy", return_value=None),
+			patch(f"{MODULE}.LetsEncrypt") as letsencrypt,
+		):
+			renew_certificates()
+
+		letsencrypt.assert_not_called()
 
 	def test_one_failed_renewal_is_logged_and_the_rest_still_renew(self):
 		self.add_certificate("object-storage", expires_in_days=10)
@@ -123,7 +135,7 @@ class IntegrationTestServiceCertificate(IntegrationTestCase):
 			patch(f"{MODULE}.get_serving_proxy", return_value=proxy),
 			patch("frappe.log_error") as logged,
 		):
-			renew_due_certificates()
+			renew_certificates()
 
 		self.assertEqual(proxy.renew_certificate.call_count, 2)
 		logged.assert_called_once()
