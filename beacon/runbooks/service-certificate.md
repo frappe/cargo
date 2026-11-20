@@ -4,9 +4,9 @@ nginx on the object storage gateways and the Datum host serves the certificate f
 
 ## Could not be issued
 
-1. In Cargo Desk, open the Error Log and find "Unable to renew the <name> certificate", or the setup that failed. The traceback says whether Let's Encrypt refused the order or Atlas refused the `_acme-challenge` TXT record.
+1. In Cargo Desk, open the Error Log and find "Could not issue the <name> certificate". The traceback says whether Let's Encrypt refused the order or Atlas refused the `_acme-challenge` TXT record.
 2. Fix the cause: a missing **Let's Encrypt Email** in Cargo Settings, a rate limit from Let's Encrypt, or an Atlas DNS error.
-3. Issue it again: select **Set Up Again** on the Object Storage Cluster or the Datum Server, or run `frappe.get_doc("Service Certificate", "<name>").renew()` in the console. The alert resolves once the status is Active.
+3. Issue it again: select **Set Up Again** on the Object Storage Cluster or the Datum Server, or run `frappe.get_doc("Service Certificate", "<name>").renew()` in the console. Check that its status is Active. The alert resolves a day after the last failure.
 
 ## Expiring or not verifying
 

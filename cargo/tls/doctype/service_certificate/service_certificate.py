@@ -4,24 +4,21 @@
 from __future__ import annotations
 
 import typing
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import frappe
-import requests
 from cloudtoolkit.tls.letsencrypt import LetsEncrypt, create_account_key
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import convert_utc_to_system_timezone, get_datetime, now_datetime
 
 from cargo.atlas_client import AtlasClient
-from cargo.telemetry.datum import send_to_datum
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
 	from cargo.nginx import Nginx
 
 RENEW_WITHIN_DAYS = 30
-STATUS_METRIC = "cargo_service_certificate"
 
 
 class ServiceCertificate(Document):
@@ -74,10 +71,16 @@ class ServiceCertificate(Document):
 			proxy.add_certificate_to_machines(self)
 
 	def issue(self) -> None:
-		"""Issue over dns-01, with the challenge records set through Atlas. A failure is kept as Failed."""
+		"""Issue over dns-01, with the challenge records set through Atlas. A failure is kept as Failed and
+		logged, which Beacon pages on."""
 		try:
 			issued = get_letsencrypt().issue_certificate(self.dns_names)
 		except Exception:
+			frappe.log_error(
+				title=f"Could not issue the {self.name} certificate",
+				reference_doctype=self.doctype,
+				reference_name=self.name,
+			)
 			self.status = "Failed"
 			self.save()
 			raise
@@ -140,34 +143,3 @@ def renew_certificates() -> None:
 			certificate.renew()
 		except Exception:
 			frappe.log_error(title=f"Unable to renew the {name} certificate")
-
-
-def ship_certificates() -> None:
-	"""Send each certificate's status and days left to Datum each minute, so a failed issue pages at once.
-	A failed push is a warning, as in `ship_health`."""
-	timestamp = datetime.now(UTC).isoformat()
-	samples = [
-		{
-			"metric": STATUS_METRIC,
-			"value": get_days_left(certificate.expires_on),
-			"ts": timestamp,
-			"labels": {"certificate": certificate.name, "status": certificate.status},
-		}
-		for certificate in frappe.get_all("Service Certificate", fields=["name", "status", "expires_on"])
-	]
-	if not samples:
-		return
-
-	try:
-		send_to_datum("/v1/ingest", {"samples": samples})
-	except RuntimeError:
-		return
-	except requests.RequestException as error:
-		frappe.logger("cargo.telemetry").warning(f"Datum service certificate push failed: {error}")
-
-
-def get_days_left(expires_on) -> float:
-	if not expires_on:
-		return 0
-
-	return round((get_datetime(expires_on) - now_datetime()).total_seconds() / 86400, 1)

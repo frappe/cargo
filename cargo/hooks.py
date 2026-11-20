@@ -285,7 +285,6 @@ scheduler_events = {
 			"cargo.object_storage.health.refresh_health",
 			"cargo.telemetry.error_logs.publish_error_logs",
 			"cargo.telemetry.inventory.ship_machines",
-			"cargo.tls.doctype.service_certificate.service_certificate.ship_certificates",
 		],
 		"*/2 * * * *": [
 			"cargo.object_storage.health.live.increase_disk_size_if_required",

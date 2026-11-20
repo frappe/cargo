@@ -6,13 +6,13 @@
 -- interval: 60
 -- pending_for: 60
 -- resolve_after: 300
--- Cargo sends the status of each Service Certificate every minute. The alert stays while the newest status is Failed, and resolves once an issue succeeds.
-SELECT 'cargo' AS resource_id, certificate AS alert_key, days_left AS value,
-       concat(certificate, ' certificate failed to issue, ', toString(days_left), ' days left on the current one') AS detail
+-- Cargo logs each failed issue as an Error Log, which reaches Datum within a minute. A Failed certificate is retried daily, so the 25-hour window keeps the alert open while it keeps failing, and it resolves a day after the last failure.
+SELECT 'cargo' AS resource_id, certificate AS alert_key, toFloat64(failures) AS value,
+       concat(certificate, ' certificate could not be issued, last at ', toString(last_ts)) AS detail
 FROM (
-    SELECT labels['certificate'] AS certificate, argMax(labels['status'], ts) AS status, argMax(value, ts) AS days_left
-    FROM datum.samples_recent
-    WHERE metric = 'cargo_service_certificate' AND resource_id = 'cargo' AND ts > now() - INTERVAL 15 MINUTE
+    SELECT extract(message, '^Could not issue the (.+) certificate$') AS certificate, count() AS failures, max(ts) AS last_ts
+    FROM datum.logs
+    WHERE resource_id = 'cargo' AND product = 'cargo' AND source = 'error_log'
+      AND message LIKE 'Could not issue the % certificate' AND ts > now() - INTERVAL 25 HOUR
     GROUP BY certificate
 )
-WHERE status = 'Failed'
