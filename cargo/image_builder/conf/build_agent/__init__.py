@@ -113,6 +113,8 @@ def start_build(build: Build) -> None:
 			# Keeps a successful unit loaded until the next tick reports it.
 			"--property=RemainAfterExit=yes",
 			f"--property=MemoryMax={BUILD_MEMORY_MAX}",
+			# Swap would slow the live app instead of killing the build.
+			"--property=MemorySwapMax=0",
 			f"--property=TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
 			f"--property=EnvironmentFile={build.environment_file}",
 			"/bin/bash",
