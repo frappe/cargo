@@ -103,6 +103,28 @@ CLICKHOUSE_USERS
 chown clickhouse:clickhouse "$CLICKHOUSE_ACCESS"
 chmod 600 "$CLICKHOUSE_ACCESS"
 
+# ClickHouse keeps its own logs forever, and they filled the disk. Only the logs a stock
+# server writes are listed: a section here turns its log on. After a change, the next start
+# renames each old table to <log>_0, which a person drops.
+SYSTEM_LOGS=(query_log query_views_log query_metric_log part_log trace_log text_log error_log
+	metric_log asynchronous_metric_log asynchronous_insert_log processors_profile_log
+	background_schedule_pool_log)
+{
+	echo "<clickhouse>"
+	for log in "${SYSTEM_LOGS[@]}"; do
+		echo "    <$log><ttl>event_date + INTERVAL 7 DAY DELETE</ttl></$log>"
+	done
+	echo "</clickhouse>"
+} > /etc/clickhouse-server/config.d/datum-system-logs.xml
+
+# The stock limit is 90% of RAM, so ClickHouse and Datum together can exhaust it, and the
+# kernel kills ClickHouse. At 75% a heavy query fails instead.
+cat > /etc/clickhouse-server/config.d/datum-memory.xml <<'CLICKHOUSE_MEMORY'
+<clickhouse>
+    <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+</clickhouse>
+CLICKHOUSE_MEMORY
+
 systemctl enable --quiet clickhouse-server
 systemctl restart clickhouse-server
 

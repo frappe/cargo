@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import typing
-from urllib.parse import urlsplit
 
 import frappe
 from frappe import _
 
 from cargo.atlas_client import host_port
-from cargo.caddy import Caddy, answers, require_public
+from cargo.nginx import Nginx, answers, require_public
 from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	ensure_no_other_cluster_serving_or_setting_up,
 )
@@ -23,44 +22,42 @@ S3_ADMIN_SITE_NAME = "s3-admin-svc"
 PROXY_SITE_NAMES = (S3_SITE_NAME, S3_ADMIN_SITE_NAME)
 
 
-class Proxy(Caddy):
-	"""Caddy on a cluster's gateway: public TLS for its domains, routed to Garage."""
+class Proxy(Nginx):
+	"""nginx on each gateway: public TLS for the cluster's domains, routed to that gateway's own
+	Garage. DNS names every running gateway."""
 
-	caddyfile = ("object_storage", "conf", "caddy", "Caddyfile")
+	name = "object-storage"
+	template = ("object_storage", "conf", "nginx", "object-storage.conf")
 
 	def __init__(self, cluster: ObjectStorageCluster) -> None:
 		self.cluster = cluster
 
 	@property
-	def machine(self) -> Machine:
-		return require_public(self.cluster.gateway_node, _("gateway"))
+	def machines(self) -> list[Machine]:
+		gateways = self.cluster.running_gateways
+		if not gateways:
+			frappe.throw(_("The gateway is not running."))
+
+		return [require_public(gateway, _("gateway")) for gateway in gateways]
+
+	@property
+	def health_check_url(self) -> str:
+		return f"https://{S3_ADMIN_SITE_NAME}.{self.cluster.wildcard_domain}/health"
 
 	@property
 	def domains(self) -> tuple[str, ...]:
 		return self.cluster.proxy_domains
 
-	def publish_dns(self, machine: Machine) -> None:
+	def publish_dns(self, machines: list[Machine], domains: tuple[str, ...]) -> None:
 		ensure_no_other_cluster_serving_or_setting_up(self.cluster)
-		super().publish_dns(machine)
+		super().publish_dns(machines, domains)
 
-	@property
-	def environment(self) -> dict[str, str]:
-		gateway = self.cluster.gateway_address
+	def get_context(self, machine: Machine) -> dict[str, str]:
 		return {
-			"WILDCARD_DOMAIN": self.cluster.wildcard_domain,
-			"S3_UPSTREAM": host_port(gateway, self.cluster.s3_port),
-			"ADMIN_UPSTREAM": host_port(gateway, self.cluster.admin_port),
-			"CORS_ORIGIN": self.central_origin,
+			"domain": self.cluster.wildcard_domain,
+			"s3_upstream": host_port(machine.address, self.cluster.s3_port),
+			"admin_upstream": host_port(machine.address, self.cluster.admin_port),
 		}
-
-	@property
-	def central_origin(self) -> str:
-		"""The one origin S3 accepts browser calls from: the Central dashboard's."""
-		url = urlsplit(frappe.db.get_single_value("Cargo Settings", "central_url") or "")
-		if not (url.scheme and url.netloc):
-			frappe.throw(_("Central URL must be set in Cargo Settings."))
-
-		return f"{url.scheme}://{url.netloc}"
 
 	@property
 	def is_serving(self) -> bool:
@@ -69,5 +66,5 @@ class Proxy(Caddy):
 		admin = answers(f"https://{S3_ADMIN_SITE_NAME}.{domain}/health")
 		s3 = answers(f"https://{S3_SITE_NAME}.{domain}/", method="HEAD")
 
-		# S3 has no health route and refuses an unsigned call; Caddy answers 502 for a dead gateway.
+		# S3 has no health route and refuses an unsigned call; nginx answers 502 for a dead Garage.
 		return bool(admin and admin.ok and s3 is not None and s3.status_code < 500)

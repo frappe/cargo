@@ -1,4 +1,4 @@
-# Object storage backup stale
+# Object storage backup is too old
 
 The newest uploaded metadata backup of the object storage cluster is more than 1 day old. Garage takes a metadata snapshot every 6 hours, and Cargo uploads the newest one every hour. Without a recent backup, a lost metadata disk loses the index of every bucket.
 

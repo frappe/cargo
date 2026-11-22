@@ -193,8 +193,8 @@
  "issingle": 1,
  "links": [
   {
-   "group": "Workflows",
-   "link_doctype": "Press Workflow",
+   "group": "Pipelines",
+   "link_doctype": "Pipeline",
    "link_fieldname": "linked_docname"
   }
  ],

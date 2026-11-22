@@ -7,6 +7,10 @@ import typing
 from functools import cached_property
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.utils import now_datetime
 
@@ -27,17 +31,15 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	ensure_no_other_active_cluster,
 )
 from cargo.object_storage.health import queue_cluster_metrics_exporters
-from cargo.ssh import SSH_TIMEOUT, OutputLog
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
 
 if typing.TYPE_CHECKING:
+	from cloudtoolkit.pipeline.doctype.pipeline.pipeline import Pipeline
+
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
-	from cargo.workflow_engine.doctype.press_workflow.press_workflow import PressWorkflow
 
 # Garage wants a 32-byte hex string for its rpc_secret, which is 64 characters of one.
 SECRET_LENGTH = 64
-MACHINE_STEP_TIMEOUT = 3 * SSH_TIMEOUT
+MACHINE_STEP_TIMEOUT = 3 * DEFAULT_TIMEOUT_SECONDS
 # Fetches run one machine after another: a gateway and up to four storage nodes.
 FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 MIN_SCRAPE_SECONDS = 60
@@ -46,7 +48,7 @@ if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
 
 
-class ObjectStorageCluster(WorkflowBuilder):
+class ObjectStorageCluster(PipelineBuilder):
 	"""One Garage cluster: the machines it needs, and the secrets they run on."""
 
 	# begin: auto-generated types
@@ -93,11 +95,9 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return frappe.db.get_single_value("Cargo Settings", "region", cache=True)
 
 	@cached_property
-	def gateway_node(self) -> Machine | None:
-		"""The one machine that has the gateway role."""
-		return next(
-			(frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == GATEWAY), None
-		)
+	def gateway_nodes(self) -> list[Machine]:
+		"""Every machine that has the gateway role."""
+		return [frappe.get_doc("Machine", row.machine) for row in self.machines if row.role == GATEWAY]
 
 	@cached_property
 	def storage_nodes(self) -> list[Machine]:
@@ -110,16 +110,18 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return [frappe.get_doc("Machine", row.machine) for row in self.machines]
 
 	@property
-	def gateway_address(self) -> str:
-		"""Where this cluster answers: every S3 and admin call goes through the gateway."""
-		gateway = self.gateway_node
-		if not gateway:
-			frappe.throw(_("This cluster has no gateway to reach it at."))
+	def running_gateways(self) -> list[Machine]:
+		"""Gateways that run, in the order they were added. DNS names all of them."""
+		return [gateway for gateway in self.gateway_nodes if gateway.status == "Running" and gateway.address]
 
-		if not gateway.address:
-			frappe.throw(_("This cluster's gateway has not booted yet."))
+	@property
+	def gateway_addresses(self) -> list[str]:
+		"""Where this cluster answers admin calls: every gateway that runs, tried in order."""
+		addresses = [gateway.address for gateway in self.running_gateways]
+		if not addresses:
+			frappe.throw(_("This cluster has no running gateway to reach it at."))
 
-		return gateway.address
+		return addresses
 
 	@cached_property
 	def garage_setup(self) -> Setup:
@@ -144,7 +146,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@property
 	def service_endpoint(self) -> str:
-		"""The S3 URL users reach this cluster at, served by Caddy on the gateway."""
+		"""The S3 URL users reach this cluster at, served by nginx on the gateways."""
 		return f"https://{S3_SITE_NAME}.{self.wildcard_domain}"
 
 	def validate(self) -> None:
@@ -219,7 +221,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@frappe.whitelist()
 	def add_gateway_node(self, cpu_millicores: int, ram_gb: int, disk_gb: int) -> None:
-		"""Can add a gateway node to this cluster? Throws if not."""
+		"""Add a gateway node to this cluster. Setting up again puts it behind nginx."""
 		can_add_gateway_node(self)
 
 		self.add_node(GATEWAY, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
@@ -240,12 +242,13 @@ class ObjectStorageCluster(WorkflowBuilder):
 		# run, and a cluster is only Active once it serves.
 		self.clear_logs()
 		self.mark_cluster_status("Setting Up", None)
-		self._setup.run_as_workflow()
+		self._setup.run_as_pipeline()
 
 	@flow
 	def _setup(self) -> None:
 		machines_to_setup = self.discover_machines_to_setup()
 		failed_storage_node_setup = []
+		failed_gateway_node_setup = []
 		for machine in machines_to_setup:
 			machine_doc = frappe.get_doc("Machine", machine)
 			was_successful = self.start_setup_on_machine(machine_doc)
@@ -253,13 +256,21 @@ class ObjectStorageCluster(WorkflowBuilder):
 			# The machines are left alone: setup is idempotent, so a retry picks up whatever
 			# has not joined. Releasing them is the operator's call.
 			if not was_successful and machine_doc.role == GATEWAY:
-				self.mark_cluster_status("Failed", _("Gateway machine failed to setup."))
-				return
+				failed_gateway_node_setup.append(machine_doc.name)
 
 			if not was_successful and machine_doc.role == STORAGE:
 				failed_storage_node_setup.append(machine_doc.name)
 
-			if len(self.all_nodes) - len(failed_storage_node_setup) < self.replication_factor:
+			if len(failed_gateway_node_setup) == len(self.gateway_nodes):
+				self.mark_cluster_status(
+					"Failed",
+					_("Every gateway node failed to set up: {0}").format(
+						", ".join(failed_gateway_node_setup)
+					),
+				)
+				return
+
+			if len(self.storage_nodes) - len(failed_storage_node_setup) < self.replication_factor:
 				self.mark_cluster_status(
 					"Failed",
 					_(
@@ -275,8 +286,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not self.verify_connected_nodes():
 			return
 
-		# Caddy last: it only routes to a gateway ready to take its traffic.
-		if not (self.install_caddy() and self.check_if_proxy_is_configured()):
+		# The proxy last: it only routes to gateways ready to take their traffic.
+		if not (self.install_proxy() and self.check_if_proxy_is_configured()):
 			return
 
 		self.mark_cluster_status("Active", None)
@@ -319,8 +330,8 @@ class ObjectStorageCluster(WorkflowBuilder):
 		return True
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
-	def install_caddy(self) -> bool:
-		"""Caddy on the gateway, in front of Garage. Run on every setup, so setting up
+	def install_proxy(self) -> bool:
+		"""nginx on every gateway, in front of its Garage. Run on every setup, so setting up
 		again is also how a failed one is retried."""
 		with OutputLog(self, "setup_log", append=True) as log:
 			try:
@@ -333,7 +344,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 				self.mark_cluster_status(
 					"Failed",
 					_(
-						"Proxy (Caddy) setup failed. Garage itself is up: see the Setup Log, then set up again."
+						"Proxy (nginx) setup failed. Garage itself is up: see the Setup Log, then set up again."
 					),
 				)
 				return False
@@ -342,7 +353,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 
 	@task
 	def check_if_proxy_is_configured(self) -> bool:
-		"""Whether the cluster answers on its public domain with a certificate Caddy obtained."""
+		"""Whether the cluster answers on its public domain over HTTPS."""
 		if self.proxy.wait_until_serving():
 			return True
 
@@ -350,7 +361,11 @@ class ObjectStorageCluster(WorkflowBuilder):
 			"Failed",
 			_(
 				"{0} does not answer over HTTPS. Cargo pointed DNS for {1} at {2}. Set up again once it resolves."
-			).format(self.service_endpoint, ", ".join(self.proxy_domains), self.gateway_node.public_ipv4),
+			).format(
+				self.service_endpoint,
+				", ".join(self.proxy_domains),
+				", ".join(gateway.public_ipv4 for gateway in self.proxy.machines),
+			),
 		)
 		return False
 
@@ -409,6 +424,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Hand the named machines back to Atlas and drop them from this cluster. A machine that
 		joined Garage is drained first, so its data reaches the other nodes before it goes."""
 		joined_machines = can_release_machines(self, machines)
+		self.remove_gateways_from_dns(machines)
 
 		unjoined_machines = []
 		for name in machines:
@@ -419,7 +435,18 @@ class ObjectStorageCluster(WorkflowBuilder):
 			self.terminate_machines(unjoined_machines)
 
 		if joined_machines:
-			self._drain_and_release.run_as_workflow(joined_machines)
+			self._drain_and_release.run_as_pipeline(joined_machines)
+
+	def remove_gateways_from_dns(self, machines: list[str]) -> None:
+		"""Take released gateways out of DNS before they drain, so traffic leaves them first."""
+		if not self.is_live or not any(gateway.name in machines for gateway in self.gateway_nodes):
+			return
+
+		staying = [gateway for gateway in self.proxy.machines if gateway.name not in machines]
+		if not staying:
+			frappe.throw(_("No running gateway would stay in DNS. Start one before releasing these."))
+
+		self.proxy.publish_dns(staying, self.proxy_domains)
 
 	@flow
 	def _drain_and_release(self, machines: list[str]) -> None:
@@ -475,7 +502,7 @@ class ObjectStorageCluster(WorkflowBuilder):
 		"""Roll one machine's metadata back to a snapshot Garage took. It catches up from its
 		peers."""
 		machines = can_restore_metadata(self, snapshot, machine)
-		self._restore_metadata.run_as_workflow(snapshot, machines)
+		self._restore_metadata.run_as_pipeline(snapshot, machines)
 
 	@flow
 	def _restore_metadata(self, snapshot: str, machines: list[str]) -> None:
@@ -524,26 +551,26 @@ class ObjectStorageCluster(WorkflowBuilder):
 				log.write(f"\n=== repairing tables on {name} ===\n")
 				garage.repair_tables(garage.machine(name), on_output=log.write)
 
-	def on_workflow_failure(self, workflow: PressWorkflow) -> None:
+	def on_pipeline_failure(self, pipeline: Pipeline) -> None:
 		"""A failed growth is not retried, and Garage keeps the old capacities until it is fixed.
 		A failed restore stops where it failed, with every swapped database kept beside it."""
-		if workflow.main_method_name == "_grow_storage_disks":
+		if pipeline.main_method_name == "_grow_storage_disks":
 			frappe.log_error(
 				f"Storage disk growth failed on {self.name}",
-				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{workflow.workflow_traceback}",
-				reference_doctype=workflow.doctype,
-				reference_name=workflow.name,
+				message=f"Fix the cause; the next scheduled check grows the disks again.\n\n{pipeline.pipeline_traceback}",
+				reference_doctype=pipeline.doctype,
+				reference_name=pipeline.name,
 			)
 
-		if workflow.main_method_name == "_restore_metadata":
+		if pipeline.main_method_name == "_restore_metadata":
 			frappe.log_error(
 				f"Metadata restore failed on {self.name}",
 				message=(
 					"A machine whose database was swapped keeps the old one as db.lmdb.bak-<time> in "
-					f"its metadata directory. See the Setup Log.\n\n{workflow.workflow_traceback}"
+					f"its metadata directory. See the Setup Log.\n\n{pipeline.pipeline_traceback}"
 				),
-				reference_doctype=workflow.doctype,
-				reference_name=workflow.name,
+				reference_doctype=pipeline.doctype,
+				reference_name=pipeline.name,
 			)
 
 	@flow
@@ -600,9 +627,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 		if not self.is_live:
 			return
 
-		# Gateway machine dead?
-		if self.gateway_node and self.gateway_node.status in DEAD_MACHINE_STATES:
-			self.mark_cluster_status("Failed", _("Gateway machine is dead."))
+		# Every gateway dead? One dead gateway is Degraded, which the health check reports.
+		dead_gateways = [gateway for gateway in self.gateway_nodes if gateway.status in DEAD_MACHINE_STATES]
+		if len(dead_gateways) == len(self.gateway_nodes):
+			self.mark_cluster_status("Failed", _("Every gateway machine is dead."))
 			return
 
 		# Machines less than the replication factor are dead?
@@ -614,6 +642,10 @@ class ObjectStorageCluster(WorkflowBuilder):
 				"Failed", _("Not enough storage nodes are alive to satisfy the replication factor.")
 			)
 			return
+
+		# We will publish the dns routes incase of dead machines.
+		if dead_gateways:
+			self.proxy.publish_dns(self.proxy.machines, self.proxy_domains)
 
 	@property
 	def is_live(self) -> bool:

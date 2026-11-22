@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import frappe
+from cloudtoolkit.ssh.client import read_script, with_environment
 from datum_client.agent import get_install_script, get_role_config
 
 from cargo.client_models import GATEWAY, STORAGE, TELEMETRY
-from cargo.ssh import script, with_environment
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.cargo_settings.cargo_settings import CargoSettings
@@ -55,7 +55,8 @@ def datum_refresh_script() -> str:
 	"""The script that has a machine fetch its own Datum token from this Cargo every day, and ship
 	to this region's Datum host."""
 	settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
-	return script(
+	return read_script(
+		"cargo",
 		"telemetry",
 		"conf",
 		"setup_datum_refresh.sh",

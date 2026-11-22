@@ -74,9 +74,9 @@ class IntegrationTestMetadataBackup(IntegrationTestCase):
 
 		enqueue.assert_not_called()
 
-	def test_no_upload_while_a_workflow_owns_the_cluster(self):
+	def test_no_upload_while_a_pipeline_owns_the_cluster(self):
 		with (
-			patch("cargo.object_storage.metadata_snapshot.get_running_workflow", return_value="WF-0001"),
+			patch("cargo.object_storage.metadata_snapshot.get_running_pipeline", return_value="WF-0001"),
 			patch("frappe.enqueue") as enqueue,
 		):
 			upload_metadata_snapshots()
@@ -194,7 +194,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[0])
 
-		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.storage[0]])
+		restore.run_as_pipeline.assert_called_once_with(SNAPSHOT, [self.storage[0]])
 
 	def test_one_machine_waits_for_its_peers_to_serve(self):
 		with (
@@ -209,8 +209,8 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		asked = []
 
 		def healthy_nodes(garage):
-			asked.append(garage.url)
-			return set(self.storage) if "10.0.0.2" in garage.url else set()
+			asked.append(garage.urls[0])
+			return set(self.storage) if "10.0.0.2" in garage.urls[0] else set()
 
 		with (
 			patch.object(Setup, "healthy_nodes", autospec=True, side_effect=healthy_nodes),
@@ -220,7 +220,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 				SNAPSHOT, self.gateway
 			)
 
-		restore.run_as_workflow.assert_called_once_with(SNAPSHOT, [self.gateway])
+		restore.run_as_pipeline.assert_called_once_with(SNAPSHOT, [self.gateway])
 		self.assertEqual(asked, ["http://10.0.0.2:3903"])
 
 	def test_a_cluster_that_never_served_has_nothing_to_restore(self):
@@ -259,7 +259,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[1])
 
-		restore.run_as_workflow.assert_not_called()
+		restore.run_as_pipeline.assert_not_called()
 
 	def test_the_bucket_is_asked_for_the_machines_own_backup(self):
 		set_encrypted_password(
@@ -303,7 +303,7 @@ class IntegrationTestMetadataRestore(IntegrationTestCase):
 		):
 			self.cluster.restore_metadata_snapshot(SNAPSHOT, self.storage[0])
 
-		restore.run_as_workflow.assert_not_called()
+		restore.run_as_pipeline.assert_not_called()
 
 	def test_tables_are_not_repaired_before_every_node_reconnects(self):
 		with (

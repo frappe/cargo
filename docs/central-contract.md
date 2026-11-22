@@ -5,7 +5,8 @@ Two conversations, each one way.
 **Cargo → Central** is one webhook, and nothing else: a cluster reports whether it can be
 used. Cargo holds no Central credential and calls no Central endpoint.
 
-**Central → Cargo** is bucket work: make a bucket, drop it, add, rotate or remove its keys. Cargo
+**Central → Cargo** is bucket work: make a bucket, drop it, add, rotate or remove its keys, and
+name the websites that may call it from a browser. Cargo
 owns the cluster's admin token, so Central asks rather than acts.
 
 Cargo's side is `cargo/object_storage/api/bucket.py` and the webhook built in
@@ -100,8 +101,9 @@ could sign a token claiming to be Atlas, or the reverse.
 
 A failed check answers the same way whatever failed: `AuthenticationError`, no detail.
 
-Atlas already mints this audience for its own bucket call, with subject `atlas` and a 5-minute
-lifetime. Central does not mint it yet, so no Central call gets past the audience check today.
+Both planes mint this audience. Atlas signs its own bucket call with subject `atlas`, and
+Central signs every bucket call with subject `central` and scope `bucket:*`. Both tokens last
+5 minutes.
 
 It travels in `X-Cargo-Access-Token` rather than `Authorization`, because Frappe rejects an
 unrecognised `Authorization` header with a 401 before the endpoint is reached.
@@ -151,6 +153,27 @@ the bucket.
 
 Takes `access_key`. Deletes that key and returns `name`, `region` and `access_key`. The
 bucket, its objects and its other keys stay. Cargo refuses to remove a bucket's last key.
+
+### `set_allowed_origins`
+
+Takes `origins`, a list. Replaces the websites that may call the bucket from a browser with
+presigned URLs, and returns them as Cargo stored them:
+
+```json
+{"name": "acme-backups", "region": "blr", "allowed_origins": ["https://files.example.com"]}
+```
+
+An origin is `scheme://host` or `scheme://host:port`, with `http` or `https`. Cargo writes it as
+a browser sends it, so `HTTPS://Files.Example.com:443/` comes back as
+`https://files.example.com`, and a repeat is dropped. A path, a query, a user name or a wildcard
+is refused, and so is the whole call: nothing changes. An empty list removes every website.
+
+The Central dashboard's origin is always allowed and never listed. Cargo refuses the call while
+the cluster runs a Garage older than v2.3.0, which would ignore the origins.
+
+### `get_allowed_origins`
+
+Returns the same shape as `set_allowed_origins`.
 
 ## Who holds which key
 

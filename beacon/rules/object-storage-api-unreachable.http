@@ -1,4 +1,5 @@
 -- title: Object storage API unreachable
+-- description: The S3 API did not answer with 403 for 3 minutes. Customers cannot upload or download files.
 -- severity: High
 -- url: https://s3-svc.{wildcard_domain}/beacon-probe/
 -- region: all

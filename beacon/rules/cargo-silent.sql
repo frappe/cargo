@@ -1,18 +1,20 @@
--- title: Cargo silent
+-- title: Cargo stopped reporting
+-- description: Cargo sent no metrics for 3 hours. Its image builds and reports have stopped.
 -- severity: Medium
 -- resource_type: Cargo Server
 -- interval: 900
 -- pending_for: 900
 -- resolve_after: 1800
--- Cargo sends its image build metrics every hour. No sample for 3 hours means its scheduler, its Datum token or Cargo itself stopped.
+-- Cargo sends cargo_machine every minute and other cargo_ metrics on its own schedules. No Cargo sample for 3 hours means its scheduler, its Datum token or Cargo itself stopped.
+-- Image metrics alone are not enough: Cargo sends them only while it tracks Pilot releases.
 -- No sample in 14 days also counts as silent. A region without an active Cargo has no cargo resource, so Beacon drops the row.
 -- The subquery keeps the source resource_id apart from the output alias.
 SELECT 'cargo' AS resource_id, '' AS alert_key, if(samples = 0, toFloat64(14 * 86400), toFloat64(age)) AS value,
-       if(samples = 0, 'no Cargo metrics in 14 days', concat('no Cargo metrics for ', toString(round(age / 3600, 1)), ' h')) AS detail
+       if(samples = 0, 'no Cargo metrics in 14 days', concat('no Cargo metrics for ', toString(round(age / 3600, 1)), ' h (limit 3 h)')) AS detail
 FROM (
     SELECT count() AS samples, dateDiff('second', max(ts), now()) AS age
     FROM datum.samples
-    WHERE metric LIKE 'cargo_pilot_image_%' AND ts > now() - INTERVAL 14 DAY
+    WHERE startsWith(metric, 'cargo_') AND ts > now() - INTERVAL 14 DAY
       AND resource_id = 'cargo'
 )
 WHERE age > 3 * 3600

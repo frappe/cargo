@@ -11,6 +11,7 @@ dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
     "boto3~=1.35",  # S3 uploads: Garage's admin API moves no object bytes.
     "datum @ git+https://github.com/frappe/datum@main",
+    "atlas-client @ git+https://github.com/frappe/atlas.git@75107bbb39d88fb85387dd7898104fa00497e64c#subdirectory=clients/atlas-client",
 ]
 
 [build-system]
@@ -64,11 +65,6 @@ ignore = [
 ]
 typing-modules = ["frappe.types.DF"]
 
-[tool.ruff.lint.per-file-ignores]
-# Vendored from frappe/press (AGPL-3.0). Kept byte-comparable with upstream so future
-# diffs stay clean, so its lint config is honoured rather than ours.
-"cargo/workflow_engine/**" = ["RUF100", "UP046", "UP047", "I001"]
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "tab"
@@ -77,3 +73,4 @@ docstring-code-format = true
 
 [tool.bench.frappe-dependencies]
 frappe = ">=16.0.0,<18.0.0"
+cloudtoolkit = ">=0.0.1"

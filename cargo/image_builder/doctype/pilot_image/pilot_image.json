@@ -208,8 +208,8 @@
    "link_fieldname": "reference_name"
   },
   {
-   "group": "Workflows",
-   "link_doctype": "Press Workflow",
+   "group": "Pipelines",
+   "link_doctype": "Pipeline",
    "link_fieldname": "linked_docname"
   }
  ],

@@ -1,9 +1,12 @@
 [pre_model_sync]
 # Patches added in this section will be executed before doctypes are migrated
 # Read docs to understand patches: https://frappeframework.com/docs/v14/user/en/database-migrations
+cargo.patches.install_cloudtoolkit
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 cargo.patches.reconfigure_gateway_cors
 cargo.patches.protect_service_machines
 cargo.patches.create_signing_key
+cargo.patches.remove_workflow_engine
+cargo.patches.apply_bucket_cors_rules

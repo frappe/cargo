@@ -1,4 +1,5 @@
 -- title: Telemetry certificate expiring
+-- description: The certificate for the telemetry endpoint expires in under 14 days. Machines cannot send telemetry.
 -- severity: Medium
 -- host: telemetry-svc.{wildcard_domain}
 -- region: all
@@ -7,4 +8,4 @@
 -- pending_for: 900
 -- resolve_after: 1800
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/service-certificate.md
--- Beacon reads the certificate that Caddy serves. Every machine of the region sends its telemetry to this name.
+-- Beacon reads the certificate that nginx serves. Every machine of the region sends its telemetry to this name.

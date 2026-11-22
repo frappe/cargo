@@ -6,6 +6,8 @@ import frappe
 from frappe import _
 
 from cargo.client_models import GATEWAY, STORAGE
+from cargo.object_storage import cors
+from cargo.object_storage.client import Error
 from cargo.object_storage.doctype.object_storage_cluster.setup import Setup
 
 if typing.TYPE_CHECKING:
@@ -25,25 +27,37 @@ CLUSTER_SECRETS = ("rpc_secret", "admin_token", "metrics_token")
 
 def can_add_gateway_node(cluster: ObjectStorageCluster) -> None:
 	"""Whether this cluster can add a gateway node."""
-	if cluster.gateway_node:
-		frappe.throw(_("This cluster already has a gateway node."))
+	if cluster.status == "Setting Up":
+		frappe.throw(_("Cannot add gateway node to a cluster that is setting up."))
 
 
 def can_add_storage_node(cluster: ObjectStorageCluster) -> None:
-	"""Whether this cluster can add a storage node."""
+	"""Whether this cluster can add a storage node. The first machine must be the gateway."""
 	if cluster.status == "Setting Up":
 		frappe.throw(_("Cannot add storage node to a cluster that is setting up."))
+
+	if not cluster.gateway_nodes:
+		frappe.throw(_("Add a gateway node before any storage node."))
 
 
 def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 	"""Throw unless every machine is Running and storage nodes cover the replication factor."""
 	ensure_no_other_cluster_serving_or_setting_up(cluster)
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 
-	if not cluster.gateway_node or cluster.gateway_node.status != "Running":
+	if not cluster.gateway_nodes:
 		frappe.throw(_("This cluster needs a running gateway node before it can be set up."))
 
-	ensure_gateway_is_public(cluster)
+	stopped_gateways = [gateway.name for gateway in cluster.gateway_nodes if gateway.status != "Running"]
+	if stopped_gateways:
+		frappe.throw(
+			_("Gateways {0} are not running. All must be running to set up.").format(
+				", ".join(stopped_gateways)
+			)
+		)
+
+	ensure_gateways_are_public(cluster)
+	ensure_garage_takes_bucket_cors(cluster)
 
 	running_storage_nodes = [node for node in cluster.storage_nodes if node.status == "Running"]
 	if len(running_storage_nodes) != len(cluster.storage_nodes):
@@ -61,14 +75,26 @@ def can_trigger_setup(cluster: ObjectStorageCluster) -> None:
 		)
 
 
-def ensure_gateway_is_public(cluster: ObjectStorageCluster) -> None:
-	"""Refuse setup before it changes anything, so a live gateway without one stays Active."""
-	if not cluster.gateway_node.public_ipv4:
-		frappe.throw(
-			_("Gateway {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
-				cluster.gateway_node.name
+def ensure_gateways_are_public(cluster: ObjectStorageCluster) -> None:
+	"""Refuse setup before it changes anything, so a live cluster with a gateway that has no
+	public IPv4 stays Active."""
+	for gateway in cluster.gateway_nodes:
+		if not gateway.public_ipv4:
+			frappe.throw(
+				_("Gateway {0} has no public IPv4 address yet. Wait for Atlas to attach one.").format(
+					gateway.name
+				)
 			)
-		)
+
+
+def ensure_garage_takes_bucket_cors(cluster: ObjectStorageCluster) -> None:
+	"""Refuse setup before it changes anything, so a live cluster on an older Garage stays
+	Active: setup's nginx leaves CORS to Garage, and an older Garage ignores it."""
+	try:
+		cors.require_support(cluster.garage_setup)
+	except Error:
+		# Nothing answers yet: setup installs the cluster's Garage Version and checks again.
+		return
 
 
 def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> list[str]:
@@ -78,12 +104,12 @@ def can_release_machines(cluster: ObjectStorageCluster, machines: list[str]) -> 
 	if cluster.status == "Setting Up":
 		frappe.throw(_("Cannot release machines from a cluster that is setting up."))
 
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 	ensure_machines_belong(cluster, machines)
 
+	ensure_gateway_stays(cluster, machines)
 	joined = get_joined_machines(cluster)
 	joined_machines = [name for name in machines if name in joined]
-	ensure_gateway_stays(cluster, machines, joined)
 	ensure_enough_storage_nodes_stay(cluster, joined_machines, joined)
 
 	if joined and cluster.garage_setup.is_draining():
@@ -100,7 +126,7 @@ def can_restore_metadata(cluster: ObjectStorageCluster, snapshot: str, machine: 
 	if not cluster.is_live:
 		frappe.throw(_("Only a cluster that has served has metadata to restore."))
 
-	ensure_no_running_workflow(cluster)
+	ensure_no_running_pipeline(cluster)
 	ensure_machines_belong(cluster, [machine])
 	ensure_peers_serve(cluster, machine)
 	ensure_snapshot_is_backed_up(cluster, snapshot, [machine])
@@ -124,7 +150,7 @@ def ensure_peers_serve(cluster: ObjectStorageCluster, machine: str) -> None:
 		frappe.throw(_("{0} is not running.").format(machine))
 
 	garage = cluster.garage_setup
-	if cluster.gateway_node and cluster.gateway_node.name == machine:
+	if machine in {gateway.name for gateway in cluster.gateway_nodes}:
 		witness = next((node for node in cluster.storage_nodes if node.status == "Running"), None)
 		if not witness:
 			frappe.throw(_("No running storage node can say whether the others serve."))
@@ -152,7 +178,7 @@ def ensure_machines_belong(cluster: ObjectStorageCluster, machines: list[str]) -
 
 def get_joined_machines(cluster: ObjectStorageCluster) -> set[str]:
 	"""Return the machines Garage reports as healthy and joined."""
-	if not cluster.gateway_node or not all(
+	if not cluster.gateway_nodes or not all(
 		cluster.get_password(name, raise_exception=False) for name in CLUSTER_SECRETS
 	):
 		return set()
@@ -164,14 +190,10 @@ def get_joined_machines(cluster: ObjectStorageCluster) -> set[str]:
 	return joined
 
 
-def ensure_gateway_stays(cluster: ObjectStorageCluster, machines: list[str], joined: set[str]) -> None:
-	"""Keep the gateway after the cluster has served or the gateway has joined."""
-	for row in cluster.machines:
-		if row.role != GATEWAY or row.machine not in machines:
-			continue
-
-		if cluster.is_live or row.machine in joined:
-			frappe.throw(_("Cannot release the gateway machine of this cluster."))
+def ensure_gateway_stays(cluster: ObjectStorageCluster, machines: list[str]) -> None:
+	"""The last gateway is never released, so a cluster always keeps one."""
+	if cluster.gateway_nodes and all(gateway.name in machines for gateway in cluster.gateway_nodes):
+		frappe.throw(_("Cannot release the last gateway machine of this cluster."))
 
 
 def ensure_enough_storage_nodes_stay(
@@ -194,9 +216,9 @@ def ensure_enough_storage_nodes_stay(
 		)
 
 
-def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
+def get_running_pipeline(cluster: ObjectStorageCluster) -> str | None:
 	return frappe.db.exists(
-		"Press Workflow",
+		"Pipeline",
 		{
 			"linked_doctype": cluster.doctype,
 			"linked_docname": cluster.name,
@@ -205,10 +227,10 @@ def get_running_workflow(cluster: ObjectStorageCluster) -> str | None:
 	)
 
 
-def ensure_no_running_workflow(cluster: ObjectStorageCluster) -> None:
-	"""Keep layout changes out of an active setup or drain workflow."""
-	if running_workflow := get_running_workflow(cluster):
-		frappe.throw(_("Workflow {0} is still running on this cluster.").format(running_workflow))
+def ensure_no_running_pipeline(cluster: ObjectStorageCluster) -> None:
+	"""Keep layout changes out of an active setup or drain pipeline."""
+	if running_pipeline := get_running_pipeline(cluster):
+		frappe.throw(_("Pipeline {0} is still running on this cluster.").format(running_pipeline))
 
 
 def ensure_no_other_active_cluster(cluster: ObjectStorageCluster) -> None:

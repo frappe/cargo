@@ -4,46 +4,24 @@ on:
   push:
     branches:
       - develop
+      - master
   pull_request:
 
 concurrency:
-  group: develop-cargo-${{ github.event.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   tests:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
     name: Server
-
-    services:
-      redis-cache:
-        image: redis:alpine
-        ports:
-          - 13000:6379
-      redis-queue:
-        image: redis:alpine
-        ports:
-          - 11000:6379
-      mariadb:
-        image: mariadb:11.8
-        env:
-          MYSQL_ROOT_PASSWORD: root
-        ports:
-          - 3306:3306
-        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
 
     steps:
       - name: Clone
         uses: actions/checkout@v6
 
-      - name: Find tests
-        run: |
-          echo "Finding tests"
-          grep -rn "def test" > /dev/null
-
       - name: Setup Python
+        id: python
         uses: actions/setup-python@v6
         with:
           python-version: '3.14'
@@ -54,13 +32,16 @@ jobs:
           node-version: 24
           check-latest: true
 
-      - name: Cache pip
+      # Pilot installs the Python requirements with uv.
+      - name: Cache Python packages
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/uv
+          key: ${{ runner.os }}-python-${{ hashFiles('**/*requirements.txt', '**/pyproject.toml', '**/setup.py', '**/setup.cfg') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-python-
             ${{ runner.os }}-
 
       - name: Get yarn cache directory path
@@ -75,31 +56,71 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-yarn-
 
-      - name: Install MariaDB Client
-        run: |
-          sudo apt update
-          sudo apt-get install mariadb-client
+      # The bench and a test site with only Frappe. The key is fixed, so Frappe
+      # stays at the cached commit. Delete the cache to get a new Frappe commit.
+      - name: Restore the Pilot bench
+        id: pilot-bench
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/pilot/benches
+            ~/pilot/databases
+            ~/.config/systemd/user
+          # The bench venv links to the runner Python, so a new patch release needs a new bench.
+          key: ${{ runner.os }}-pilot-bench-v1-python-${{ steps.python.outputs.python-version }}
 
-      - name: Setup
+      - name: Set up Pilot
         run: |
-          pip install frappe-bench
-          bench init --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+          curl -fsSL https://raw.githubusercontent.com/frappe/pilot/develop/install.sh | sh
+          export PATH="$HOME/pilot/bin:$HOME/.local/bin:$PATH"
+          printf '%s\n' "$HOME/pilot/bin" "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          [ -d "$HOME/pilot/benches/frappe-bench" ] || pilot new frappe-bench --frappe-branch develop
+          pilot -b frappe-bench init
 
-      - name: Install
-        working-directory: /home/runner/frappe-bench
+      - name: Start Pilot
+        id: start-pilot
         run: |
-          bench get-app cargo $GITHUB_WORKSPACE
-          bench setup requirements --dev
-          bench new-site --db-root-password root --admin-password admin test_site
-          bench --site test_site install-app cargo
-          bench build
-        env:
-          CI: 'Yes'
+          pilot -b frappe-bench start > "$RUNNER_TEMP/pilot.log" 2>&1 &
+          curl --fail --silent --show-error --retry 30 --retry-connrefused --retry-delay 1 \
+            http://127.0.0.1:7000/api/v1/health
+
+      # MariaDB stops so that the cache gets a consistent data directory.
+      - name: Create the test site
+        if: steps.pilot-bench.outputs.cache-hit != 'true'
+        working-directory: /home/runner/pilot/benches/frappe-bench
+        run: |
+          pilot new-site test_site --admin-password admin --apps frappe --skip-assets
+          systemctl --user stop pilot-mariadb.service
+
+      - name: Save the Pilot bench
+        if: steps.pilot-bench.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/pilot/benches
+            ~/pilot/databases
+            ~/.config/systemd/user
+          key: ${{ steps.pilot-bench.outputs.cache-primary-key }}
+
+      # Pilot resolves dependencies only for marketplace apps, so cloudtoolkit is fetched by hand.
+      - name: Install the app
+        working-directory: /home/runner/pilot/benches/frappe-bench
+        run: |
+          systemctl --user start pilot-mariadb.service
+          uv pip install --python env/bin/python -e "apps/frappe[test]"
+          pilot get-app https://github.com/frappe/cloudtoolkit --skip-assets
+          pilot get-app "$GITHUB_WORKSPACE" --branch "$GITHUB_SHA" --skip-assets
+          pilot install-app test_site cloudtoolkit cargo
 
       - name: Run Tests
-        working-directory: /home/runner/frappe-bench
+        working-directory: /home/runner/pilot/benches/frappe-bench
         run: |
-          bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app cargo
+          pilot frappe --site test_site set-config allow_tests true
+          pilot frappe --site test_site run-tests --app cargo
         env:
           TYPE: server
+
+      - name: Show the Pilot log
+        if: failure() && steps.start-pilot.outcome == 'success'
+        run: cat "$RUNNER_TEMP/pilot.log"

@@ -5,6 +5,7 @@ from functools import cached_property
 from typing import Any
 
 import requests
+from urllib3.exceptions import ConnectTimeoutError
 
 from cargo.atlas_client import host_port
 
@@ -19,7 +20,7 @@ READ_WRITE = {"read": True, "write": True, "owner": False}
 
 class Error(RuntimeError):
 	"""A Garage Admin API call failed. One argument, so it survives a pickle round trip:
-	that is how the workflow engine carries an exception back to the flow that raised it."""
+	that is how the pipeline engine carries an exception back to the flow that raised it."""
 
 
 class Client:
@@ -29,32 +30,42 @@ class Client:
 	timeout: float = 30
 
 	def __init__(self, cluster: ObjectStorageCluster, address: str | None = None) -> None:
-		"""`address` asks that one node instead of the gateway."""
+		"""`address` asks that one node instead of the gateways."""
 		self.cluster = cluster
 		self.address = address
 
 	@cached_property
-	def url(self) -> str:
-		"""Every node serves the same API, so the gateway answers for the cluster. Over the
+	def urls(self) -> list[str]:
+		"""Every node serves the same API, so any gateway answers for the cluster. Over the
 		mesh: the admin API is never put behind the public proxy."""
-		address = self.address or self.cluster.gateway_address
-		return f"http://{host_port(address, self.cluster.admin_port)}"
+		addresses = [self.address] if self.address else self.cluster.gateway_addresses
+		return [f"http://{host_port(address, self.cluster.admin_port)}" for address in addresses]
 
 	@cached_property
 	def headers(self) -> dict[str, str]:
 		return {"Authorization": f"Bearer {self.cluster.get_password('admin_token')}"}
 
 	def call(self, endpoint: str, method: str = "GET", **kwargs: Any) -> Any:
-		try:
-			response = requests.request(
-				method,
-				f"{self.url}{API_PREFIX}{endpoint}",
-				headers=self.headers,
-				timeout=self.timeout,
-				**kwargs,
-			)
-		except requests.RequestException as exception:
-			raise Error(f"{endpoint}: {exception}") from exception
+		"""The next gateway is asked only when one could not be connected to, so a call that
+		reached Garage is never sent twice."""
+		for url in self.urls:
+			try:
+				response = requests.request(
+					method,
+					f"{url}{API_PREFIX}{endpoint}",
+					headers=self.headers,
+					timeout=self.timeout,
+					**kwargs,
+				)
+				break
+			except requests.ConnectionError as exception:
+				if not is_never_connected(exception):
+					raise Error(f"{endpoint}: {exception}") from exception
+				error = exception
+			except requests.RequestException as exception:
+				raise Error(f"{endpoint}: {exception}") from exception
+		else:
+			raise Error(f"{endpoint}: {error}") from error
 
 		if response.status_code == 404:
 			return None
@@ -146,3 +157,14 @@ class Client:
 			params={"id": bucket_id},
 			json={"quotas": {"maxSize": max_size_bytes, "maxObjects": max_objects}},
 		)
+
+	def set_bucket_cors_rules(self, bucket_id: str, rules: list[dict[str, Any]]) -> None:
+		"""Replace the bucket's CORS rules. Needs no owner key, unlike S3's PutBucketCors."""
+		self.call("UpdateBucket", "POST", params={"id": bucket_id}, json={"corsRules": rules})
+
+
+def is_never_connected(exception: requests.ConnectionError) -> bool:
+	"""Whether the connection was refused or timed out, so Garage never saw the request.
+	urllib3's `NewConnectionError` is a `ConnectTimeoutError` too."""
+	reason = getattr(exception.args[0], "reason", None) if exception.args else None
+	return isinstance(reason, ConnectTimeoutError)

@@ -29,6 +29,7 @@ LOCK_NAME = "object-storage-spawn"
 # Setting up again rents no machine, so a transient fault is worth another run. A broken
 # gateway is not, and three runs is where saying so beats trying again.
 MAX_SETUP_ATTEMPTS = 3
+DEFAULT_GATEWAY_NODE_COUNT = 1
 
 
 def ensure_cluster() -> None:
@@ -76,6 +77,10 @@ def validate_config(config: dict) -> None:
 		if not isinstance(config.get(count), int) or config[count] < 1:
 			frappe.throw(_("{0} must be a whole number of at least 1.").format(count))
 
+	gateways = config.get("gateway_node_count", DEFAULT_GATEWAY_NODE_COUNT)
+	if not isinstance(gateways, int) or gateways < 1:
+		frappe.throw(_("{0} must be a whole number of at least 1.").format("gateway_node_count"))
+
 	# A cluster needs a full copy's worth of storage nodes before it can be set up. Fewer and
 	# the machines would be rented, and every setup run would then refuse them.
 	if config["storage_node_count"] < config["replication_factor"]:
@@ -107,7 +112,7 @@ def create_cluster(config: dict) -> ObjectStorageCluster:
 def missing_slots(cluster: ObjectStorageCluster, config: dict) -> list[Role]:
 	"""What this cluster still needs, gateway first: every other node joins through it."""
 	alive = [row.role for row in cluster.machines if machine_status(row.machine) not in DEAD_MACHINE_STATES]
-	gateways = 1 - alive.count(GATEWAY)
+	gateways = config.get("gateway_node_count", DEFAULT_GATEWAY_NODE_COUNT) - alive.count(GATEWAY)
 	storage = config["storage_node_count"] - alive.count(STORAGE)
 
 	return [GATEWAY] * max(gateways, 0) + [STORAGE] * max(storage, 0)

@@ -6,6 +6,9 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
+from cargo.image_builder.doctype.pilot_image.apps import get_signup_apps
+from cargo.image_builder.doctype.pilot_image.pilot_image import get_frappe_branches, is_tracking_releases
+
 INGEST_PATH = "/v1/ingest"
 SHIP_TIMEOUT = 30
 PREFIX = "cargo_pilot_image_"
@@ -51,10 +54,19 @@ class Telemetry:
 
 	def get_latest_builds(self, image_type: str) -> list[dict]:
 		"""The newest build of `image_type` per Frappe branch, and per signup app for Apps
-		images. Builds come newest first, so the first one seen for a branch is its latest."""
+		images. Only what Cargo Settings lists counts: Cargo builds nothing else again.
+		Builds come newest first, so the first one seen for a branch is its latest."""
+		filters = {
+			"image_type": image_type,
+			"status": ("!=", "Retired"),
+			"frappe_branch": ("in", get_frappe_branches()),
+		}
+		if image_type == "Apps":
+			filters["signup_app"] = ("in", get_signup_apps())
+
 		builds = frappe.get_all(
 			"Pilot Image",
-			filters={"image_type": image_type, "status": ("!=", "Retired")},
+			filters=filters,
 			fields=BUILD_FIELDS,
 			order_by="creation desc",
 		)
@@ -129,7 +141,11 @@ class Telemetry:
 
 	def get_newest_completed_samples(self) -> list[dict]:
 		"""How old the newest usable image is. A growing age says building has stopped,
-		which no failure ever reports."""
+		which no failure ever reports. Without release tracking nothing builds on its own,
+		so no age is sent."""
+		if not is_tracking_releases():
+			return []
+
 		samples = []
 		for build in self.get_newest_completed_builds():
 			if not build.built_at:

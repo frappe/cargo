@@ -1,4 +1,5 @@
 -- title: Telemetry read certificate expiring
+-- description: The certificate for the telemetry read endpoint expires in under 14 days. Beacon cannot read the region.
 -- severity: Medium
 -- host: telemetry-read-svc.{wildcard_domain}
 -- region: all
@@ -7,4 +8,4 @@
 -- pending_for: 900
 -- resolve_after: 1800
 -- runbook_url: https://github.com/frappe/cargo/blob/develop/beacon/runbooks/service-certificate.md
--- Beacon reads the certificate that Caddy serves. Beacon reads the ClickHouse of the region on this name. When it expires, the region is Unreachable and no rule runs.
+-- Beacon reads the certificate that nginx serves. Beacon reads the ClickHouse of the region on this name. When it expires, the region is Unreachable and no rule runs.

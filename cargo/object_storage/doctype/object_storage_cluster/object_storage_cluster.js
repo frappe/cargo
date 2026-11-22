@@ -57,21 +57,20 @@ function set_headline(frm) {
 function add_machine_buttons(frm) {
 	if (frm.doc.status === "Setting Up") return;
 
-	const machines = frm.doc.machines || [];
-	if (!machines.some((row) => row.role === "gateway")) {
-		frm.add_custom_button(
-			__("Gateway Node"),
-			() =>
-				ask_for_machine(
-					frm,
-					"add_gateway_node",
-					__("Add Gateway Node"),
-					__("Every S3 request reaches the cluster through this one machine."),
-					20
+	frm.add_custom_button(
+		__("Gateway Node"),
+		() =>
+			ask_for_machine(
+				frm,
+				"add_gateway_node",
+				__("Add Gateway Node"),
+				__(
+					"S3 requests reach the cluster through its gateways. Set up again to serve from it."
 				),
-			__("Add")
-		);
-	}
+				20
+			),
+		__("Add")
+	);
 
 	frm.add_custom_button(
 		__("Storage Node"),
@@ -121,7 +120,9 @@ function add_cluster_buttons(frm) {
 function add_dns_button(frm) {
 	frm.add_custom_button(__("Update DNS Records"), () => {
 		frappe.confirm(
-			__("Point s3-svc and s3-admin-svc and their internal- names at the gateway again?"),
+			__(
+				"Point s3-svc and s3-admin-svc and their internal- names at the first gateway again?"
+			),
 			() =>
 				frm.call("update_dns_records").then(() =>
 					frappe.show_alert({
@@ -344,7 +345,7 @@ function follow_setup_log(frm) {
 	}
 
 	frappe
-		.xcall("cargo.ssh.get_live_output", {
+		.xcall("cloudtoolkit.ssh.output_log.get_live_output", {
 			doctype: frm.doctype,
 			name: frm.doc.name,
 			fieldname: "setup_log",

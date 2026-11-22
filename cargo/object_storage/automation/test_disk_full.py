@@ -10,10 +10,8 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 from cargo.client_models import GATEWAY, STORAGE
 from cargo.object_storage.automation.disk_full import (
 	DiskAtMaxCapacityError,
-	Extention,
 	GrowStorageNodeDisks,
 	Sample,
-	add_storage_node,
 	predict_linear,
 )
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
@@ -67,6 +65,7 @@ class GrowStorageDisksTestCase(IntegrationTestCase):
 				"role": role,
 				"disk_size_gb": disk_gb,
 				"vm_id": f"vm-{role}-{frappe.generate_hash(length=8)}",
+				"address": f"fdaa:1::{frappe.generate_hash(length=4)}",
 				"status": "Running",
 			}
 		).insert()
@@ -227,9 +226,9 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 		):
 			self.grower.grow()
 
-		return grow.run_as_workflow.call_args.args[0] if grow.run_as_workflow.called else None
+		return grow.run_as_pipeline.call_args.args[0] if grow.run_as_pipeline.called else None
 
-	def test_the_first_growth_starts_the_workflow(self):
+	def test_the_first_growth_starts_the_pipeline(self):
 		self.assertEqual(self.grown_to(), 150)
 
 	def test_an_older_growth_lets_the_next_through(self):
@@ -265,21 +264,21 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 		with self.assertRaises(DiskAtMaxCapacityError):
 			self.grown_to()
 
-	def running_workflow(self):
+	def running_pipeline(self):
 		return patch(
-			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
-			return_value="workflow-1",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_pipeline",
+			return_value="pipeline-1",
 		)
 
-	def test_a_running_workflow_holds_off_the_growth(self):
-		with self.running_workflow(), self.assertRaisesRegex(frappe.ValidationError, "still running"):
+	def test_a_running_pipeline_holds_off_the_growth(self):
+		with self.running_pipeline(), self.assertRaisesRegex(frappe.ValidationError, "still running"):
 			self.grown_to()
 
-	def test_a_running_workflow_holds_off_adding_a_node(self):
+	def test_a_running_pipeline_holds_off_adding_a_node(self):
 		self.set_disks(500)
 
 		with (
-			self.running_workflow(),
+			self.running_pipeline(),
 			self.assertRaisesRegex(frappe.ValidationError, "still running") as raised,
 		):
 			self.grown_to()
@@ -288,7 +287,7 @@ class IntegrationTestGrow(GrowStorageDisksTestCase):
 
 
 class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
-	"""The workflow `grow_disks` starts: Atlas, then the filesystems, then Garage's layout."""
+	"""The pipeline `grow_disks` starts: Atlas, then the filesystems, then Garage's layout."""
 
 	def cluster_doc(self) -> ObjectStorageCluster:
 		return frappe.get_doc("Object Storage Cluster", self.cluster.name)
@@ -325,12 +324,12 @@ class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "disk_size_gb"), 150)
 
 	def test_only_storage_filesystems_are_grown(self):
-		with patch("cargo.object_storage.doctype.object_storage_cluster.setup.run_over_ssh") as ssh:
+		with patch("cloudtoolkit.ssh.client.SSHClient.run") as ssh:
 			self.cluster_doc().grow_storage_filesystems()
 
 		self.assertEqual(ssh.call_count, 2)
-		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[1])
-		self.assertIn("resize2fs", ssh.call_args.args[1])
+		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[0])
+		self.assertIn("resize2fs", ssh.call_args.args[0])
 
 	def test_only_a_changed_capacity_is_staged_and_applied(self):
 		frappe.db.set_value("Machine", self.storage[0], "disk_size_gb", 150)
@@ -375,44 +374,39 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 		with (
 			patch.object(GrowStorageNodeDisks, "get_samples", return_value=samples),
 			patch.object(GrowStorageNodeDisks, "grow", side_effect=grow_error) as grow,
-			patch("cargo.object_storage.automation.disk_full.add_storage_node") as add_node,
 			patch.object(Setup, "get_connected_nodes", return_value=connected),
 			patch.object(ObjectStorageCluster, "setup") as setup,
 		):
 			increase_disk_size_if_required()
 
 		self.setup = setup
-		return grow, add_node
+		return grow
 
-	def test_a_running_workflow_does_nothing(self):
+	def test_a_running_pipeline_does_nothing(self):
 		with patch(
-			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_workflow",
-			return_value="workflow-1",
+			"cargo.object_storage.doctype.object_storage_cluster.utils.get_running_pipeline",
+			return_value="pipeline-1",
 		):
-			grow, add_node = self.run_job([self.usage(used_gb=85)])
+			grow = self.run_job([self.usage(used_gb=85)])
 
 		grow.assert_not_called()
-		add_node.assert_not_called()
 
 	def test_a_booting_storage_node_is_waited_for(self):
 		frappe.db.set_value("Machine", self.storage[0], "status", "Pending")
 
-		grow, _ = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
+		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
 
 		grow.assert_not_called()
 		self.setup.assert_not_called()
 
 	def test_an_unreadable_gateway_does_not_trigger_setup(self):
-		grow, add_node = self.run_job(
-			[self.usage(used_gb=85)], connected=ConnectedNodes(peers=[], machines=set())
-		)
+		grow = self.run_job([self.usage(used_gb=85)], connected=ConnectedNodes(peers=[], machines=set()))
 
 		self.setup.assert_not_called()
 		grow.assert_not_called()
-		add_node.assert_not_called()
 
 	def test_a_booted_node_that_has_not_joined_is_set_up(self):
-		grow, _ = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
+		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
 
 		self.setup.assert_called_once()
 		grow.assert_not_called()
@@ -420,47 +414,32 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 	def test_a_stopped_node_does_not_trigger_setup(self):
 		frappe.db.set_value("Machine", self.storage[0], "status", "Stopped")
 
-		grow, _ = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
+		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
 
 		self.setup.assert_not_called()
 		grow.assert_called_once()
 
 	def test_no_active_cluster_does_nothing(self):
 		frappe.db.set_value("Object Storage Cluster", {"status": "Active"}, "status", "Failed")
-		grow, add_node = self.run_job([self.usage(used_gb=85)])
+		grow = self.run_job([self.usage(used_gb=85)])
 
 		grow.assert_not_called()
-		add_node.assert_not_called()
 
 	def test_no_samples_yet_does_nothing(self):
-		grow, add_node = self.run_job([])
+		grow = self.run_job([])
 
 		grow.assert_not_called()
-		add_node.assert_not_called()
 
 	def test_a_disk_with_room_is_left_alone(self):
-		grow, _ = self.run_job([self.usage(used_gb=50)])
+		grow = self.run_job([self.usage(used_gb=50)])
 
 		grow.assert_not_called()
 
 	def test_a_disk_under_the_degraded_free_space_is_grown(self):
-		grow, _ = self.run_job([self.usage(used_gb=85)])
+		grow = self.run_job([self.usage(used_gb=85)])
 
 		grow.assert_called_once()
 
-	def test_a_disk_at_the_maximum_adds_a_node(self):
-		_, add_node = self.run_job([self.usage(used_gb=85)], grow_error=DiskAtMaxCapacityError("at max"))
-
-		add_node.assert_called_once()
-
-
-class IntegrationTestAddStorageNode(GrowStorageDisksTestCase):
-	def test_a_new_node_is_left_to_boot_before_setup(self):
-		with (
-			patch.object(ObjectStorageCluster, "add_storage_node") as add,
-			patch.object(ObjectStorageCluster, "setup") as setup,
-		):
-			add_storage_node(frappe.get_doc("Object Storage Cluster", self.cluster.name))
-
-		add.assert_called_once()
-		setup.assert_not_called()
+	def test_a_disk_at_the_maximum_raises_instead_of_adding_a_node(self):
+		with self.assertRaises(DiskAtMaxCapacityError):
+			self.run_job([self.usage(used_gb=85)], grow_error=DiskAtMaxCapacityError("at max"))

@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 
 from cargo.atlas_client import host_port
-from cargo.caddy import Caddy, answers, require_public
+from cargo.nginx import Nginx, answers, require_public
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -18,11 +18,12 @@ TELEMETRY_READ_SITE_NAME = "telemetry-read-svc"
 LOOPBACK = "127.0.0.1"
 
 
-class Proxy(Caddy):
-	"""Caddy on the datum host: public TLS for its domains, routed to datum and ClickHouse on
+class Proxy(Nginx):
+	"""nginx on the datum host: public TLS for its domains, routed to datum and ClickHouse on
 	loopback, which is all either listens on."""
 
-	caddyfile = ("telemetry", "conf", "caddy", "Caddyfile")
+	name = "telemetry"
+	template = ("telemetry", "conf", "nginx", "telemetry.conf")
 
 	def __init__(self, server: DatumServer) -> None:
 		self.server = server
@@ -33,15 +34,18 @@ class Proxy(Caddy):
 		return require_public(machine, _("datum host"))
 
 	@property
+	def machines(self) -> list[Machine]:
+		return [self.machine]
+
+	@property
 	def domains(self) -> tuple[str, ...]:
 		return self.server.proxy_domains
 
-	@property
-	def environment(self) -> dict[str, str]:
+	def get_context(self, machine: Machine) -> dict[str, str]:
 		return {
-			"WILDCARD_DOMAIN": self.server.wildcard_domain,
-			"DATUM_UPSTREAM": host_port(LOOPBACK, DATUM_PORT),
-			"CLICKHOUSE_UPSTREAM": host_port(LOOPBACK, self.server.clickhouse_port),
+			"domain": self.server.wildcard_domain,
+			"datum_upstream": host_port(LOOPBACK, DATUM_PORT),
+			"clickhouse_upstream": host_port(LOOPBACK, self.server.clickhouse_port),
 		}
 
 	@property

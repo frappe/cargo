@@ -1,6 +1,8 @@
--- title: Object storage redundancy lost
+-- title: Object storage redundancy is lost
+-- description: A storage node is down or blocks failed to copy. The cluster still serves data but can lose it.
 -- severity: Medium
 -- resource_type: Cargo Server
+-- charts: object-storage-nodes, object-storage-resync
 -- interval: 300
 -- pending_for: 600
 -- resolve_after: 600
@@ -8,7 +10,7 @@
 SELECT 'cargo' AS resource_id, kind AS alert_key, value, detail
 FROM (
     SELECT 'storage-nodes' AS kind, toFloat64(max(total) - min(healthy)) AS value,
-           concat(toString(value), ' Garage storage nodes are not OK') AS detail
+           concat(toString(value), ' storage nodes are not OK') AS detail
     FROM (
         SELECT resource_id,
                argMaxIf(value, ts, metric = 'garage_cluster_storage_nodes') AS total,

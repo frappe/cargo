@@ -4,6 +4,11 @@ import json
 import typing
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
+from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
+from cloudtoolkit.pipeline.utils import deadlock_retry
+from cloudtoolkit.ssh.client import read_script
+from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.query_builder import Order
 from frappe.query_builder.functions import Min
@@ -32,10 +37,6 @@ from cargo.image_builder.doctype.pilot_image.releases import (
 	get_frappe_release,
 	get_latest_pilot_release,
 )
-from cargo.ssh import OutputLog, script
-from cargo.workflow_engine.doctype.press_workflow.decorators import flow, task
-from cargo.workflow_engine.doctype.press_workflow.workflow_builder import WorkflowBuilder
-from cargo.workflow_engine.utils import deadlock_retry
 
 if typing.TYPE_CHECKING:
 	from collections.abc import Iterable
@@ -49,7 +50,7 @@ BUILD_TIMEOUT = PING_TIMEOUT + SSH_READY_TIMEOUT + PROVISION_TIMEOUT
 DOMAIN_PROVIDER = ("image_builder", "conf", "pilot", "domain_provider.py")
 
 
-class PilotImage(BuildMachineOwner, WorkflowBuilder):
+class PilotImage(BuildMachineOwner, PipelineBuilder):
 	# begin: auto-generated types
 	# This code is auto-generated. Do not modify anything in this block.
 
@@ -149,7 +150,7 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		if self.status != "Building":
 			frappe.throw(_("Cannot build a pilot image that is not in 'Building' status."))
 
-		self._create_image.run_as_workflow()
+		self._create_image.run_as_pipeline()
 
 	@frappe.whitelist()
 	def stop_build(self) -> None:
@@ -165,19 +166,19 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		if self.status not in ("Building", "Snapshotting"):
 			frappe.throw(_("Only a build in progress can be stopped."))
 
-		workflow = frappe.db.get_value(
-			"Press Workflow",
+		pipeline = frappe.db.get_value(
+			"Pipeline",
 			{
 				"linked_doctype": self.doctype,
 				"linked_docname": self.name,
 				"status": ("in", ("Queued", "Running")),
 			},
 		)
-		if not workflow:
+		if not pipeline:
 			# Finished, with its callback still to run. The callback records the result.
 			frappe.throw(_("The build has already finished. Its result is being recorded."))
 
-		frappe.get_doc("Press Workflow", workflow).force_fail()
+		frappe.get_doc("Pipeline", pipeline).force_fail()
 		self.manually_failed = True
 		self.save()
 		self.release_build_machine()
@@ -306,7 +307,7 @@ class PilotImage(BuildMachineOwner, WorkflowBuilder):
 		image, so the script names those itself."""
 		proxy_subnet = f"fdaa:{int(self.build_settings.region_id or 0):x}::/64"
 		domain_provider = (
-			script(*DOMAIN_PROVIDER)
+			read_script("cargo", *DOMAIN_PROVIDER)
 			.replace('"__WILDCARD_DOMAIN__"', json.dumps(f"*.{self.build_settings.wildcard_domain}"))
 			.replace('"__PROXY_SUBNET__"', json.dumps(proxy_subnet))
 		)

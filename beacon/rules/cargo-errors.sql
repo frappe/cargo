@@ -1,4 +1,5 @@
--- title: Cargo errors
+-- title: Cargo keeps logging the same error
+-- description: The same Cargo error repeated at least 5 times in 15 minutes. A Cargo feature is broken.
 -- severity: Medium
 -- resource_type: Cargo Server
 -- interval: 60
@@ -6,7 +7,7 @@
 -- resolve_after: 900
 -- Cargo sends its Error Logs to Datum each minute. One alert for each error fingerprint that repeats. A PermissionError is a caller without access, not a Cargo failure.
 SELECT 'cargo' AS resource_id, fingerprint AS alert_key, toFloat64(errors) AS value,
-       concat(toString(errors), ' x ', first_message, ' in Cargo in 15 min') AS detail
+       concat(toString(errors), ' errors in 15 min: ', first_message) AS detail
 FROM (
     SELECT if(attributes['fingerprint'] = '', left(message, 200), attributes['fingerprint']) AS fingerprint,
            count() AS errors, any(message) AS first_message

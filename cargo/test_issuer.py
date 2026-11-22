@@ -45,6 +45,15 @@ class IntegrationTestIssuer(IntegrationTestCase):
 		self.assertTrue(key_id.startswith(f"cargo:{REGION_ID}:"))
 		self.assertEqual(frappe.db.get_single_value("Cargo Settings", "signing_key_id"), key_id)
 
+	def test_a_save_of_the_settings_keeps_the_key(self):
+		frappe.db.set_single_value("Cargo Settings", "signing_key_id", "")
+		initialize_signing_key()
+		frappe.get_doc("Cargo Settings").save()
+
+		self.assertTrue(
+			frappe.get_doc("Cargo Settings").get_password("signing_private_key", raise_exception=False)
+		)
+
 	def test_a_datum_token_verifies_against_the_merged_key_set(self):
 		token = issue_datum_token("vm-storage")
 

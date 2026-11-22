@@ -69,7 +69,7 @@ class IntegrationTestPingHostMachine(IntegrationTestCase):
 		self.assertIn("datum did not answer", self.server.error)
 
 	def test_clickhouse_failing_a_read_marks_it_unreachable(self):
-		"""The SIGILL case: Caddy is up and datum answers, ClickHouse behind it does not."""
+		"""The SIGILL case: nginx is up and datum answers, ClickHouse behind it does not."""
 		self.ping(self.response(), self.response(502))
 
 		self.assertEqual(self.server.status, "Unreachable")

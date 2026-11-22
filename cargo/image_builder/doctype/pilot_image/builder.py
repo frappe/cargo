@@ -4,10 +4,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import frappe
+from cloudtoolkit.ssh.client import SSHClient, SSHError, read_script
 
 from cargo.atlas_client import RUNNING_STATE, STOPPED_STATE, AtlasClient, AtlasError
 from cargo.client_models import BUILDER, NodeSpec
-from cargo.ssh import SshError, run_over_ssh, script
 
 if TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -77,9 +77,9 @@ class Builder:
 		deadline = time.monotonic() + SSH_READY_TIMEOUT
 		while True:
 			try:
-				run_over_ssh(address, "uptime", private_key, timeout=SSH_PROBE_TIMEOUT)
+				SSHClient(address, private_key=private_key).run("uptime", timeout_seconds=SSH_PROBE_TIMEOUT)
 				return True
-			except SshError:
+			except SSHError:
 				if time.monotonic() >= deadline:
 					return False
 
@@ -93,17 +93,19 @@ class Builder:
 		on_output: Callable[[str], None] | None = None,
 	) -> str:
 		"""Run the provision script on the machine."""
-		return run_over_ssh(
-			address,
-			script(*PROVISION_SCRIPT, environment=environment),
-			private_key,
-			timeout=PROVISION_TIMEOUT,
-			on_output=on_output,
+		return (
+			SSHClient(address, private_key=private_key)
+			.run(
+				read_script("cargo", *PROVISION_SCRIPT, environment=environment),
+				timeout_seconds=PROVISION_TIMEOUT,
+				on_output=on_output,
+			)
+			.output
 		)
 
 	def flush_build_machine(self, address: str, private_key: str) -> None:
 		"""Flush buffered filesystem writes before shutdown."""
-		run_over_ssh(address, "sync", private_key, timeout=FLUSH_TIMEOUT)
+		SSHClient(address, private_key=private_key).run("sync", timeout_seconds=FLUSH_TIMEOUT)
 
 	def stop_build_machine(self, machine: "Machine", flush: bool = True) -> None:
 		"""Flush and stop the builder before its disk is captured. Pass `flush=False` when the

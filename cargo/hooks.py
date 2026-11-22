@@ -8,7 +8,7 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["frappe/cloudtoolkit"]
 
 add_to_apps_screen = [
 	{
@@ -25,7 +25,6 @@ code_only_modules = {
 	"Image Builder": ["Cargo"],
 	"Object Storage": ["Cargo"],
 	"Telemetry": ["Cargo"],
-	"Workflow Engine": ["Cargo"],
 }
 
 # Includes in <head>
@@ -273,9 +272,6 @@ export_python_type_annotations = True
 scheduler_events = {
 	"cron": {
 		"* * * * *": [
-			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflows",
-			"cargo.workflow_engine.doctype.press_workflow.press_workflow.retry_workflow_callbacks",
-			"cargo.workflow_engine.doctype.press_workflow_task.press_workflow_task.retry_tasks",
 			"cargo.cargo.doctype.machine.machine.sync_all_machines",
 			"cargo.object_storage.spawn.ensure_cluster",
 			"cargo.telemetry.spawn.ensure_telemetry",
@@ -305,4 +301,5 @@ scheduler_events = {
 		"cargo.telemetry.credential.renew_datum_token",
 	],
 	"hourly_long": ["cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry"],
+	"daily_long": ["cargo.tls.doctype.service_certificate.service_certificate.renew_certificates"],
 }

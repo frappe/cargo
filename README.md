@@ -33,11 +33,23 @@ Pre-commit is configured to use the following tools for checking and formatting 
 - eslint
 - prettier
 - pyupgrade
+
+### Branches and releases
+
+`develop` gets all new work. `master` is the stable branch that production runs, and it gets only backports from `develop`.
+
+1. Raise the pull request on `develop`.
+2. Add the `backport master` label when the change must go to production. After the merge, Mergify opens the backport pull request, assigns it to you, and merges it after the checks pass, in the order the source pull requests merged on `develop`.
+3. Mergify closes other pull requests to `master`. For a manual backport, add the `manual-backport-pr` label and reopen the pull request.
+
+A release manager runs the **Release** workflow on `master`. It tags the `master` head and creates a GitHub Release with notes from the merged pull requests. The version starts at `v1.0.0`. A breaking change, marked with `!` such as `feat(storage)!: Remove a field`, increases the minor version. Other changes increase the patch version.
+
 ### CI
 
 This app can use GitHub Actions for CI. The following workflows are configured:
 
-- CI: Installs this app and runs unit tests on every push to `develop` branch.
+- CI: Installs this app and runs unit tests on every pull request and every push to `develop` and `master`.
+- Release: Tags `master` and creates a GitHub Release. A release manager runs it from the Actions tab.
 - Linters: Runs [Frappe Semgrep Rules](https://github.com/frappe/semgrep-rules) and [pip-audit](https://pypi.org/project/pip-audit/) on every pull request.
 
 

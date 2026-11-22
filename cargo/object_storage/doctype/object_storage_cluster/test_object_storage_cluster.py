@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import PropertyMock, patch
 
 import frappe
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
 from frappe.integrations.doctype.webhook.webhook import (
 	WEBHOOK_SECRET_HEADER,
 	get_webhook_data,
@@ -36,8 +37,12 @@ from cargo.object_storage.doctype.object_storage_cluster.utils import (
 	configure_storage_cluster_webhook,
 	ensure_no_other_cluster_serving_or_setting_up,
 )
-from cargo.ssh import SSH_TIMEOUT
 from cargo.testing import SETTINGS, use_test_settings
+
+
+def garage_status(version: str) -> dict:
+	return {"nodes": [{"id": "n1", "garageVersion": version, "isUp": True}]}
+
 
 EXTRA_TEST_RECORD_DEPENDENCIES = []
 IGNORE_TEST_RECORD_DEPENDENCIES = []
@@ -241,6 +246,72 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		with self._joined(self.storage), self.assertRaises(frappe.ValidationError):
 			self.cluster.release_machines([self.gateway])
 
+	def test_a_released_gateway_leaves_dns_before_it_drains(self):
+		second = self.add_machine(GATEWAY)
+		frappe.db.set_value("Machine", self.gateway, "public_ipv4", "203.0.113.10")
+		frappe.db.set_value("Machine", second, "public_ipv4", "203.0.113.11")
+		self.cluster.reload()
+		with (
+			self._joined([self.gateway, second, *self.storage]),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			patch("cargo.nginx.AtlasClient") as atlas,
+		):
+			atlas.from_settings.return_value.set_dns_records.side_effect = (
+				lambda *_, **__: drain.run_as_pipeline.assert_not_called()
+			)
+			self.cluster.release_machines([self.gateway])
+
+		drain.run_as_pipeline.assert_called_once_with([self.gateway])
+		published = {
+			call.args[0]: call.args[1]
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(published[f"s3-svc.{SETTINGS['wildcard_domain']}"], ["203.0.113.11"])
+
+	def test_a_gateway_is_not_released_when_no_running_one_would_stay(self):
+		second = self.add_machine(GATEWAY)
+		frappe.db.set_value("Machine", self.gateway, "public_ipv4", "203.0.113.10")
+		frappe.db.set_value("Machine", second, "status", "Stopped")
+		self.cluster.reload()
+		with (
+			self._joined([self.gateway, second, *self.storage]),
+			patch.object(ObjectStorageCluster, "_drain_and_release") as drain,
+			self.assertRaisesRegex(frappe.ValidationError, "No running gateway would stay"),
+		):
+			self.cluster.release_machines([self.gateway])
+
+		drain.run_as_pipeline.assert_not_called()
+
+	def test_a_storage_node_cannot_come_before_the_gateway(self):
+		cluster = frappe.get_doc({"doctype": "Object Storage Cluster"}).insert()
+
+		with self.assertRaisesRegex(frappe.ValidationError, "gateway node before"):
+			cluster.add_storage_node(cpu_millicores=1000, ram_gb=2, disk_gb=20)
+
+	def test_any_dead_gateway_leaves_the_cluster_active_and_dns(self):
+		second = self.add_machine(GATEWAY)
+		frappe.db.set_value("Machine", second, "public_ipv4", "203.0.113.11")
+		frappe.db.set_value("Machine", self.gateway, "status", "Terminated")
+		self.cluster.reload()
+		with patch("cargo.nginx.AtlasClient") as atlas:
+			self.cluster.sync_machines()
+
+		self.assertEqual(self.cluster.status, "Active")
+		published = {
+			call.args[0]: call.args[1]
+			for call in atlas.from_settings.return_value.set_dns_records.call_args_list
+		}
+		self.assertEqual(published[f"s3-svc.{SETTINGS['wildcard_domain']}"], ["203.0.113.11"])
+
+	def test_every_gateway_dead_fails_the_cluster(self):
+		second = self.add_machine(GATEWAY)
+		for gateway in (self.gateway, second):
+			frappe.db.set_value("Machine", gateway, "status", "Terminated")
+		self.cluster.reload()
+		self.cluster.sync_machines()
+
+		self.assertEqual(self.cluster.status, "Failed")
+
 	def test_a_serving_node_is_drained_before_it_is_released(self):
 		with (
 			self._joined(self.storage),
@@ -249,7 +320,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		):
 			self.cluster.release_machines([self.storage[0]])
 
-		drain.run_as_workflow.assert_called_once_with([self.storage[0]])
+		drain.run_as_pipeline.assert_called_once_with([self.storage[0]])
 		atlas.from_settings.assert_not_called()
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
 
@@ -259,10 +330,10 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 
 		self.assertEqual(frappe.db.get_value("Machine", self.storage[0], "status"), "Running")
 
-	def test_a_running_workflow_blocks_a_release(self):
-		workflow = frappe.get_doc(
+	def test_a_running_pipeline_blocks_a_release(self):
+		pipeline = frappe.get_doc(
 			{
-				"doctype": "Press Workflow",
+				"doctype": "Pipeline",
 				"linked_doctype": self.cluster.doctype,
 				"linked_docname": self.cluster.name,
 				"main_method_name": "_drain_and_release",
@@ -270,8 +341,8 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 				"status": "Running",
 			}
 		)
-		with patch("cargo.workflow_engine.doctype.press_workflow.press_workflow.enqueue_workflow"):
-			workflow.insert(ignore_permissions=True)
+		with patch("cloudtoolkit.pipeline.doctype.pipeline.pipeline.enqueue_pipeline"):
+			pipeline.insert(ignore_permissions=True)
 
 		with self._joined(self.storage), self.assertRaisesRegex(frappe.ValidationError, "still running"):
 			self.cluster.release_machines([self.storage[2]])
@@ -329,7 +400,7 @@ class IntegrationTestLiveClusterRelease(IntegrationTestCase):
 		):
 			self.cluster.release_machines([self.storage[2]])
 
-		drain.run_as_workflow.assert_called_once_with([self.storage[2]])
+		drain.run_as_pipeline.assert_called_once_with([self.storage[2]])
 		atlas.from_settings.assert_not_called()
 
 	def test_a_node_that_never_joined_can_be_released(self):
@@ -526,7 +597,7 @@ class IntegrationTestClusterWebhook(IntegrationTestCase):
 
 
 class IntegrationTestProxyRouting(IntegrationTestCase):
-	"""Caddy on the gateway is the last step: a cluster is ready only once it serves, and
+	"""nginx on the gateways is the last step: a cluster is ready only once it serves, and
 	setting up again is how a failed one is retried."""
 
 	def setUp(self):
@@ -548,7 +619,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 	add_machine = IntegrationTestObjectStorageCluster.add_machine
 
 	@contextmanager
-	def everything_joined(self, caddy=None, serving=True):
+	def everything_joined(self, proxy=None, serving=True):
 		"""Garage up on every node, so the flow has nothing to install and goes straight to
 		verification and the proxy."""
 		joined = {self.gateway, self.storage}
@@ -556,7 +627,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 			patch.object(Setup, "healthy_nodes", return_value=joined),
 			patch.object(Setup, "get_connected_nodes"),
 			patch.object(Setup, "apply_staged_layout"),
-			patch.object(Proxy, "install", **(caddy or {})) as installed,
+			patch.object(Proxy, "install", **(proxy or {})) as installed,
 			patch.object(Proxy, "is_serving", new_callable=PropertyMock, return_value=serving) as self.probe,
 			patch("time.sleep"),
 		):
@@ -566,6 +637,18 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		self.cluster._setup()
 		self.cluster.reload()
 
+	def test_every_gateway_failing_to_set_up_fails_the_cluster_and_names_them(self):
+		with (
+			patch.object(Setup, "healthy_nodes", return_value=set()),
+			patch.object(ObjectStorageCluster, "start_setup_on_machine", return_value=False),
+			patch.object(ObjectStorageCluster, "record_cluster_peers") as peers,
+		):
+			self.run_flow()
+
+		self.assertEqual(self.cluster.status, "Failed")
+		self.assertIn(self.gateway, self.cluster.error)
+		peers.assert_not_called()
+
 	def test_a_cluster_is_ready_only_once_the_proxy_serves(self):
 		with self.everything_joined() as installed:
 			self.run_flow()
@@ -573,12 +656,12 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		installed.assert_called_once()
 		self.assertEqual(self.cluster.status, "Active")
 
-	def test_a_caddy_failure_fails_the_cluster_and_says_why(self):
-		with self.everything_joined(caddy={"side_effect": RuntimeError("caddy validate failed")}):
+	def test_a_proxy_failure_fails_the_cluster_and_says_why(self):
+		with self.everything_joined(proxy={"side_effect": RuntimeError("nginx -t failed")}):
 			self.run_flow()
 
 		self.assertEqual(self.cluster.status, "Failed")
-		self.assertIn("Caddy", self.cluster.error)
+		self.assertIn("nginx", self.cluster.error)
 		self.assertIn("set up again", self.cluster.error)
 		self.probe.assert_not_called()
 
@@ -599,7 +682,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		self.assertEqual(self.cluster.status, "Active")
 
 	def test_setting_up_again_retries_the_proxy_even_with_every_node_joined(self):
-		with self.everything_joined(caddy={"side_effect": RuntimeError("apt mirror down")}):
+		with self.everything_joined(proxy={"side_effect": RuntimeError("apt mirror down")}):
 			self.run_flow()
 		self.assertEqual(self.cluster.status, "Failed")
 
@@ -611,12 +694,13 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 
 	def test_setting_up_a_fully_joined_cluster_runs_the_flow_not_a_shortcut(self):
 		with (
+			patch.object(Setup, "status", return_value=garage_status("v2.3.0")),
 			patch.object(Setup, "healthy_nodes", return_value={self.gateway, self.storage}),
 			patch.object(ObjectStorageCluster, "_setup") as flow,
 		):
 			self.cluster.setup()
 
-		flow.run_as_workflow.assert_called_once()
+		flow.run_as_pipeline.assert_called_once()
 		self.assertEqual(self.cluster.status, "Setting Up")
 
 	def refused_setup(self, message: str):
@@ -626,7 +710,7 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		):
 			frappe.get_doc("Object Storage Cluster", self.cluster.name).setup()
 
-		flow.run_as_workflow.assert_not_called()
+		flow.run_as_pipeline.assert_not_called()
 
 	def test_setup_is_refused_before_the_gateway_has_a_public_address(self):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
@@ -639,6 +723,16 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 		frappe.db.set_value("Machine", self.gateway, "public_ipv4", None)
 
 		self.refused_setup("public IPv4")
+
+		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
+
+	def test_a_live_cluster_on_an_older_garage_is_not_set_up_and_stays_active(self):
+		"""Setup's nginx leaves CORS to Garage, and an older Garage would drop every bucket's
+		rules, the dashboard's among them."""
+		self.cluster.mark_cluster_status("Active")
+
+		with patch.object(Setup, "status", return_value=garage_status("v2.1.0")):
+			self.refused_setup("v2.1.0")
 
 		self.assertEqual(frappe.db.get_value("Object Storage Cluster", self.cluster.name, "status"), "Active")
 
@@ -658,11 +752,11 @@ class IntegrationTestProxyRouting(IntegrationTestCase):
 	def test_steps_that_install_over_ssh_outlast_the_ssh_calls_they_make(self):
 		"""The worker's default is 300s against SSH's 600s, so an unmarked step would be
 		killed partway through an install SSH would still have let finish."""
-		for method in ("start_setup_on_machine", "install_caddy"):
+		for method in ("start_setup_on_machine", "install_proxy"):
 			step = ObjectStorageCluster.__dict__[method]
 			with self.subTest(method=method):
 				self.assertEqual(step._queue, "long")
-				self.assertGreater(step._timeout, SSH_TIMEOUT)
+				self.assertGreater(step._timeout, DEFAULT_TIMEOUT_SECONDS)
 
 	def test_a_metrics_exporter_that_will_not_install_fails_the_node(self):
 		"""Nothing hands the node a token later, so setup is the only chance."""

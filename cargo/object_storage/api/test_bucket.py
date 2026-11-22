@@ -13,10 +13,12 @@ from cargo.object_storage.api.bucket import (
 	check_region,
 	create_bucket,
 	delete_bucket,
+	get_allowed_origins,
 	get_usage,
 	remove_credentials,
 	rotate_credentials,
 	serving_cluster,
+	set_allowed_origins,
 	set_quota,
 )
 from cargo.object_storage.client import Error
@@ -33,6 +35,12 @@ INFO = {
 	"objects": 4,
 	"quotas": {"maxSize": 1073741824, "maxObjects": 100},
 }
+# The origin of `central_url` in the test settings.
+DASHBOARD = "http://central.test"
+
+
+def garage_status(version: str) -> dict:
+	return {"nodes": [{"id": "n1", "garageVersion": version, "isUp": True}]}
 
 
 class IntegrationTestBucketApi(IntegrationTestCase):
@@ -52,6 +60,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		# A raw delete leaves the child rows, which a new bucket of the same name would load.
 		frappe.db.delete("Bucket Credential", {"parent": BUCKET})
 		frappe.db.delete("Bucket Tag", {"parent": BUCKET})
+		frappe.db.delete("Bucket Allowed Origin", {"parent": BUCKET})
 
 	@contextmanager
 	def caller(self):
@@ -62,6 +71,7 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 		garage.bucket.return_value = INFO
 		garage.create_key.return_value = KEY
 		garage.allow_bucket_key.return_value = {}
+		garage.status.return_value = garage_status("v2.3.0")
 
 		with (
 			patch("cargo.auth.authenticate_request", return_value=frappe._dict(aud="central-admin")),
@@ -280,3 +290,89 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 
 			garage.delete_bucket.assert_called_once_with(BUCKET_ID)
 			garage.delete_key.assert_called_once_with(KEY["accessKeyId"])
+
+	def allowed_by_garage(self, garage: Mock) -> list[list[str]]:
+		"""The origins of each CORS rule Cargo last sent Garage."""
+		bucket_id, rules = garage.set_bucket_cors_rules.call_args.args
+		self.assertEqual(bucket_id, BUCKET_ID)
+		for rule in rules:
+			self.assertEqual(set(rule["AllowedMethod"]), {"GET", "HEAD", "PUT", "POST"})
+			self.assertIn("ETag", rule["ExposeHeader"])
+
+		return [rule["AllowedOrigin"] for rule in rules]
+
+	def test_a_new_bucket_takes_browser_calls_from_the_dashboard(self):
+		"""The proxy leaves CORS to Garage, so the dashboard's own uploads need the bucket's rules."""
+		with self.caller() as garage:
+			create_bucket(name=BUCKET, region=self.region)
+
+		self.assertEqual(self.allowed_by_garage(garage), [[DASHBOARD]])
+
+	def test_allowed_origins_are_kept_as_a_browser_sends_them(self):
+		"""Garage matches the Origin header exactly, and a browser drops a default port, a
+		trailing slash and capitals."""
+		with self.caller() as garage:
+			self.existing_bucket()
+			answer = set_allowed_origins(
+				name=BUCKET,
+				region=self.region,
+				origins=[
+					"HTTPS://Files.Example.com:443/",
+					"http://localhost:8000",
+					"https://files.example.com",
+				],
+			)
+			read_back = get_allowed_origins(name=BUCKET, region=self.region)
+
+		expected = ["https://files.example.com", "http://localhost:8000"]
+		self.assertEqual(answer, {"name": BUCKET, "region": self.region, "allowed_origins": expected})
+		self.assertEqual(read_back, answer)
+		# One origin a rule: Garage names a whole rule's origins in one header, which a browser refuses.
+		self.assertEqual(self.allowed_by_garage(garage), [[DASHBOARD], *([origin] for origin in expected)])
+
+	def test_clearing_allowed_origins_keeps_the_dashboard(self):
+		with self.caller() as garage:
+			self.existing_bucket()
+			set_allowed_origins(name=BUCKET, region=self.region, origins=["https://files.example.com"])
+			answer = set_allowed_origins(name=BUCKET, region=self.region, origins=[])
+
+		self.assertEqual(answer["allowed_origins"], [])
+		self.assertEqual(self.allowed_by_garage(garage), [[DASHBOARD]])
+
+	def test_something_that_is_not_an_origin_is_refused(self):
+		with self.caller():
+			self.existing_bucket()
+
+		for value in (
+			"files.example.com",
+			"ftp://files.example.com",
+			"https://files.example.com/uploads",
+			"https://files.example.com?x=1",
+			"https://user@files.example.com",
+			"https://*.example.com",
+			"*",
+			"https://files.example.com:99999",
+		):
+			with self.subTest(value=value), self.caller() as garage:
+				with self.assertRaisesRegex(frappe.ValidationError, "not an origin"):
+					set_allowed_origins(name=BUCKET, region=self.region, origins=[value])
+				garage.set_bucket_cors_rules.assert_not_called()
+
+	def test_an_older_garage_is_refused_rather_than_ignoring_the_origins(self):
+		"""Garage before v2.3.0 accepts the rules and drops them, which no caller could see."""
+		with self.caller() as garage:
+			garage.status.return_value = garage_status("v2.1.0")
+			self.existing_bucket()
+			with self.assertRaisesRegex(frappe.ValidationError, "v2.1.0"):
+				set_allowed_origins(name=BUCKET, region=self.region, origins=["https://files.example.com"])
+
+		garage.set_bucket_cors_rules.assert_not_called()
+
+	def test_a_bucket_is_still_made_on_an_older_garage(self):
+		"""A cluster that has not been set up again still has Caddy answering for the dashboard."""
+		with self.caller() as garage:
+			garage.status.return_value = garage_status("v2.1.0")
+			create_bucket(name=BUCKET, region=self.region)
+
+		self.assertTrue(frappe.db.exists("Bucket", BUCKET))
+		garage.set_bucket_cors_rules.assert_not_called()
