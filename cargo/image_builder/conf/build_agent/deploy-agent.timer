@@ -1,9 +1,9 @@
 [Unit]
-Description=Ask Central for a build every 10 to 20 seconds
+Description=Check in with Central every 10 to 20 seconds
 
 [Timer]
 OnBootSec=10s
-# Counted from when the last run ended, so a running build is never started twice.
+# Counted from when the last tick ended, so two ticks never overlap.
 OnUnitInactiveSec=10s
 # A random 0-10s on every run, so VMs that booted together don't ask Central at once.
 RandomizedDelaySec=10s
