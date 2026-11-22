@@ -216,11 +216,11 @@ class PilotImage(BuildMachineOwner, PipelineBuilder):
 
 	@frappe.whitelist()
 	def build_apps_images(self) -> list[str]:
-		"""Build each signup app's newest release on this Site image, even if it has an image elsewhere."""
+		"""Build each signup app's newest release on this Site image."""
 		if self.image_type != "Site" or self.status != "Completed":
 			frappe.throw(_("Apps images can only be built on a Completed Site image."))
 
-		return start_apps_images_on(self, force=True)
+		return start_apps_images_on(self)
 
 	@flow
 	def _create_image(self):
@@ -456,9 +456,9 @@ def start_site_images() -> list[str]:
 
 
 def start_apps_images() -> list[str]:
-	"""Start an Apps image for each signup app whose newest compatible release has none, on the
-	newest Completed Site image of each Frappe branch. A newer Site image alone starts nothing:
-	the app's next release builds on it. Returns the images started."""
+	"""Start an Apps image of each signup app's newest compatible release on the newest Completed
+	Site image of each Frappe branch, when that Site image has none. So a new Site image or a new
+	release rebuilds the app. Returns the images started."""
 	if not is_tracking_releases():
 		return []
 
@@ -470,24 +470,12 @@ def start_apps_images() -> list[str]:
 	return started
 
 
-def start_apps_images_on(site_image: dict | PilotImage, force: bool = False) -> list[str]:
-	"""Start an Apps image of each signup app's newest compatible release on `site_image`. Unless
-	`force` is set, a release that has an image on any Site image is skipped."""
+def start_apps_images_on(site_image: dict | PilotImage) -> list[str]:
+	"""Start an Apps image of each signup app's newest compatible release on `site_image`."""
 	started = []
 	for signup_app in get_signup_apps():
 		release = get_latest_compatible_release(signup_app, site_image.frappe_version)
 		if not release:
-			continue
-
-		if not force and frappe.db.exists(
-			"Pilot Image",
-			{
-				"image_type": "Apps",
-				"frappe_branch": site_image.frappe_branch,
-				"signup_app": signup_app,
-				"app_commit": release.commit,
-			},
-		):
 			continue
 
 		try:
