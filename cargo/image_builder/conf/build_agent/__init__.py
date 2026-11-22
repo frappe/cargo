@@ -1,29 +1,26 @@
 import json
 import os
-import re
-import signal
 import subprocess
-import urllib.error
 import urllib.request
-from base64 import b64encode
+from dataclasses import asdict
 from pathlib import Path
 
+from .models import (
+	SECRETS_DIRECTORY,
+	UNIT_PREFIX,
+	Build,
+	BuildReport,
+	BuildStatus,
+	BuildUnit,
+)
+
 WORK_DIRECTORY = Path("/var/lib/deploy-agent")
-LOG_FILE = WORK_DIRECTORY / "build.log"
-REPORT_SECONDS = 10
+BUILD_SCRIPT = "/usr/local/lib/deploy-agent/build.sh"
+# Leaves room for the live app, so running out of memory kills only the build.
+BUILD_MEMORY_MAX = "80%"
+STOP_TIMEOUT_SECONDS = 30
+LOG_TAIL_LINES = 400
 LOG_TAIL_BYTES = 20_000
-REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-COMMIT = re.compile(r"[0-9a-f]{40}")
-# Buildah finds the Containerfile or Dockerfile itself; Central checked the commit has one.
-BUILD_SCRIPT = """
-rm -rf source
-mkdir source
-cd source
-git init --quiet
-git fetch --quiet --depth 1 "https://github.com/$REPOSITORY.git" "$COMMIT"
-git checkout --quiet FETCH_HEAD
-buildah build --layers --tag "app:$COMMIT" .
-"""
 
 
 def call(method: str, **payload) -> dict | None:
@@ -37,63 +34,103 @@ def call(method: str, **payload) -> dict | None:
 		return json.load(response).get("message")
 
 
-def report(build: dict, status: str) -> dict:
-	log = LOG_FILE.read_bytes()[-LOG_TAIL_BYTES:].decode(errors="replace") if LOG_FILE.exists() else ""
-	return call("report_build", deploy_request=build["deploy_request"], status=status, log=log) or {}
-
-
-def get_build_environment(build: dict) -> dict[str, str]:
-	"""The token goes in an HTTP header, so it is never written to the clone's config or the log."""
-	basic = b64encode(f"x-access-token:{build['token']}".encode()).decode()
-	environment = {key: value for key, value in os.environ.items() if key != "AGENT_CREDENTIAL"}
-	return environment | {
-		"REPOSITORY": build["repository"],
-		"COMMIT": build["commit"],
-		"GIT_CONFIG_COUNT": "1",
-		"GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-		"GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
-	}
-
-
-def run(build: dict) -> None:
-	"""Build in its own process group, so a cancel stops git and Buildah with it."""
-	if not (REPOSITORY.fullmatch(build["repository"]) and COMMIT.fullmatch(build["commit"])):
-		LOG_FILE.write_text("Central sent an invalid repository or commit.\n")
-		report(build, "Failed")
-		return
-
-	with LOG_FILE.open("wb") as log:
-		process = subprocess.Popen(
-			["bash", "-euo", "pipefail", "-c", BUILD_SCRIPT],
-			cwd=WORK_DIRECTORY,
-			env=get_build_environment(build),
-			stdout=log,
-			stderr=subprocess.STDOUT,
-			start_new_session=True,
+def get_build() -> Build | None:
+	"""An invalid build is reported as failed, then raised, since it means Central is broken."""
+	payload = call("get_build")
+	if payload is None:
+		return None
+	try:
+		return Build(**payload)
+	except ValueError as error:
+		call(
+			"report_build", **asdict(BuildReport(payload["deploy_request"], BuildStatus.FAILED, f"{error}\n"))
 		)
-		while True:
-			try:
-				code = process.wait(timeout=REPORT_SECONDS)
-				break
-			except subprocess.TimeoutExpired:
-				pass
-			try:
-				cancel = report(build, "Running").get("cancel")
-			except urllib.error.URLError:
-				# Central is briefly unreachable; the build goes on and the next report tells it.
-				continue
-			if cancel:
-				os.killpg(process.pid, signal.SIGTERM)
-				process.wait()
-				return
+		raise
 
-	report(build, "Succeeded" if code == 0 else "Failed")
+
+def systemctl(*arguments: str) -> str:
+	return subprocess.run(["systemctl", *arguments], check=True, capture_output=True, text=True).stdout
+
+
+def get_build_unit() -> BuildUnit | None:
+	output = systemctl("list-units", "--all", "--plain", "--no-legend", f"{UNIT_PREFIX}*.service")
+	names = [line.split()[0] for line in output.splitlines() if line.strip()]
+	if len(names) > 1:
+		raise RuntimeError(f"Only one build runs at a time, found {', '.join(names)}.")
+	if not names:
+		return None
+
+	properties = dict(
+		line.split("=", 1) for line in systemctl("show", names[0], "--property=SubState,Result").splitlines()
+	)
+	return BuildUnit(names[0], properties["SubState"], properties["Result"])
+
+
+def get_build_log(unit: BuildUnit) -> str:
+	log = subprocess.run(
+		["journalctl", "--unit", unit.name, "--output", "cat", "--lines", str(LOG_TAIL_LINES), "--no-pager"],
+		capture_output=True,
+		text=True,
+	).stdout
+	if unit.is_out_of_memory:
+		log += (
+			f"\nBuild ran out of memory ({BUILD_MEMORY_MAX} of the VM's memory). "
+			"Your live app is unaffected. Use a larger VM and push again.\n"
+		)
+	return log[-LOG_TAIL_BYTES:]
+
+
+def check_build(unit: BuildUnit) -> None:
+	"""Report the build to Central; stop it once Central cancels it, or clean up once it finished."""
+	reply = call("report_build", **asdict(BuildReport(unit.deploy_request, unit.status, get_build_log(unit))))
+	# `cancel` means a newer push replaced the build.
+	if unit.is_finished or reply["cancel"]:
+		remove_build(unit)
+
+
+def remove_build(unit: BuildUnit) -> None:
+	"""Stop kills the unit's whole cgroup, with SIGKILL after the stop timeout."""
+	subprocess.run(["systemctl", "stop", unit.name], check=True)
+	# A unit that succeeded is already unloaded after the stop, so this one may fail.
+	subprocess.run(["systemctl", "reset-failed", unit.name], capture_output=True)
+	unit.environment_file.unlink(missing_ok=True)
+
+
+def start_build(build: Build) -> None:
+	"""Systemd runs the build, so it outlives this tick and a restart of the agent."""
+	SECRETS_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
+	# Root-only, so the token never shows in the unit's properties.
+	with os.fdopen(
+		os.open(build.environment_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
+	) as file:
+		file.writelines(f"{key}={value}\n" for key, value in build.environment.items())
+
+	subprocess.run(
+		[
+			"systemd-run",
+			f"--unit={build.unit}",
+			f"--working-directory={WORK_DIRECTORY}",
+			# Keeps a successful unit loaded until the next tick reports it.
+			"--property=RemainAfterExit=yes",
+			f"--property=MemoryMax={BUILD_MEMORY_MAX}",
+			f"--property=TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
+			f"--property=EnvironmentFile={build.environment_file}",
+			"/bin/bash",
+			BUILD_SCRIPT,
+		],
+		check=True,
+	)
 
 
 def main() -> None:
+	"""One tick: report the build that is running, or start the next one."""
 	WORK_DIRECTORY.mkdir(parents=True, exist_ok=True)
-	if build := call("claim_build"):
-		run(build)
+	if unit := get_build_unit():
+		check_build(unit)
+	elif build := get_build():
+		start_build(build)
+		# Central hands out this build until it hears it runs; a failed start is retried next tick.
+		call("report_build", **asdict(BuildReport(build.deploy_request, BuildStatus.RUNNING, "")))
 
 
 if __name__ == "__main__":
