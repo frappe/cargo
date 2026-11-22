@@ -94,4 +94,7 @@ class BuildUnit:
 	def status(self) -> BuildStatus:
 		if not self.is_finished:
 			return BuildStatus.RUNNING
-		return BuildStatus.SUCCEEDED if self.result == "success" else BuildStatus.FAILED
+		# `dead` with `success` is a unit someone stopped by hand, not a finished build.
+		if self.sub_state == "exited" and self.result == "success":
+			return BuildStatus.SUCCEEDED
+		return BuildStatus.FAILED
