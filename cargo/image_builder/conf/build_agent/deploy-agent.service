@@ -8,4 +8,6 @@ ConditionPathExists=/etc/deploy-agent/agent.env
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/deploy-agent/agent.env
-ExecStart=/usr/bin/python3 /usr/local/lib/deploy-agent/agent.py
+# This folder is installed as /usr/local/lib/deploy-agent/build_agent, so it runs as a package.
+Environment=PYTHONPATH=/usr/local/lib/deploy-agent
+ExecStart=/usr/bin/python3 -m build_agent
