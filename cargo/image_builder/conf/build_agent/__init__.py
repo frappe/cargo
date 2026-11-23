@@ -15,7 +15,9 @@ from .models import (
 )
 
 WORK_DIRECTORY = Path("/var/lib/deploy-agent")
-BUILD_SCRIPT = "/usr/local/lib/deploy-agent/build.sh"
+BUILD_SCRIPT = Path(__file__).with_name("build.sh")
+# The live app's image and the ones a rollback can go back to.
+KEPT_IMAGES = 3
 # Leaves room for the live app, so running out of memory kills only the build.
 BUILD_MEMORY_MAX = "80%"
 STOP_TIMEOUT_SECONDS = 30
@@ -94,6 +96,31 @@ def remove_build(unit: BuildUnit) -> None:
 	# A unit that succeeded is already unloaded after the stop, so this one may fail.
 	subprocess.run(["systemctl", "reset-failed", unit.name], capture_output=True)
 	unit.environment_file.unlink(missing_ok=True)
+	prune_images()
+
+
+def prune_images() -> None:
+	"""Keep the newest app images; remove older ones, then the layers no image uses."""
+	output = subprocess.run(
+		[
+			"buildah",
+			"images",
+			"--noheading",
+			"--no-trunc",
+			"--format",
+			"{{.CreatedAtRaw}}\t{{.ID}}\t{{.Name}}",
+		],
+		check=True,
+		capture_output=True,
+		text=True,
+	).stdout
+	# CreatedAtRaw sorts as text because the VM's clock is UTC; one image tagged twice is listed once.
+	images = sorted(
+		{tuple(line.split("\t")) for line in output.splitlines() if line.endswith("/app")}, reverse=True
+	)
+	if old := [image_id for _created, image_id, _name in images[KEPT_IMAGES:]]:
+		subprocess.run(["buildah", "rmi", *old], check=True)
+	subprocess.run(["buildah", "rmi", "--prune"], check=True)
 
 
 def start_build(build: Build) -> None:
@@ -118,7 +145,7 @@ def start_build(build: Build) -> None:
 			f"--property=TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
 			f"--property=EnvironmentFile={build.environment_file}",
 			"/bin/bash",
-			BUILD_SCRIPT,
+			str(BUILD_SCRIPT),
 		],
 		check=True,
 	)
@@ -133,7 +160,3 @@ def main() -> None:
 		start_build(build)
 		# Central hands out this build until it hears it runs; a failed start is retried next tick.
 		call("report_build", **asdict(BuildReport(build.deploy_request, BuildStatus.RUNNING, "")))
-
-
-if __name__ == "__main__":
-	main()
