@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.request
 
-from .slots import PORTS, get_live_slot, switch_upstream, write_slot
+from .slots import PORTS, UPSTREAM_FILE, get_live_slot, switch_upstream, write_slot
 
 CHECK_INTERVAL_SECONDS = 2
 # Every new container must keep running this long after it first answers, like Fly's smoke check.
@@ -92,7 +92,19 @@ def main() -> None:
 
 	systemctl("enable", f"app@{idle}")
 	switch_upstream(idle)
-	systemctl("reload-or-restart", "nginx")
+	try:
+		systemctl("reload-or-restart", "nginx")
+	except subprocess.CalledProcessError:
+		# nginx still serves the old slot; a record naming the new one would make the next release restart it.
+		if live:
+			switch_upstream(live)
+		else:
+			UPSTREAM_FILE.unlink()
+		print("nginx did not reload, so traffic stays on the live app.", flush=True)
+		subprocess.run(["journalctl", "--unit", "nginx", "--lines", "20", "--no-pager", "--output", "cat"])
+		systemctl("disable", f"app@{idle}")
+		systemctl("stop", f"app@{idle}")
+		sys.exit(1)
 	# Disable the older serving app once nginx has reloaded
 	if live:
 		systemctl("disable", f"app@{live}")
