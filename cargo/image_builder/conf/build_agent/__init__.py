@@ -3,6 +3,7 @@ import os
 import subprocess
 import urllib.request
 from dataclasses import asdict
+from functools import cache
 from pathlib import Path
 
 from .models import (
@@ -20,6 +21,9 @@ from .models import (
 from .slots import WORK_DIRECTORY, get_live_slot, get_slot_value
 
 BUILD_SCRIPT = Path(__file__).with_name("build.sh")
+METADATA_URL = "http://169.254.169.254/latest"
+# Central sets this guest metadata key when it creates the VM.
+METADATA_KEY = "deploy-agent"
 # The newest image, which may still wait for its release; the live one is kept besides it.
 KEPT_IMAGES = 1
 # Leaves room for the live app, so running out of memory kills only the build.
@@ -29,11 +33,27 @@ LOG_TAIL_LINES = 400
 LOG_TAIL_BYTES = 20_000
 
 
-def call(method: str, **payload) -> dict | None:
+@cache
+def get_agent() -> dict[str, str]:
+	"""Where Central is and this app's credential, read once per tick from the guest metadata."""
+	token_request = urllib.request.Request(
+		f"{METADATA_URL}/api/token", headers={"X-metadata-token-ttl-seconds": "60"}, method="PUT"
+	)
+	with urllib.request.urlopen(token_request, timeout=5) as response:
+		token = response.read().decode()
 	request = urllib.request.Request(
-		f"{os.environ['CENTRAL_URL'].rstrip('/')}/api/method/central.deploy.api.{method}",
+		f"{METADATA_URL}/meta-data/attributes/{METADATA_KEY}", headers={"X-metadata-token": token}
+	)
+	with urllib.request.urlopen(request, timeout=5) as response:
+		return json.load(response)
+
+
+def call(method: str, **payload) -> dict | None:
+	agent = get_agent()
+	request = urllib.request.Request(
+		f"{agent['central_url'].rstrip('/')}/api/method/central.deploy.api.{method}",
 		data=json.dumps(payload).encode(),
-		headers={"Content-Type": "application/json", "X-Deploy-Agent-Token": os.environ["AGENT_CREDENTIAL"]},
+		headers={"Content-Type": "application/json", "X-Deploy-Agent-Token": agent["credential"]},
 		method="POST",
 	)
 	with urllib.request.urlopen(request, timeout=30) as response:

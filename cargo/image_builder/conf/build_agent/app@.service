@@ -2,6 +2,9 @@
 Description=App slot %i
 Wants=network-online.target
 After=network-online.target
+# The app is user code, so it never starts without the metadata block.
+Requires=metadata-block.service
+After=metadata-block.service
 # Ten restarts in five minutes, then the unit stays failed and the agent reports the app down.
 StartLimitIntervalSec=300
 StartLimitBurst=10

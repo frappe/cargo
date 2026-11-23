@@ -20,7 +20,7 @@ PROVISION_SCRIPT = Path(__file__).with_name("provision.sh")
 # Fow now we hardcode once we have more we can create and keep, and allow
 # Users to define via frappe_cloud_deploy.toml
 OS, OS_VERSION = "Ubuntu", "24.04"
-PACKAGES = ("rsync", "git", "podman", "buildah", "nginx")
+PACKAGES = ("rsync", "git", "podman", "buildah", "nginx", "nftables")
 # Where each agent file lives on the VM, relative to /.
 FILES = {
 	"usr/local/lib/deploy-agent/build_agent": AGENT_FOLDER,
@@ -28,6 +28,8 @@ FILES = {
 	"etc/systemd/system/deploy-agent.service": AGENT_FOLDER / "deploy-agent.service",
 	"etc/systemd/system/deploy-agent.timer": AGENT_FOLDER / "deploy-agent.timer",
 	"etc/nginx/conf.d/deploy-agent.conf": AGENT_FOLDER / "nginx.conf",
+	"etc/systemd/system/metadata-block.service": AGENT_FOLDER / "metadata-block.service",
+	"etc/deploy-agent/metadata-block.nft": AGENT_FOLDER / "metadata-block.nft",
 }
 
 

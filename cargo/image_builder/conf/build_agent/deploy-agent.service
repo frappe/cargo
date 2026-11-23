@@ -2,12 +2,12 @@
 Description=Report the running build to Central, or start the next one
 Wants=network-online.target
 After=network-online.target
-# Central writes this through cloud-init when it creates the VM.
-ConditionPathExists=/etc/deploy-agent/agent.env
+# Builds run the user's Dockerfile, so they never start without the metadata block.
+Requires=metadata-block.service
+After=metadata-block.service
 
 [Service]
 Type=oneshot
-EnvironmentFile=/etc/deploy-agent/agent.env
 # This folder is installed as /usr/local/lib/deploy-agent/build_agent, so it runs as a package.
 Environment=PYTHONPATH=/usr/local/lib/deploy-agent
 ExecStart=/usr/bin/python3 -m build_agent

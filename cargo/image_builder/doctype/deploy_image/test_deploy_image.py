@@ -71,7 +71,7 @@ class IntegrationTestDeployImage(IntegrationTestCase):
 		):
 			image.install_packages()
 		self.assertIn(
-			"apt-get install -y rsync git podman buildah nginx\n",
+			"apt-get install -y rsync git podman buildah nginx nftables\n",
 			run.call_args.args[0],
 		)
 
@@ -92,6 +92,8 @@ class IntegrationTestDeployImage(IntegrationTestCase):
 			"etc/systemd/system/app@.service",
 			"etc/systemd/system/deploy-agent.timer",
 			"etc/nginx/conf.d/deploy-agent.conf",
+			"etc/systemd/system/metadata-block.service",
+			"etc/deploy-agent/metadata-block.nft",
 		):
 			self.assertIn(path, copied)
 		self.assertFalse([path for path in copied if "__pycache__" in path])

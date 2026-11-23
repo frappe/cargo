@@ -5,9 +5,9 @@ rm -f /etc/nginx/sites-enabled/default
 install -d -m 0700 /etc/deploy-agent
 install -d -m 0755 /var/lib/deploy-agent
 nginx -t
+nft --check -f /etc/deploy-agent/metadata-block.nft
 systemctl daemon-reload
-# The agent runs once Central's cloud-init writes /etc/deploy-agent/agent.env on a new VM.
-systemctl enable nginx deploy-agent.timer
+systemctl enable nginx metadata-block.service deploy-agent.timer
 
 apt-get -qqy autoremove --purge
 apt-get -qqy clean
