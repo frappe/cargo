@@ -7,17 +7,21 @@ from pathlib import Path
 
 from .models import (
 	SECRETS_DIRECTORY,
-	UNIT_PREFIX,
 	Build,
 	BuildReport,
 	BuildStatus,
 	BuildUnit,
+	Release,
+	ReleaseReport,
+	ReleaseStatus,
+	ReleaseUnit,
+	Unit,
 )
+from .slots import WORK_DIRECTORY, get_live_slot, get_slot_value
 
-WORK_DIRECTORY = Path("/var/lib/deploy-agent")
 BUILD_SCRIPT = Path(__file__).with_name("build.sh")
-# The live app's image and the ones a rollback can go back to.
-KEPT_IMAGES = 3
+# The newest image, which may still wait for its release; the live one is kept besides it.
+KEPT_IMAGES = 1
 # Leaves room for the live app, so running out of memory kills only the build.
 BUILD_MEMORY_MAX = "80%"
 STOP_TIMEOUT_SECONDS = 30
@@ -54,26 +58,42 @@ def systemctl(*arguments: str) -> str:
 	return subprocess.run(["systemctl", *arguments], check=True, capture_output=True, text=True).stdout
 
 
-def get_build_unit() -> BuildUnit | None:
-	output = systemctl("list-units", "--all", "--plain", "--no-legend", f"{UNIT_PREFIX}*.service")
+def get_unit(unit_class: type[Unit]) -> Unit | None:
+	"""The agent's build or release unit; one of each runs at a time."""
+	output = systemctl("list-units", "--all", "--plain", "--no-legend", f"{unit_class.PREFIX}*.service")
 	names = [line.split()[0] for line in output.splitlines() if line.strip()]
 	if len(names) > 1:
-		raise RuntimeError(f"Only one build runs at a time, found {', '.join(names)}.")
+		raise RuntimeError(f"Only one runs at a time, found {', '.join(names)}.")
 	if not names:
 		return None
 
 	properties = dict(
 		line.split("=", 1) for line in systemctl("show", names[0], "--property=SubState,Result").splitlines()
 	)
-	return BuildUnit(names[0], properties["SubState"], properties["Result"])
+	return unit_class(names[0], properties["SubState"], properties["Result"])
+
+
+def write_environment(path: Path, environment: dict[str, str]) -> None:
+	"""Root-only, so a token never shows in a unit's properties."""
+	SECRETS_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
+	with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
+		file.writelines(f"{key}={value}\n" for key, value in environment.items())
+
+
+def read_environment(path: Path) -> dict[str, str]:
+	return dict(line.split("=", 1) for line in path.read_text().splitlines() if line)
+
+
+def get_journal(unit: str) -> str:
+	return subprocess.run(
+		["journalctl", "--unit", unit, "--output", "cat", "--lines", str(LOG_TAIL_LINES), "--no-pager"],
+		capture_output=True,
+		text=True,
+	).stdout[-LOG_TAIL_BYTES:]
 
 
 def get_build_log(unit: BuildUnit) -> str:
-	log = subprocess.run(
-		["journalctl", "--unit", unit.name, "--output", "cat", "--lines", str(LOG_TAIL_LINES), "--no-pager"],
-		capture_output=True,
-		text=True,
-	).stdout
+	log = get_journal(unit.name)
 	if unit.is_out_of_memory:
 		log += (
 			f"\nBuild ran out of memory ({BUILD_MEMORY_MAX} of the VM's memory). "
@@ -82,15 +102,31 @@ def get_build_log(unit: BuildUnit) -> str:
 	return log[-LOG_TAIL_BYTES:]
 
 
-def check_build(unit: BuildUnit) -> None:
-	"""Report the build to Central; stop it once Central cancels it, or clean up once it finished."""
+def check_build(unit: BuildUnit) -> Release | None:
+	"""Report the build to Central and clean up once it finished or Central cancelled it.
+	Returns the release to start once the image is built."""
 	reply = call("report_build", **asdict(BuildReport(unit.deploy_request, unit.status, get_build_log(unit))))
+	release = None
 	# `cancel` means a newer push replaced the build.
+	if unit.status == BuildStatus.SUCCEEDED and not reply["cancel"]:
+		# Read before removing the build deletes its environment file.
+		release = Release.from_environment(read_environment(unit.environment_file))
 	if unit.is_finished or reply["cancel"]:
-		remove_build(unit)
+		remove_unit(unit)
+	return release
 
 
-def remove_build(unit: BuildUnit) -> None:
+def check_release(unit: ReleaseUnit) -> None:
+	"""Report the release to Central and clean up once it finished. Nothing cancels a release."""
+	call(
+		"report_deployment_status",
+		**asdict(ReleaseReport(unit.deploy_request, unit.status, get_journal(unit.name))),
+	)
+	if unit.is_finished:
+		remove_unit(unit)
+
+
+def remove_unit(unit: Unit) -> None:
 	"""Stop kills the unit's whole cgroup, with SIGKILL after the stop timeout."""
 	subprocess.run(["systemctl", "stop", unit.name], check=True)
 	# A unit that succeeded is already unloaded after the stop, so this one may fail.
@@ -100,7 +136,9 @@ def remove_build(unit: BuildUnit) -> None:
 
 
 def prune_images() -> None:
-	"""Keep the newest app images; remove older ones, then the layers no image uses."""
+	"""Keep the newest app image and the live one; remove the others, then the layers no image uses."""
+	live = get_live_slot()
+	in_use = {get_slot_value(live, "IMAGE")} if live else set()
 	output = subprocess.run(
 		[
 			"buildah",
@@ -108,7 +146,7 @@ def prune_images() -> None:
 			"--noheading",
 			"--no-trunc",
 			"--format",
-			"{{.CreatedAtRaw}}\t{{.ID}}\t{{.Name}}",
+			"{{.CreatedAtRaw}}\t{{.ID}}\t{{.Name}}:{{.Tag}}",
 		],
 		check=True,
 		capture_output=True,
@@ -116,22 +154,16 @@ def prune_images() -> None:
 	).stdout
 	# CreatedAtRaw sorts as text because the VM's clock is UTC; one image tagged twice is listed once.
 	images = sorted(
-		{tuple(line.split("\t")) for line in output.splitlines() if line.endswith("/app")}, reverse=True
+		{tuple(line.split("\t")) for line in output.splitlines() if "/app:" in line}, reverse=True
 	)
-	if old := [image_id for _created, image_id, _name in images[KEPT_IMAGES:]]:
+	if old := [image_id for _created, image_id, name in images[KEPT_IMAGES:] if name not in in_use]:
 		subprocess.run(["buildah", "rmi", *old], check=True)
 	subprocess.run(["buildah", "rmi", "--prune"], check=True)
 
 
 def start_build(build: Build) -> None:
 	"""Systemd runs the build, so it outlives this tick and a restart of the agent."""
-	SECRETS_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
-	# Root-only, so the token never shows in the unit's properties.
-	with os.fdopen(
-		os.open(build.environment_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
-	) as file:
-		file.writelines(f"{key}={value}\n" for key, value in build.environment.items())
-
+	write_environment(build.environment_file, build.environment)
 	subprocess.run(
 		[
 			"systemd-run",
@@ -151,11 +183,43 @@ def start_build(build: Build) -> None:
 	)
 
 
+def start_release(release: Release) -> None:
+	"""Systemd runs the release in its own unit, so its result and log stay apart from the build's."""
+	write_environment(release.environment_file, release.environment)
+	subprocess.run(
+		[
+			"systemd-run",
+			f"--unit={release.unit}",
+			f"--working-directory={WORK_DIRECTORY}",
+			"--property=RemainAfterExit=yes",
+			f"--property=TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
+			f"--setenv=PYTHONPATH={Path(__file__).parent.parent}",
+			f"--property=EnvironmentFile={release.environment_file}",
+			"/usr/bin/python3",
+			# Keeps the working directory off the import path.
+			"-P",
+			"-m",
+			"build_agent.release",
+		],
+		check=True,
+	)
+
+
 def main() -> None:
-	"""One tick: report the build that is running, or start the next one."""
+	"""One tick: report the running release or build, or start the next build."""
 	WORK_DIRECTORY.mkdir(parents=True, exist_ok=True)
-	if unit := get_build_unit():
-		check_build(unit)
+	if unit := get_unit(ReleaseUnit):
+		check_release(unit)
+
+	elif unit := get_unit(BuildUnit):
+		if release := check_build(unit):
+			start_release(release)
+			# Like a build, Central hears the release runs only once its unit exists.
+			call(
+				"report_deployment_status",
+				**asdict(ReleaseReport(release.deploy_request, ReleaseStatus.RELEASING, "")),
+			)
+
 	elif build := get_build():
 		start_build(build)
 		# Central hands out this build until it hears it runs; a failed start is retried next tick.
