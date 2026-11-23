@@ -1,0 +1,14 @@
+[Unit]
+Description=Keep the guest metadata, which holds the agent's credential, away from user code
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/deploy-agent/metadata-block.nft
+ExecStop=/usr/sbin/nft delete table inet deploy_agent
+
+[Install]
+WantedBy=sysinit.target
