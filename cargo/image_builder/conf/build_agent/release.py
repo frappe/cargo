@@ -90,10 +90,9 @@ def main() -> None:
 		systemctl("stop", f"app@{idle}")
 		sys.exit(1)
 
-	# This makes the call to switch to the newer blue/green version in the proxy
+	systemctl("enable", f"app@{idle}")
 	switch_upstream(idle)
 	systemctl("reload-or-restart", "nginx")
-	systemctl("enable", f"app@{idle}")
 	# Disable the older serving app once nginx has reloaded
 	if live:
 		systemctl("disable", f"app@{live}")
