@@ -84,10 +84,11 @@ applied layout as well — before that Garage answers but its nodes carry no sto
 
 Cargo reads each bucket's stored bytes from Garage every `usage_sample_minutes` (15 by
 default) and keeps the highest reading of each UTC day in `Bucket Usage Day`. A reading
-counts for the UTC day it was taken on. A read waits 5 seconds for Garage. Three reads in a
-row that time out, a cluster that cannot be connected to, or any other failure ends that
-page of buckets and keeps what was read. Such a stop leaves at most one Error Log per
-cluster an hour, because cluster health already reports the outage. The row names the
+counts for the UTC day it was taken on. A read waits 5 seconds for Garage. A bucket whose
+read fails is skipped and logged, and the page goes on. Three reads in a row that time out,
+a cluster that cannot be connected to, or an unexpected error ends that page of buckets and
+keeps what was read. All Error Logs of the sampler for one cluster share one limit of one
+an hour, because cluster health already reports the outage. The row names the
 bucket, not the record, so a deleted bucket's last day is kept: a bucket is read once more
 just before Garage deletes it.
 
@@ -114,7 +115,8 @@ X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report 
 A call carries at most 1,000 lines. Central answers `{"accepted": n, "rejected": [...]}`.
 A day is confirmed only when no rejection could mean it. A rejection is matched by its
 `subject`, and by its `day` when it has one. An older Central sends only `subject` and
-`reason`, so its rejection holds every day of that bucket in the call. A day is refused, and
+`reason`, so its rejection holds every day of that bucket in the call. A rejection with no
+`subject` holds every day in the call. A day is refused, and
 never sent again, only when a rejection names its bucket and day and has `retry` false. Every
 other rejected day is sent again next hour. Sending a day twice is harmless: Central keeps the
 higher value. Each call's answer is committed before the next call is sent.
