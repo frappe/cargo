@@ -40,10 +40,14 @@ class Client:
 
 	timeout: float = 30
 
-	def __init__(self, cluster: ObjectStorageCluster, address: str | None = None) -> None:
+	def __init__(
+		self, cluster: ObjectStorageCluster, address: str | None = None, timeout: float | None = None
+	) -> None:
 		"""`address` asks that one node instead of the gateways."""
 		self.cluster = cluster
 		self.address = address
+		if timeout:
+			self.timeout = timeout
 
 	@cached_property
 	def urls(self) -> list[str]:

@@ -63,6 +63,15 @@ class UnitTestGatewayFailover(UnitTestCase):
 
 		self.assertNotIsInstance(raised.exception, Unreachable)
 
+	def test_a_timeout_can_be_set_for_one_client(self):
+		cluster = SimpleNamespace(gateway_addresses=["fd00::1"], admin_port=3903, get_password=lambda _: "t")
+		answer = Mock(ok=True, status_code=200, content=b"{}", json=lambda: {})
+		with patch("requests.request", return_value=answer) as sent:
+			Client(cluster, timeout=5).status()
+			Client(cluster).status()
+
+		self.assertEqual([call.kwargs["timeout"] for call in sent.call_args_list], [5, 30])
+
 	def test_a_call_cut_off_after_it_was_sent_is_not_repeated(self):
 		"""CreateKey sent twice would make two keys."""
 		aborted = requests.ConnectionError(ProtocolError("Connection aborted."))

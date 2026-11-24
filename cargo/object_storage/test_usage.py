@@ -14,7 +14,14 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	prune,
 	record_peaks,
 )
-from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, is_sample_due, sample_page, sample_usage
+from cargo.object_storage.usage import (
+	CHUNK_SIZE,
+	SAMPLE_TIMEOUT_SECONDS,
+	bucket_pages,
+	is_sample_due,
+	sample_page,
+	sample_usage,
+)
 
 OUTBOX = "cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day"
 
@@ -115,13 +122,13 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		with (
 			patch.object(Client, "urls", ["http://gateway:3903"]),
 			patch.object(Client, "headers", {}),
-			patch("cargo.object_storage.client.requests.request", side_effect=answers) as sent,
+			patch("cargo.object_storage.client.requests.request", side_effect=answers) as self.sent,
 			patch("cargo.object_storage.usage.frappe.log_error") as self.log_error,
 			patch("cargo.object_storage.usage.frappe.db.commit"),
 			patch("cargo.object_storage.usage.utc_now", return_value=NOON),
 		):
 			sample_page(self.cluster, names)
-		return [call.kwargs["params"]["globalAlias"] for call in sent.call_args_list]
+		return [call.kwargs["params"]["globalAlias"] for call in self.sent.call_args_list]
 
 	def test_an_unreachable_cluster_is_not_read_further(self):
 		"""One failed connection ends the page, so a dead cluster holds no worker for hours. What
@@ -182,6 +189,34 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertIsNone(self.peak("alpha", after.date()))
 		self.assertEqual(self.peak("beta", after.date()), 7)
 		self.assertIsNone(self.peak("beta", before.date()))
+
+	def test_sampling_waits_seconds_not_the_default_for_an_answer(self):
+		asked = self.sample_page_over_http(["alpha"], [answer(1)])
+
+		self.assertEqual(asked, ["alpha"])
+		self.assertEqual(self.sent.call_args.kwargs["timeout"], SAMPLE_TIMEOUT_SECONDS)
+		self.assertEqual(Client(frappe.get_doc("Object Storage Cluster", self.cluster)).timeout, 30)
+
+	def test_a_gateway_that_never_answers_ends_the_page(self):
+		"""Reads that time out in a row end the page, keeping what was read before them."""
+		names = ["alpha", "slow-1", "slow-2", "slow-3", "omega"]
+		timeout = requests.ReadTimeout("read timed out")
+
+		asked = self.sample_page_over_http(names, [answer(1), timeout, timeout, timeout, answer(1)])
+
+		self.assertEqual(asked, names[:4])
+		self.assertEqual(self.peak("alpha", NOON.date()), 1)
+		titles = [call.kwargs["title"] for call in self.log_error.call_args_list]
+		self.assertTrue(any("not reachable" in title for title in titles))
+
+	def test_an_answer_between_timeouts_starts_the_count_again(self):
+		names = ["slow-1", "slow-2", "alpha", "slow-3", "slow-4", "omega"]
+		timeout = requests.ReadTimeout("read timed out")
+
+		asked = self.sample_page_over_http(names, [timeout, timeout, answer(1), timeout, timeout, answer(1)])
+
+		self.assertEqual(asked, names)
+		self.assertEqual(self.peak("omega", NOON.date()), 1)
 
 	def test_buckets_of_a_cluster_not_active_are_not_read(self):
 		self.make_bucket("alpha")

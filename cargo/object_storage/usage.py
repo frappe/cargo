@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 import frappe
+import requests
 
 from cargo.object_storage.client import Client, Error, NoGateway, Unreachable
 from cargo.object_storage.clock import as_utc, site_time, utc_now
@@ -12,6 +13,8 @@ SETTINGS = "Cargo Settings"
 DEFAULT_SAMPLE_MINUTES = 15
 PAGE_SIZE = 500
 CHUNK_SIZE = 50
+SAMPLE_TIMEOUT_SECONDS = 5
+TIMEOUTS_BEFORE_UNREACHABLE = 3
 
 
 def sample_usage() -> None:
@@ -74,8 +77,11 @@ class PageSample:
 
 	def __init__(self, cluster: str) -> None:
 		self.cluster = cluster
-		self.garage = Client(frappe.get_cached_doc("Object Storage Cluster", cluster))
+		self.garage = Client(
+			frappe.get_cached_doc("Object Storage Cluster", cluster), timeout=SAMPLE_TIMEOUT_SECONDS
+		)
 		self.failed: list[str] = []
+		self.timeouts = 0
 
 	def run(self, names: list[str]) -> None:
 		try:
@@ -100,12 +106,22 @@ class PageSample:
 
 	def read(self, name: str) -> dict | None:
 		try:
-			return self.garage.bucket(name)
+			info = self.garage.bucket(name)
 		except Unreachable:
 			raise
 		except Error as error:
 			self.failed.append(f"{name}: {error}")
+			self.count_timeout(error)
 			return None
+
+		self.timeouts = 0
+		return info
+
+	def count_timeout(self, error: Error) -> None:
+		"""A gateway that takes calls but never answers ends the page, like one that refuses them."""
+		self.timeouts = self.timeouts + 1 if isinstance(error.__cause__, requests.Timeout) else 0
+		if self.timeouts >= TIMEOUTS_BEFORE_UNREACHABLE:
+			raise Unreachable(f"{self.timeouts} reads in a row timed out: {error}")
 
 	def log_failed(self) -> None:
 		if self.failed:
