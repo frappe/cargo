@@ -15,6 +15,8 @@ PAGE_SIZE = 500
 CHUNK_SIZE = 50
 SAMPLE_TIMEOUT_SECONDS = 5
 TIMEOUTS_BEFORE_UNREACHABLE = 3
+STOPPED_LOG_KEY = "cargo-bucket-usage-sample-stopped"
+STOPPED_LOG_SECONDS = 3600
 
 
 def sample_usage() -> None:
@@ -88,9 +90,7 @@ class PageSample:
 			for start in range(0, len(names), CHUNK_SIZE):
 				self.read_chunk(names[start : start + CHUNK_SIZE])
 		except (Unreachable, NoGateway) as error:
-			frappe.log_error(
-				title=f"Stopped reading bucket usage on {self.cluster}: not reachable", message=str(error)
-			)
+			self.log_stopped("not reachable", str(error))
 		self.log_failed()
 
 	def read_chunk(self, names: list[str]) -> None:
@@ -122,6 +122,17 @@ class PageSample:
 		self.timeouts = self.timeouts + 1 if isinstance(error.__cause__, requests.Timeout) else 0
 		if self.timeouts >= TIMEOUTS_BEFORE_UNREACHABLE:
 			raise Unreachable(f"{self.timeouts} reads in a row timed out: {error}")
+
+	def log_stopped(self, reason: str, message: str) -> None:
+		"""An Error Log at most once an hour per cluster: cluster health already reports an outage."""
+		title = f"Stopped reading bucket usage on {self.cluster}: {reason}"
+		key = f"{STOPPED_LOG_KEY}:{self.cluster}"
+		if frappe.cache.get_value(key):
+			frappe.logger("cargo.usage").warning(f"{title}: {message}")
+			return
+
+		frappe.cache.set_value(key, 1, expires_in_sec=STOPPED_LOG_SECONDS)
+		frappe.log_error(title=title, message=message)
 
 	def log_failed(self) -> None:
 		if self.failed:

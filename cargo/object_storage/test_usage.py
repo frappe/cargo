@@ -6,7 +6,7 @@ import requests
 from frappe.tests import IntegrationTestCase
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
-from cargo.object_storage.client import Client, Error
+from cargo.object_storage.client import Client, Error, Unreachable
 from cargo.object_storage.clock import site_time
 from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	USAGE_DAY,
@@ -17,6 +17,7 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 from cargo.object_storage.usage import (
 	CHUNK_SIZE,
 	SAMPLE_TIMEOUT_SECONDS,
+	STOPPED_LOG_KEY,
 	bucket_pages,
 	is_sample_due,
 	sample_page,
@@ -46,6 +47,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		frappe.db.delete(USAGE_DAY)
 		frappe.db.delete("Bucket")
 		self.cluster = self.make_cluster()
+		self.addCleanup(frappe.cache.delete_value, f"{STOPPED_LOG_KEY}:{self.cluster}")
 
 	def make_cluster(self, status: str = "Active") -> str:
 		name = f"test-cluster-{frappe.generate_hash(length=6)}"
@@ -189,6 +191,18 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertIsNone(self.peak("alpha", after.date()))
 		self.assertEqual(self.peak("beta", after.date()), 7)
 		self.assertIsNone(self.peak("beta", before.date()))
+
+	def test_an_unreachable_cluster_is_logged_once_an_hour(self):
+		"""Cluster health already reports the outage; each page each interval would repeat it."""
+		calls = [
+			self.sample_page_at(NOON, ["alpha"], Mock(side_effect=Unreachable("refused"))).call_count
+			for _ in range(3)
+		]
+
+		self.assertEqual(calls, [1, 0, 0])
+
+		frappe.cache.delete_value(f"{STOPPED_LOG_KEY}:{self.cluster}")
+		self.sample_page_at(NOON, ["alpha"], Mock(side_effect=Unreachable("refused"))).assert_called_once()
 
 	def test_sampling_waits_seconds_not_the_default_for_an_answer(self):
 		asked = self.sample_page_over_http(["alpha"], [answer(1)])
