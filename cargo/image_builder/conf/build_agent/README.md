@@ -33,7 +33,7 @@ The deploy image installs this folder at `/usr/local/lib/deploy-agent/build_agen
 │                         ├─► deploy-build-<request>.service  (build.sh) │
 │                         └─► release-build-<request>.service (release)  │
 │                                                                        │
-│ metadata-block.service: nftables keeps 169.254.169.254 away from users │
+│ metadata-block.service: nftables keeps 169.254.169.254 from containers │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -46,6 +46,7 @@ The deploy image installs this folder at `/usr/local/lib/deploy-agent/build_agen
 | `app@blue`, `app@green` | The two app slots. Each slot runs one container on its own port: blue on 8001, green on 8002. |
 | `nginx` | The only public port, 80. It sends traffic to the slot that `upstream.conf` names. |
 | `metadata-block.service` | Loads `metadata-block.nft` before the network starts. |
+| `/etc/update-motd.d/60-deploy-app` | `motd.sh`. At each SSH login, it shows the live slot and the commands to open a shell in the app, read its output, and read the build and release logs. |
 | `/var/lib/deploy-agent/upstream.conf` | The one record of the live slot. |
 | `/var/lib/deploy-agent/slots/<slot>.env` | The image, port, and Deploy Request of each slot. |
 | `/run/deploy-agent/<unit>.env` | The environment of one build or release unit. Only root can read it. |
@@ -235,14 +236,13 @@ Central puts the agent's credential in the VM's guest metadata, under the key `d
 1. `PUT http://169.254.169.254/latest/api/token` gets a session token.
 2. `GET http://169.254.169.254/latest/meta-data/attributes/deploy-agent` gets the value.
 
-User code must not read this credential. `metadata-block.nft` loads before the network starts and has two rules:
+User code must not read this credential. User code runs only in containers and in the `RUN` steps of a build, and both reach the network through podman's bridge. `metadata-block.nft` loads before the network starts and has one rule:
 
 | Chain | Rule | Stops |
 |---|---|---|
-| `forward` | Drop all traffic to `169.254.169.254` | Containers and the `RUN` steps of a build |
-| `output` | Drop traffic to `169.254.169.254` from a user that is not root | Other processes on the VM |
+| `forward` | Drop traffic from a `podman*` interface to `169.254.169.254` | Containers and the `RUN` steps of a build |
 
-The agent runs as root, so it can read the metadata. `deploy-agent.service` and `app@.service` require `metadata-block.service`. If the block does not load, no build and no app starts.
+Processes on the host can read the metadata. The agent reads the credential as root. sshd reads the SSH keys from the metadata as `nobody`, through `atlas-guest-agent authorized-keys`. A block on the host would stop SSH and the web console. `deploy-agent.service` and `app@.service` require `metadata-block.service`. If the block does not load, no build and no app starts.
 
 ## Known limits
 
