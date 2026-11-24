@@ -153,4 +153,3 @@ class PageSample:
 
 		frappe.cache.set_value(key, 1, expires_in_sec=LOG_SECONDS)
 		frappe.log_error(title=title, message=message)
-
