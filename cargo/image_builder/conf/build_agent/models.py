@@ -163,6 +163,11 @@ class Unit:
 		return get_environment_file(self.name)
 
 	@property
+	def cursor_file(self) -> Path:
+		"""Where the journal lines Central already has end."""
+		return SECRETS_DIRECTORY / f"{self.name.removesuffix('.service')}.cursor"
+
+	@property
 	def is_finished(self) -> bool:
 		return self.sub_state in {"exited", "failed", "dead"}
 
