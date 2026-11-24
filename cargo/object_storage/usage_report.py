@@ -106,9 +106,26 @@ def post_report(url: str, secret: str, body: bytes) -> dict:
 	if not response.ok:
 		raise ReportRefused(f"Central answered {response.status_code}: {response.text[:500]}")
 
-	reply = response.json().get("message")
-	if not isinstance(reply, dict) or "accepted" not in reply:
+	reply = verdict(response)
+	if reply is None:
 		raise ReportRefused(f"Central answered without a verdict: {response.text[:500]}")
+	return reply
+
+
+def verdict(response: requests.Response) -> dict | None:
+	"""Central's answer, or None when the body is not one."""
+	try:
+		body = response.json()
+	except ValueError:
+		return None
+
+	reply = body.get("message") if isinstance(body, dict) else None
+	if not isinstance(reply, dict) or "accepted" not in reply:
+		return None
+
+	rejected = reply.get("rejected")
+	if not isinstance(rejected, list) or not all(isinstance(line, dict) for line in rejected):
+		return None
 	return reply
 
 
@@ -117,7 +134,7 @@ def settle(rows: list[frappe._dict], reply: dict) -> None:
 	only when Central names its bucket and day and says `retry` false."""
 	accepted, refused = [], {}
 	for row in rows:
-		against = [line for line in reply.get("rejected") or [] if may_mean(line, row)]
+		against = [line for line in reply["rejected"] if may_mean(line, row)]
 		if not against:
 			accepted.append(row.name)
 		elif refusal := refusal_of(row, against):

@@ -260,3 +260,25 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 
 		self.assertTrue(self.pending("alpha"))
 		self.assertTrue(self.pending("beta"))
+
+	def test_an_answer_that_is_not_a_verdict_settles_nothing(self):
+		self.sample({"alpha": 1})
+		not_json = MagicMock(status_code=200, ok=True, text="<html>")
+		not_json.json.side_effect = ValueError("not json")
+		answers = {
+			"not json": not_json,
+			"not an object": MagicMock(status_code=200, ok=True, text="[]", json=lambda: []),
+			"no message": MagicMock(status_code=200, ok=True, text="{}", json=lambda: {}),
+			"no rejected": reply(message={"accepted": 1}),
+			"a rejection that is not a line": reply(message={"accepted": 0, "rejected": ["alpha"]}),
+		}
+		for case, answer in answers.items():
+			with (
+				self.subTest(case=case),
+				patch("cargo.object_storage.usage_report.frappe.log_error") as log_error,
+			):
+				self.report(lambda *args, answer=answer, **kwargs: answer)
+
+				log_error.assert_called_once()
+				self.assertTrue(self.pending("alpha"))
+				self.assertIsNone(frappe.db.get_value(USAGE_DAY, {"bucket_name": "alpha"}, "sent_at"))
