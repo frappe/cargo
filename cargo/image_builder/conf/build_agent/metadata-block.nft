@@ -4,15 +4,10 @@ table inet deploy_agent
 flush table inet deploy_agent
 
 table inet deploy_agent {
-	# Containers and build steps reach the metadata through the host's forward path.
+	# Only containers and build steps, which reach the host through podman's bridge. Host processes keep the
+	# metadata: sshd reads its authorized keys from it as nobody.
 	chain forward {
 		type filter hook forward priority filter - 10; policy accept;
-		ip daddr 169.254.169.254 drop
-	}
-
-	# On the host, only root (the deploy agent) reads the metadata.
-	chain output {
-		type filter hook output priority filter - 10; policy accept;
-		ip daddr 169.254.169.254 meta skuid != 0 drop
+		iifname "podman*" ip daddr 169.254.169.254 drop
 	}
 }
