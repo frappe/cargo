@@ -6,7 +6,7 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
-from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import outbox_state
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import USAGE_DAY, outbox_state
 from cargo.telemetry.datum import send_to_datum
 
 METADATA_BACKUP_AGE = "cargo_object_storage_metadata_backup_age_seconds"
@@ -41,7 +41,11 @@ def get_samples() -> list[dict]:
 
 
 def get_outbox_samples(timestamp: str) -> list[dict]:
-	"""Bucket usage days Central has never answered for, and how many days old the oldest is."""
+	"""Bucket usage days Central has never answered for, and how many days old the oldest is. None
+	on a site with no cluster and no usage, so it does not call Datum every hour for nothing."""
+	if not frappe.db.exists("Object Storage Cluster", {}) and not frappe.db.exists(USAGE_DAY, {}):
+		return []
+
 	depth, oldest = outbox_state()
 	age = (datetime.now(UTC).date() - oldest).days if oldest else 0
 	return [
