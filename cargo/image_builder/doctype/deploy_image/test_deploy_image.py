@@ -94,6 +94,7 @@ class IntegrationTestDeployImage(IntegrationTestCase):
 			"etc/nginx/conf.d/deploy-agent.conf",
 			"etc/systemd/system/metadata-block.service",
 			"etc/deploy-agent/metadata-block.nft",
+			"etc/update-motd.d/60-deploy-app",
 		):
 			self.assertIn(path, copied)
 		self.assertFalse([path for path in copied if "__pycache__" in path])
