@@ -63,7 +63,10 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		record_peaks(readings, moment)
 
 	def report(self, central) -> MagicMock:
-		with patch("cargo.object_storage.usage_report.requests.post", side_effect=central) as post:
+		with (
+			patch("cargo.object_storage.usage_report.requests.post", side_effect=central) as post,
+			patch("cargo.object_storage.usage_report.frappe.db.commit") as self.commit,
+		):
 			report_usage()
 		return post
 
@@ -282,3 +285,18 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 				log_error.assert_called_once()
 				self.assertTrue(self.pending("alpha"))
 				self.assertIsNone(frappe.db.get_value(USAGE_DAY, {"bucket_name": "alpha"}, "sent_at"))
+
+	def test_each_batch_is_committed_before_the_next_is_sent(self):
+		"""So the outbox rows are not held locked while Central answers the next batch."""
+		self.sample({f"bucket-{index:04d}": index for index in range(1001)})
+		central = Central()
+		commits_before = []
+
+		def counting(*args, **kwargs):
+			commits_before.append(self.commit.call_count)
+			return central(*args, **kwargs)
+
+		self.report(counting)
+
+		self.assertEqual(commits_before, [0, 1])
+		self.assertEqual(self.commit.call_count, 2)

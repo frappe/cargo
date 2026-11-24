@@ -49,6 +49,8 @@ def report_usage() -> None:
 			return
 
 		settle(rows, reply)
+		# Frees this batch's outbox rows before the next call, so samplers do not wait on them.
+		frappe.db.commit()  # nosemgrep
 
 
 def report_target() -> tuple[str, str] | None:
