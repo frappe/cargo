@@ -21,6 +21,12 @@
   "atlas_token",
   "atlas_tenant_id",
   "wildcard_domain",
+  "usage_report_section",
+  "central_report_secret",
+  "pause_usage_report",
+  "column_break_usage",
+  "usage_sample_minutes",
+  "last_usage_sample_at",
   "letsencrypt_section",
   "letsencrypt_email",
   "is_letsencrypt_staging",
@@ -373,13 +379,51 @@
    "fieldtype": "Table",
    "label": "Compliance Apps",
    "options": "Compliance App"
+  },
+  {
+   "description": "Cargo samples each bucket's stored bytes and sends Central each UTC day's peak once an hour.",
+   "fieldname": "usage_report_section",
+   "fieldtype": "Section Break",
+   "label": "Usage Report"
+  },
+  {
+   "description": "Signs the usage report. Central sets it when it enrols this Cargo; until then nothing is sent.",
+   "fieldname": "central_report_secret",
+   "fieldtype": "Password",
+   "label": "Central Report Secret",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Stop sending usage to Central. Sampling goes on, and the days wait in the outbox for 30 days.",
+   "fieldname": "pause_usage_report",
+   "fieldtype": "Check",
+   "label": "Pause Usage Report"
+  },
+  {
+   "fieldname": "column_break_usage",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "15",
+   "description": "How often each bucket's stored bytes are read from Garage. Empty is 15. A bucket filled and emptied between two reads is not seen.",
+   "fieldname": "usage_sample_minutes",
+   "fieldtype": "Int",
+   "label": "Usage Sample Minutes",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "last_usage_sample_at",
+   "fieldtype": "Datetime",
+   "label": "Last Usage Sample At",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-20 12:00:00.000000",
+ "modified": "2026-11-24 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cargo",
  "name": "Cargo Settings",

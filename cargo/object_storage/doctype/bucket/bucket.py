@@ -13,6 +13,7 @@ from frappe.utils.synchronization import filelock
 from cargo.object_storage import cors
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.models import BucketCredentials, BucketUsage
+from cargo.object_storage.usage import record_peaks
 
 if TYPE_CHECKING:
 	from cargo.object_storage.doctype.bucket_credential.bucket_credential import BucketCredential
@@ -84,11 +85,15 @@ class Bucket(Document):
 			self.apply_quota()
 
 	def on_trash(self) -> None:
-		"""Drop the bucket and its keys. In case deletion is not possible raise."""
+		"""Drop the bucket and its keys. In case deletion is not possible raise. The bucket is
+		sampled first, so its last day keeps a usage row for Central."""
 		with self.lock():
-			bucket_id = self.get_bucket_id()
-			if not bucket_id:
+			info = self.garage.bucket(self.bucket_name)
+			if not info:
 				return
+
+			bucket_id = info["id"]
+			record_peaks({self.bucket_name: info.get("bytes") or 0})
 
 			# The bucket first: a refused delete would otherwise leave it live with its keys
 			# already gone, reachable by nobody. A key outliving its bucket opens nothing.

@@ -7,6 +7,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from cargo.object_storage.client import Client, Error
+from cargo.object_storage.doctype.bucket import bucket as bucket_module
 from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.patches import apply_bucket_cors_rules
 
@@ -33,6 +34,7 @@ class UnitTestBucket(UnitTestCase):
 		self.patch(Bucket, "garage", Client(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001")))
 		self.saved = self.patch(Bucket, "save")
 		self.patch(Client, "status", return_value={"nodes": [{"garageVersion": "v2.3.0", "isUp": True}]})
+		self.recorded = self.patch(bucket_module, "record_peaks")
 
 	def patch(self, target, attribute, *args, **kwargs):
 		patcher = patch.object(target, attribute, *args, **kwargs)
@@ -216,6 +218,26 @@ class UnitTestBucket(UnitTestCase):
 		self.assertEqual(delete_key.call_count, 2)
 		# The bucket first: a 409 must not leave it live with its keys already gone.
 		self.assertEqual(order, ["bucket", "GK-old", "GK-other"])
+
+	def test_a_bucket_is_sampled_before_garage_drops_it(self):
+		"""Its last day keeps a usage row, so the day still reaches Central."""
+		order = []
+		self.recorded.side_effect = lambda readings: order.append(readings)
+		self.answers(
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 2048}},
+			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
+		)
+
+		self.bucket.on_trash()
+
+		self.assertEqual(order, [{BUCKET: 2048}, "bucket"])
+
+	def test_a_bucket_already_gone_records_no_usage(self):
+		self.answers(bucket={"return_value": None})
+
+		self.bucket.on_trash()
+
+		self.recorded.assert_not_called()
 
 	def test_a_bucket_whose_delete_is_refused_keeps_its_keys(self):
 		"""Garage answers 409 while objects remain, so the bucket stays reachable."""

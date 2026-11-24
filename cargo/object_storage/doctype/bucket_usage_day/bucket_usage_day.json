@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-11-24 12:00:00.000000",
+ "description": "One bucket's highest stored bytes on one UTC day, kept until Central confirms it.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "bucket_name",
+  "day",
+  "peak_bytes",
+  "sampled_at",
+  "column_break_report",
+  "sent_at",
+  "sent_bytes",
+  "confirmed_at",
+  "confirmed_bytes",
+  "refused",
+  "reason"
+ ],
+ "fields": [
+  {
+   "description": "Not a link, so the day outlives a deleted bucket.",
+   "fieldname": "bucket_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bucket Name",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "UTC date.",
+   "fieldname": "day",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Day",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "peak_bytes",
+   "fieldtype": "Long Int",
+   "in_list_view": 1,
+   "label": "Peak Bytes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sampled_at",
+   "fieldtype": "Datetime",
+   "label": "Sampled At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_report",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sent_at",
+   "fieldtype": "Datetime",
+   "label": "Sent At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sent_bytes",
+   "fieldtype": "Long Int",
+   "label": "Sent Bytes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "confirmed_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Confirmed At",
+   "read_only": 1
+  },
+  {
+   "description": "The peak Central confirmed. A higher peak later the same day is sent again.",
+   "fieldname": "confirmed_bytes",
+   "fieldtype": "Long Int",
+   "label": "Confirmed Bytes",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Central refused the day for good. It is not sent again.",
+   "fieldname": "refused",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Refused",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "in_create": 1,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-11-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Object Storage",
+ "name": "Bucket Usage Day",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "day",
+ "sort_order": "DESC",
+ "states": []
+}
