@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "autoname": "DPI-.####",
+ "creation": "2026-11-23 21:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "commit",
+  "column_break_build",
+  "machine",
+  "snapshot_id",
+  "built_at",
+  "log_section",
+  "error",
+  "build_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Provisioning\nBuilding\nSnapshotting\nCompleted\nFailed\nRetired",
+   "read_only": 1
+  },
+  {
+   "fieldname": "commit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Cargo Commit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_build",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "machine",
+   "fieldtype": "Link",
+   "label": "Build Machine",
+   "options": "Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "snapshot_id",
+   "fieldtype": "Data",
+   "label": "Atlas Image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "built_at",
+   "fieldtype": "Datetime",
+   "label": "Built At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "log_section",
+   "fieldtype": "Section Break",
+   "label": "Log"
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "build_log",
+   "fieldtype": "Code",
+   "label": "Build Log",
+   "read_only": 1
+  }
+ ],
+ "links": [
+  {
+   "group": "Build Machine",
+   "link_doctype": "Machine",
+   "link_fieldname": "reference_name"
+  },
+  {
+   "group": "Pipelines",
+   "link_doctype": "Pipeline",
+   "link_fieldname": "linked_docname"
+  }
+ ],
+ "modified": "2026-11-23 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Image Builder",
+ "name": "Deploy Image",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

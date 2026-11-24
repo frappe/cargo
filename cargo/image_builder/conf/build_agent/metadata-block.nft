@@ -1,0 +1,18 @@
+#!/usr/sbin/nft -f
+# Its own table, so podman's rules and a reload of this file never touch each other.
+table inet deploy_agent
+flush table inet deploy_agent
+
+table inet deploy_agent {
+	# Containers and build steps reach the metadata through the host's forward path.
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+		ip daddr 169.254.169.254 drop
+	}
+
+	# On the host, only root (the deploy agent) reads the metadata.
+	chain output {
+		type filter hook output priority filter - 10; policy accept;
+		ip daddr 169.254.169.254 meta skuid != 0 drop
+	}
+}
