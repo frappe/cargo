@@ -7,12 +7,12 @@ from frappe.tests import IntegrationTestCase
 from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from cargo.object_storage.client import Client, Error
+from cargo.object_storage.clock import site_time
 from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	USAGE_DAY,
 	outbox_state,
 	prune,
 	record_peaks,
-	site_time,
 )
 from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, is_sample_due, sample_page, sample_usage
 
@@ -223,7 +223,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		frappe.db.set_single_value("Cargo Settings", "usage_sample_minutes", 15)
 		frappe.db.set_single_value("Cargo Settings", "last_usage_sample_at", datetime(2026, 11, 1, 1, 50))
 
-		with patch(f"{OUTBOX}.get_system_timezone", return_value="America/New_York"):
+		with patch("cargo.object_storage.clock.get_system_timezone", return_value="America/New_York"):
 			self.assertFalse(is_sample_due(datetime(2026, 11, 1, 6, 4, tzinfo=UTC)))
 			self.assertTrue(is_sample_due(datetime(2026, 11, 1, 6, 5, tzinfo=UTC)))
 

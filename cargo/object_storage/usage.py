@@ -5,12 +5,8 @@ from datetime import datetime, timedelta
 import frappe
 
 from cargo.object_storage.client import Client, Error, Unreachable
-from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
-	as_utc,
-	record_peaks,
-	site_time,
-	utc_now,
-)
+from cargo.object_storage.clock import as_utc, site_time, utc_now
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import record_peaks
 
 SETTINGS = "Cargo Settings"
 DEFAULT_SAMPLE_MINUTES = 15

@@ -12,7 +12,8 @@ from frappe.utils.synchronization import filelock
 
 from cargo.object_storage import cors
 from cargo.object_storage.client import Client, Error
-from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import record_peaks, utc_now
+from cargo.object_storage.clock import utc_now
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import record_peaks
 from cargo.object_storage.models import BucketCredentials, BucketUsage
 
 if TYPE_CHECKING:

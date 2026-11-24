@@ -11,6 +11,7 @@ import requests
 from frappe.utils import now_datetime
 from frappe.utils.password import get_decrypted_password
 
+from cargo.object_storage.clock import as_utc
 from cargo.object_storage.doctype.bucket_usage_day import bucket_usage_day as outbox
 from cargo.object_storage.usage import SETTINGS
 
@@ -76,7 +77,7 @@ def pending_batches() -> Iterator[list[frappe._dict]]:
 
 def report_body(rows: list[frappe._dict]) -> bytes:
 	"""The report as signed and sent: `as_of` is the newest sample in it, in UTC."""
-	as_of = max(outbox.as_utc(row.sampled_at) for row in rows)
+	as_of = max(as_utc(row.sampled_at) for row in rows)
 	lines = [
 		{"subject": row.bucket_name, "meter": METER, "day": str(row.day), "value": int(row.peak_bytes)}
 		for row in rows
