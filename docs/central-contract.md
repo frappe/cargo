@@ -87,7 +87,8 @@ default) and keeps the highest reading of each UTC day in `Bucket Usage Day`. A 
 counts for the UTC day it was taken on. A read waits 5 seconds for Garage. A bucket whose
 read fails is skipped and logged, and the page goes on. Three reads in a row that time out,
 a cluster that cannot be connected to, or an unexpected error ends that page of buckets and
-keeps what was read. All Error Logs of the sampler for one cluster share one limit of one
+keeps what was read. A database error, such as a lock wait timeout or a deadlock, fails the
+job instead, so Frappe rolls it back; chunks committed before it stay. All Error Logs of the sampler for one cluster share one limit of one
 an hour, because cluster health already reports the outage. The row names the
 bucket, not the record, so a deleted bucket's last day is kept: a bucket is read once more
 just before Garage deletes it.

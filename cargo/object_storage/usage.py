@@ -78,6 +78,20 @@ def sample_page(cluster: str, names: list[str]) -> None:
 	PageSample(cluster).run(names)
 
 
+def database_errors() -> tuple[type[Exception], ...]:
+	"""Errors the job must fail on, so Frappe rolls back and the lock or deadlock is retried."""
+	db = frappe.db
+	return (
+		frappe.QueryTimeoutError,
+		frappe.QueryDeadlockError,
+		db.OperationalError,
+		db.InternalError,
+		db.InterfaceError,
+		db.ProgrammingError,
+		db.DataError,
+	)
+
+
 class PageSample:
 	"""One job's read of a page of buckets. Readings are committed chunk by chunk, so a page
 	that stops midway keeps what it read, and a cluster that cannot be reached ends the page."""
@@ -100,6 +114,8 @@ class PageSample:
 			self.log_stopped("not reachable", str(error))
 		except TooSlow as error:
 			self.log_stopped("reads too slow", str(error))
+		except database_errors():
+			raise
 		except Exception:
 			self.log_stopped("failed", frappe.get_traceback())
 		self.log_failed()

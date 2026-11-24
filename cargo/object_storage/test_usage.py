@@ -182,7 +182,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(frappe.db.count(USAGE_DAY), 0)
 
 	def test_a_page_that_breaks_midway_keeps_what_it_read_and_is_logged(self):
-		"""Any failure, not only an unreachable cluster, ends the page without failing the job."""
+		"""Any failure outside the database, not only an unreachable cluster, ends the page without failing the job."""
 		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
 
 		def garage(alias):
@@ -195,6 +195,30 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE + 9)
 		log_error.assert_called_once()
 		self.assertIn("KeyError", log_error.call_args.kwargs["message"])
+
+	def test_a_database_error_fails_the_job_and_keeps_earlier_chunks(self):
+		"""A lock wait or deadlock reaches Frappe so the job rolls back, instead of ending the page quietly."""
+		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
+		calls = []
+
+		def timing_out(readings):
+			calls.append(readings)
+			if len(calls) > 1:
+				raise frappe.QueryTimeoutError("Lock wait timeout exceeded")
+			record_peaks(readings)
+
+		with patch("cargo.object_storage.usage.record_peaks", side_effect=timing_out):
+			with self.assertRaises(frappe.QueryTimeoutError):
+				self.sample_page_at(NOON, names, lambda alias: {"id": alias, "bytes": 1})
+
+		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE)
+
+	def test_an_error_recording_a_chunk_that_is_not_the_database_is_logged(self):
+		with patch("cargo.object_storage.usage.record_peaks", side_effect=ValueError("bad reading")):
+			log_error = self.sample_page_at(NOON, ["alpha"], lambda alias: {"id": alias, "bytes": 1})
+
+		log_error.assert_called_once()
+		self.assertIn("ValueError", log_error.call_args.kwargs["message"])
 
 	def test_a_reading_belongs_to_the_day_it_was_read_on(self):
 		"""Each bucket is timed by its own read, so a chunk that crosses midnight UTC splits."""
