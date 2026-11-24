@@ -15,9 +15,13 @@ DEFAULT_SAMPLE_MINUTES = 15
 PAGE_SIZE = 500
 CHUNK_SIZE = 50
 SAMPLE_TIMEOUT_SECONDS = 5
-TIMEOUTS_BEFORE_UNREACHABLE = 3
+TIMEOUTS_BEFORE_STOP = 3
 LOG_KEY = "cargo-bucket-usage-sample-logged"
 LOG_SECONDS = 3600
+
+
+class TooSlow(Exception):
+	"""Reads in a row timed out: the gateway takes calls but does not answer them."""
 
 
 def sample_usage() -> None:
@@ -94,6 +98,8 @@ class PageSample:
 				self.read_chunk(names[start : start + CHUNK_SIZE])
 		except (Unreachable, NoGateway) as error:
 			self.log_stopped("not reachable", str(error))
+		except TooSlow as error:
+			self.log_stopped("reads too slow", str(error))
 		except Exception:
 			self.log_stopped("failed", frappe.get_traceback())
 		self.log_failed()
@@ -116,17 +122,17 @@ class PageSample:
 			raise
 		except Error as error:
 			self.failed.append(f"{name}: {error}")
-			self.count_timeout(error)
+			self.stop_when_too_slow(error)
 			return None
 
 		self.timeouts = 0
 		return info
 
-	def count_timeout(self, error: Error) -> None:
+	def stop_when_too_slow(self, error: Error) -> None:
 		"""A gateway that takes calls but never answers ends the page, like one that refuses them."""
 		self.timeouts = self.timeouts + 1 if isinstance(error.__cause__, requests.Timeout) else 0
-		if self.timeouts >= TIMEOUTS_BEFORE_UNREACHABLE:
-			raise Unreachable(f"{self.timeouts} reads in a row timed out: {error}")
+		if self.timeouts >= TIMEOUTS_BEFORE_STOP:
+			raise TooSlow(f"{self.timeouts} reads in a row timed out: {error}")
 
 	def log_stopped(self, reason: str, message: str) -> None:
 		self.log_hourly(f"Stopped reading bucket usage on {self.cluster}: {reason}", message)

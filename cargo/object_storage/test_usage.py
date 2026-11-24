@@ -240,7 +240,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(asked, names[:4])
 		self.assertEqual(self.peak("alpha", NOON.date()), 1)
 		titles = [call.kwargs["title"] for call in self.log_error.call_args_list]
-		self.assertTrue(any("not reachable" in title for title in titles))
+		self.assertTrue(any("reads too slow" in title for title in titles))
 
 	def test_an_answer_between_timeouts_starts_the_count_again(self):
 		names = ["slow-1", "slow-2", "alpha", "slow-3", "slow-4", "omega"]
