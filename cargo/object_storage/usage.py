@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import frappe
 
@@ -88,14 +88,14 @@ class PageSample:
 		self.log_failed()
 
 	def read_chunk(self, names: list[str]) -> None:
-		read_at = utc_now()
-		readings: dict[str, int] = {}
+		readings: list[tuple[datetime, str, int]] = []
 		try:
 			for name in names:
+				read_at = utc_now()
 				if info := self.read(name):
-					readings[name] = info["bytes"]
+					readings.append((read_at, name, info["bytes"]))
 		finally:
-			record_peaks(readings, read_at)
+			record_by_day(readings)
 			frappe.db.commit()  # nosemgrep
 
 	def read(self, name: str) -> dict | None:
@@ -113,3 +113,15 @@ class PageSample:
 				title=f"Could not read usage of {len(self.failed)} buckets on {self.cluster}",
 				message="\n".join(self.failed),
 			)
+
+
+def record_by_day(readings: list[tuple[datetime, str, int]]) -> None:
+	"""Each reading counts for the UTC day it was taken on, whenever it is written."""
+	by_day: dict[date, dict[str, int]] = {}
+	latest: dict[date, datetime] = {}
+	for read_at, name, used_bytes in readings:
+		by_day.setdefault(read_at.date(), {})[name] = used_bytes
+		latest[read_at.date()] = read_at
+
+	for day, day_readings in by_day.items():
+		record_peaks(day_readings, latest[day])

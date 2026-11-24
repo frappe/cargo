@@ -173,12 +173,15 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE + 9)
 
 	def test_a_reading_belongs_to_the_day_it_was_read_on(self):
-		"""A read before midnight UTC written after it still counts for the earlier day."""
+		"""Each bucket is timed by its own read, so a chunk that crosses midnight UTC splits."""
 		before, after = datetime(2026, 11, 24, 23, 59, tzinfo=UTC), datetime(2026, 11, 25, 0, 1, tzinfo=UTC)
 
-		self.sample_page_at([before, after], ["alpha"], lambda alias: {"id": alias, "bytes": 7})
+		self.sample_page_at([before, after], ["alpha", "beta"], lambda alias: {"id": alias, "bytes": 7})
 
 		self.assertEqual(self.peak("alpha", before.date()), 7)
+		self.assertIsNone(self.peak("alpha", after.date()))
+		self.assertEqual(self.peak("beta", after.date()), 7)
+		self.assertIsNone(self.peak("beta", before.date()))
 
 	def test_buckets_of_a_cluster_not_active_are_not_read(self):
 		self.make_bucket("alpha")
