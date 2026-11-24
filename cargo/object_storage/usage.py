@@ -3,9 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import frappe
-import requests
 
-from cargo.object_storage.client import Client, Error
+from cargo.object_storage.client import Client, Error, Unreachable
 from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	as_utc,
 	record_peaks,
@@ -75,53 +74,44 @@ def sample_page(cluster: str, names: list[str]) -> None:
 
 class PageSample:
 	"""One job's read of a page of buckets. Readings are committed chunk by chunk, so a job
-	killed midway keeps what it read, and the first connection failure ends the page."""
+	killed midway keeps what it read, and a cluster that cannot be reached ends the page."""
 
 	def __init__(self, cluster: str) -> None:
 		self.cluster = cluster
 		self.garage = Client(frappe.get_cached_doc("Object Storage Cluster", cluster))
 		self.failed: list[str] = []
-		self.unreachable = ""
 
 	def run(self, names: list[str]) -> None:
 		try:
 			for start in range(0, len(names), CHUNK_SIZE):
 				self.read_chunk(names[start : start + CHUNK_SIZE])
-				if self.unreachable:
-					break
-		except frappe.ValidationError as error:
-			self.unreachable = str(error)
-		self.log()
+		except Unreachable as error:
+			frappe.log_error(
+				title=f"Stopped reading bucket usage on {self.cluster}: not reachable", message=str(error)
+			)
+		self.log_failed()
 
 	def read_chunk(self, names: list[str]) -> None:
 		read_at = utc_now()
 		readings: dict[str, int] = {}
-		for name in names:
-			info = self.read(name)
-			if self.unreachable:
-				break
-			if info:
-				readings[name] = info["bytes"]
-
-		record_peaks(readings, read_at)
-		frappe.db.commit()  # nosemgrep
+		try:
+			for name in names:
+				if info := self.read(name):
+					readings[name] = info["bytes"]
+		finally:
+			record_peaks(readings, read_at)
+			frappe.db.commit()  # nosemgrep
 
 	def read(self, name: str) -> dict | None:
 		try:
 			return self.garage.bucket(name)
+		except Unreachable:
+			raise
 		except Error as error:
-			if isinstance(error.__cause__, requests.RequestException):
-				self.unreachable = str(error)
-			else:
-				self.failed.append(f"{name}: {error}")
+			self.failed.append(f"{name}: {error}")
 			return None
 
-	def log(self) -> None:
-		if self.unreachable:
-			frappe.log_error(
-				title=f"Stopped reading bucket usage on {self.cluster}: not reachable",
-				message=self.unreachable,
-			)
+	def log_failed(self) -> None:
 		if self.failed:
 			frappe.log_error(
 				title=f"Could not read usage of {len(self.failed)} buckets on {self.cluster}",

@@ -1,9 +1,10 @@
 from datetime import UTC, date, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import frappe
 import requests
 from frappe.tests import IntegrationTestCase
+from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from cargo.object_storage.client import Client, Error
 from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
@@ -18,6 +19,14 @@ from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, is_sample_due, 
 OUTBOX = "cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day"
 
 NOON = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
+
+
+def answer(used_bytes: int) -> Mock:
+	return Mock(ok=True, status_code=200, content=b"{}", json=lambda: {"bytes": used_bytes})
+
+
+def refused() -> requests.ConnectionError:
+	return requests.ConnectionError(MaxRetryError(None, "gateway", NewConnectionError(None, "refused")))
 
 
 class IntegrationTestBucketUsage(IntegrationTestCase):
@@ -101,33 +110,54 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 
 		self.assertFalse(frappe.db.exists(USAGE_DAY, {"bucket_name": "gone"}))
 
+	def sample_page_over_http(self, names: list[str], answers: list) -> list[str]:
+		"""Sample a page with one gateway answering `answers` in turn; return the buckets asked."""
+		with (
+			patch.object(Client, "urls", ["http://gateway:3903"]),
+			patch.object(Client, "headers", {}),
+			patch("cargo.object_storage.client.requests.request", side_effect=answers) as sent,
+			patch("cargo.object_storage.usage.frappe.log_error") as self.log_error,
+			patch("cargo.object_storage.usage.frappe.db.commit"),
+			patch("cargo.object_storage.usage.utc_now", return_value=NOON),
+		):
+			sample_page(self.cluster, names)
+		return [call.kwargs["params"]["globalAlias"] for call in sent.call_args_list]
+
 	def test_an_unreachable_cluster_is_not_read_further(self):
-		"""One connection failure ends the page, so a dead cluster holds no worker for hours."""
-		asked = []
+		"""One failed connection ends the page, so a dead cluster holds no worker for hours. What
+		was read before it is kept, the chunk it broke off in included."""
+		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
+		answers = [answer(1)] * (CHUNK_SIZE + 2) + [refused()]
 
-		def garage(alias):
-			asked.append(alias)
-			if alias == "beta":
-				raise Error("GetBucketInfo: timed out") from requests.ConnectTimeout("timed out")
-			return {"id": alias, "bytes": 42}
+		asked = self.sample_page_over_http(names, answers)
 
-		log_error = self.sample_page_at(NOON, ["alpha", "beta", "gamma"], garage)
+		self.assertEqual(asked, names[: CHUNK_SIZE + 3])
+		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE + 2)
+		self.log_error.assert_called_once()
 
-		self.assertEqual(asked, ["alpha", "beta"])
+	def test_a_slow_bucket_is_skipped_and_the_page_goes_on(self):
+		"""A read timeout means the gateway was reached, so only that bucket is missed."""
+		asked = self.sample_page_over_http(
+			["alpha", "slow", "gamma"], [answer(42), requests.ReadTimeout("read timed out"), answer(42)]
+		)
+
+		self.assertEqual(asked, ["alpha", "slow", "gamma"])
 		self.assertEqual(self.peak("alpha", NOON.date()), 42)
-		log_error.assert_called_once()
+		self.assertEqual(self.peak("gamma", NOON.date()), 42)
+		self.assertIsNone(self.peak("slow", NOON.date()))
+		self.assertIn("slow", self.log_error.call_args.kwargs["message"])
 
-	def test_a_cluster_without_a_running_gateway_is_logged(self):
-		def garage(alias):
-			frappe.throw("This cluster has no running gateway to reach it at.")
+	def test_a_cluster_without_a_running_gateway_is_not_read(self):
+		with (
+			patch("cargo.object_storage.usage.frappe.log_error") as log_error,
+			patch("cargo.object_storage.usage.frappe.db.commit"),
+		):
+			sample_page(self.cluster, ["alpha", "beta"])
 
-		log_error = self.sample_page_at(NOON, ["alpha"], garage)
+		self.assertIn("not reachable", log_error.call_args.kwargs["title"])
+		self.assertEqual(frappe.db.count(USAGE_DAY), 0)
 
-		log_error.assert_called_once()
-		self.assertFalse(frappe.db.exists(USAGE_DAY, {"bucket_name": "alpha"}))
-
-	def test_readings_are_kept_chunk_by_chunk(self):
-		"""A job killed midway keeps the chunks it already read."""
+	def test_a_job_stopped_midway_keeps_what_it_read(self):
 		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
 
 		def garage(alias):
@@ -138,7 +168,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		with self.assertRaises(TimeoutError):
 			self.sample_page_at(NOON, names, garage)
 
-		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE)
+		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE + 9)
 
 	def test_a_reading_belongs_to_the_day_it_was_read_on(self):
 		"""A read before midnight UTC written after it still counts for the earlier day."""

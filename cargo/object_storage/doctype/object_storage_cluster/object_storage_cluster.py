@@ -117,11 +117,7 @@ class ObjectStorageCluster(PipelineBuilder):
 	@property
 	def gateway_addresses(self) -> list[str]:
 		"""Where this cluster answers admin calls: every gateway that runs, tried in order."""
-		addresses = [gateway.address for gateway in self.running_gateways]
-		if not addresses:
-			frappe.throw(_("This cluster has no running gateway to reach it at."))
-
-		return addresses
+		return [gateway.address for gateway in self.running_gateways]
 
 	@cached_property
 	def garage_setup(self) -> Setup:

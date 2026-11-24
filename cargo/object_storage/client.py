@@ -5,6 +5,7 @@ from functools import cached_property
 from typing import Any
 
 import requests
+from frappe import _
 from urllib3.exceptions import ConnectTimeoutError
 
 from cargo.atlas_client import host_port
@@ -23,6 +24,10 @@ class Error(RuntimeError):
 	that is how the pipeline engine carries an exception back to the flow that raised it."""
 
 
+class Unreachable(Error):
+	"""No gateway of the cluster could be connected to, or none runs."""
+
+
 class Client:
 	"""Garage's Admin API v2, for one cluster. Setting it up, judging its health and working
 	its buckets all subclass this. Object traffic goes to the S3 endpoint, not here."""
@@ -39,6 +44,9 @@ class Client:
 		"""Every node serves the same API, so any gateway answers for the cluster. Over the
 		mesh: the admin API is never put behind the public proxy."""
 		addresses = [self.address] if self.address else self.cluster.gateway_addresses
+		if not addresses:
+			raise Unreachable(_("This cluster has no running gateway to reach it at."))
+
 		return [f"http://{host_port(address, self.cluster.admin_port)}" for address in addresses]
 
 	@cached_property
@@ -65,7 +73,7 @@ class Client:
 			except requests.RequestException as exception:
 				raise Error(f"{endpoint}: {exception}") from exception
 		else:
-			raise Error(f"{endpoint}: {error}") from error
+			raise Unreachable(f"{endpoint}: {error}") from error
 
 		if response.status_code == 404:
 			return None
