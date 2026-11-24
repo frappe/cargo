@@ -6,15 +6,19 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
+from cargo.object_storage.usage import outbox_state
 from cargo.telemetry.datum import send_to_datum
 
 METADATA_BACKUP_AGE = "cargo_object_storage_metadata_backup_age_seconds"
 HEALTH = "cargo_object_storage_health"
+USAGE_OUTBOX_DEPTH = "cargo_bucket_usage_outbox_depth"
+USAGE_OUTBOX_AGE = "cargo_bucket_usage_oldest_unconfirmed_age_days"
 
 
 def get_samples() -> list[dict]:
-	"""The age of the newest uploaded metadata backup of each live cluster. A cluster that never uploaded
-	one counts from its activation, so a backup that never starts also grows old."""
+	"""The age of the newest uploaded metadata backup of each live cluster, and the bucket usage outbox. A
+	cluster that never uploaded a backup counts from its activation, so a backup that never starts also
+	grows old."""
 	now = now_datetime()
 	timestamp = datetime.now(UTC).isoformat()
 	clusters = frappe.get_all(
@@ -22,7 +26,7 @@ def get_samples() -> list[dict]:
 		filters={"activated_on": ("is", "set")},
 		fields=["name", "activated_on", "last_metadata_snapshot_at"],
 	)
-	return [
+	backup_ages = [
 		{
 			"metric": METADATA_BACKUP_AGE,
 			"value": (
@@ -32,6 +36,17 @@ def get_samples() -> list[dict]:
 			"labels": {"cluster": cluster.name},
 		}
 		for cluster in clusters
+	]
+	return backup_ages + get_outbox_samples(timestamp)
+
+
+def get_outbox_samples(timestamp: str) -> list[dict]:
+	"""Bucket usage days Central has not confirmed, and how many days old the oldest is."""
+	depth, oldest = outbox_state()
+	age = (datetime.now(UTC).date() - oldest).days if oldest else 0
+	return [
+		{"metric": USAGE_OUTBOX_DEPTH, "value": depth, "ts": timestamp, "labels": {}},
+		{"metric": USAGE_OUTBOX_AGE, "value": age, "ts": timestamp, "labels": {}},
 	]
 
 

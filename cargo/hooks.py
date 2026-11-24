@@ -302,6 +302,9 @@ scheduler_events = {
 		"cargo.image_builder.health.ship_metrics",
 		"cargo.telemetry.credential.renew_datum_token",
 	],
-	"hourly_long": ["cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry"],
+	"hourly_long": [
+		"cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry",
+		"cargo.object_storage.usage_report.report_usage",
+	],
 	"daily_long": ["cargo.tls.doctype.service_certificate.service_certificate.renew_certificates"],
 }

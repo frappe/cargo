@@ -26,7 +26,9 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 		frappe.db.set_value("Object Storage Cluster", self.cluster, values, update_modified=False)
 
 	def age_of_cluster(self) -> float | None:
-		ages = [sample["value"] for sample in get_samples() if sample["labels"]["cluster"] == self.cluster]
+		ages = [
+			sample["value"] for sample in get_samples() if sample["labels"].get("cluster") == self.cluster
+		]
 		return ages[0] if ages else None
 
 	def test_the_age_counts_from_the_newest_backup(self):
