@@ -35,7 +35,7 @@ def sample_usage() -> None:
 
 def is_sample_due(now: datetime) -> bool:
 	last = frappe.db.get_single_value(SETTINGS, "last_usage_sample_at")
-	if not last or last == datetime.min:
+	if last == datetime.min:
 		return True
 
 	minutes = frappe.db.get_single_value(SETTINGS, "usage_sample_minutes") or DEFAULT_SAMPLE_MINUTES
