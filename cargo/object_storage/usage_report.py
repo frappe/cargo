@@ -113,21 +113,30 @@ def post_report(url: str, secret: str, body: bytes) -> dict:
 
 
 def settle(rows: list[frappe._dict], reply: dict) -> None:
-	"""Confirm each line Central took, refuse each it will never take, and leave the rest."""
-	rejected = {
-		(line.get("subject"), line.get("day")): line
-		for line in reply.get("rejected") or []
-		if line.get("meter") == METER
-	}
+	"""Confirm only the days Central took. A day any rejection could mean waits; it is refused
+	only when Central names its bucket and day and says `retry` false."""
 	accepted, refused = [], {}
 	for row in rows:
-		line = rejected.get((row.bucket_name, str(row.day)))
-		if not line:
+		against = [line for line in reply.get("rejected") or [] if may_mean(line, row)]
+		if not against:
 			accepted.append(row.name)
-		elif not line.get("retry"):
-			refused[row.name] = line.get("reason")
+		elif refusal := refusal_of(row, against):
+			refused[row.name] = refusal.get("reason")
 
 	now = now_datetime()
 	outbox.mark_sent(rows, now)
 	outbox.confirm(accepted, now)
 	outbox.refuse(refused)
+
+
+def may_mean(line: dict, row: frappe._dict) -> bool:
+	"""An older Central names only the subject, so a rejection without a day means every day of
+	it, and one without a subject means every row."""
+	return line.get("subject") in (None, row.bucket_name) and line.get("day") in (None, str(row.day))
+
+
+def refusal_of(row: frappe._dict, against: list[dict]) -> dict | None:
+	"""The rejection that names this very day and says never to send it again, if any."""
+	return next(
+		(line for line in against if line.get("retry") is False and line.get("day") == str(row.day)), None
+	)

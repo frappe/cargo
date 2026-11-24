@@ -67,6 +67,14 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 			report_usage()
 		return post
 
+	def answered(self, rejected: list[dict]):
+		"""A Central that rejects with exactly these lines."""
+		return lambda *args, **kwargs: reply(message={"accepted": 0, "rejected": rejected})
+
+	def pending(self, bucket: str) -> bool:
+		day = self.day(bucket)
+		return not day.confirmed_at and not day.refused
+
 	def day(self, bucket: str) -> frappe._dict:
 		return frappe.db.get_value(
 			USAGE_DAY,
@@ -207,3 +215,48 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		frappe.db.set_single_value("Cargo Settings", "central_url", "")
 
 		self.assertFalse(self.report(Central()).called)
+
+	def test_a_rejection_from_an_older_central_leaves_the_day_pending(self):
+		"""The deployed Central names only the subject and a reason."""
+		self.sample({"alpha": 1, "beta": 1})
+
+		self.report(self.answered([{"subject": "beta", "reason": "unknown subject"}]))
+
+		self.assertTrue(self.pending("beta"))
+		central = Central()
+		self.report(central)
+		self.assertEqual(central.subjects(), ["beta"])
+
+	def test_a_rejection_without_a_day_holds_every_day_of_the_bucket(self):
+		self.sample({"alpha": 1}, SAMPLED.replace(day=23))
+		self.sample({"alpha": 2})
+
+		self.report(self.answered([{"subject": "alpha", "reason": "no", "retry": False}]))
+
+		days = frappe.get_all(USAGE_DAY, fields=["confirmed_at", "refused"])
+		self.assertEqual([(day.confirmed_at, day.refused) for day in days], [(None, 0), (None, 0)])
+
+	def test_a_rejection_without_retry_is_not_a_refusal(self):
+		self.sample({"alpha": 1})
+
+		self.report(self.answered([{"subject": "alpha", "day": "2026-11-24", "reason": "no"}]))
+
+		self.assertTrue(self.pending("alpha"))
+
+	def test_a_refusal_naming_another_day_does_not_touch_this_one(self):
+		self.sample({"alpha": 1})
+
+		self.report(
+			self.answered([{"subject": "alpha", "day": "2026-11-23", "reason": "no", "retry": False}])
+		)
+
+		self.assertFalse(self.day("alpha").refused)
+		self.assertIsNotNone(self.day("alpha").confirmed_at)
+
+	def test_a_rejection_without_a_subject_confirms_nothing(self):
+		self.sample({"alpha": 1, "beta": 1})
+
+		self.report(self.answered([{"reason": "unreadable line"}]))
+
+		self.assertTrue(self.pending("alpha"))
+		self.assertTrue(self.pending("beta"))
