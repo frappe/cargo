@@ -168,18 +168,20 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertIn("no running gateway", log_error.call_args.kwargs["message"])
 		self.assertEqual(frappe.db.count(USAGE_DAY), 0)
 
-	def test_a_job_stopped_midway_keeps_what_it_read(self):
+	def test_a_page_that_breaks_midway_keeps_what_it_read_and_is_logged(self):
+		"""Any failure, not only an unreachable cluster, ends the page without failing the job."""
 		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
 
 		def garage(alias):
 			if alias == names[-1]:
-				raise TimeoutError("job killed")
+				raise KeyError("bytes")
 			return {"id": alias, "bytes": 1}
 
-		with self.assertRaises(TimeoutError):
-			self.sample_page_at(NOON, names, garage)
+		log_error = self.sample_page_at(NOON, names, garage)
 
 		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE + 9)
+		log_error.assert_called_once()
+		self.assertIn("KeyError", log_error.call_args.kwargs["message"])
 
 	def test_a_reading_belongs_to_the_day_it_was_read_on(self):
 		"""Each bucket is timed by its own read, so a chunk that crosses midnight UTC splits."""
@@ -203,6 +205,10 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 
 		frappe.cache.delete_value(f"{STOPPED_LOG_KEY}:{self.cluster}")
 		self.sample_page_at(NOON, ["alpha"], Mock(side_effect=Unreachable("refused"))).assert_called_once()
+
+	def test_a_page_that_breaks_is_logged_once_an_hour(self):
+		self.sample_page_at(NOON, ["alpha"], Mock(side_effect=KeyError("bytes"))).assert_called_once()
+		self.sample_page_at(NOON, ["alpha"], Mock(side_effect=KeyError("bytes"))).assert_not_called()
 
 	def test_sampling_waits_seconds_not_the_default_for_an_answer(self):
 		asked = self.sample_page_over_http(["alpha"], [answer(1)])

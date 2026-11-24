@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from functools import cached_property
 
 import frappe
 import requests
@@ -74,16 +75,18 @@ def sample_page(cluster: str, names: list[str]) -> None:
 
 
 class PageSample:
-	"""One job's read of a page of buckets. Readings are committed chunk by chunk, so a job
-	killed midway keeps what it read, and a cluster that cannot be reached ends the page."""
+	"""One job's read of a page of buckets. Readings are committed chunk by chunk, so a page
+	that stops midway keeps what it read, and a cluster that cannot be reached ends the page."""
 
 	def __init__(self, cluster: str) -> None:
 		self.cluster = cluster
-		self.garage = Client(
-			frappe.get_cached_doc("Object Storage Cluster", cluster), timeout=SAMPLE_TIMEOUT_SECONDS
-		)
 		self.failed: list[str] = []
 		self.timeouts = 0
+
+	@cached_property
+	def garage(self) -> Client:
+		cluster = frappe.get_cached_doc("Object Storage Cluster", self.cluster)
+		return Client(cluster, timeout=SAMPLE_TIMEOUT_SECONDS)
 
 	def run(self, names: list[str]) -> None:
 		try:
@@ -91,6 +94,8 @@ class PageSample:
 				self.read_chunk(names[start : start + CHUNK_SIZE])
 		except (Unreachable, NoGateway) as error:
 			self.log_stopped("not reachable", str(error))
+		except Exception:
+			self.log_stopped("failed", frappe.get_traceback())
 		self.log_failed()
 
 	def read_chunk(self, names: list[str]) -> None:
