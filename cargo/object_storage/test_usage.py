@@ -13,7 +13,7 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	record_peaks,
 	site_time,
 )
-from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, sample_page, sample_usage
+from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, is_sample_due, sample_page, sample_usage
 
 OUTBOX = "cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day"
 
@@ -187,6 +187,15 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.sample_at(NOON)
 
 		self.assertEqual(frappe.db.get_single_value("Cargo Settings", "modified"), modified)
+
+	def test_the_interval_holds_across_a_clock_set_back(self):
+		"""01:50 EDT is stored as site time; 15 minutes later the clock reads 01:05 EST."""
+		frappe.db.set_single_value("Cargo Settings", "usage_sample_minutes", 15)
+		frappe.db.set_single_value("Cargo Settings", "last_usage_sample_at", datetime(2026, 11, 1, 1, 50))
+
+		with patch(f"{OUTBOX}.get_system_timezone", return_value="America/New_York"):
+			self.assertFalse(is_sample_due(datetime(2026, 11, 1, 6, 4, tzinfo=UTC)))
+			self.assertTrue(is_sample_due(datetime(2026, 11, 1, 6, 5, tzinfo=UTC)))
 
 	def test_the_interval_is_a_setting(self):
 		self.make_bucket("alpha")

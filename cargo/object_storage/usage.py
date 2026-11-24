@@ -4,10 +4,14 @@ from datetime import datetime, timedelta
 
 import frappe
 import requests
-from frappe.utils import get_datetime
 
 from cargo.object_storage.client import Client, Error
-from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import record_peaks, site_time, utc_now
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
+	as_utc,
+	record_peaks,
+	site_time,
+	utc_now,
+)
 
 SETTINGS = "Cargo Settings"
 DEFAULT_SAMPLE_MINUTES = 15
@@ -36,11 +40,11 @@ def sample_usage() -> None:
 
 def is_sample_due(now: datetime) -> bool:
 	last = frappe.db.get_single_value(SETTINGS, "last_usage_sample_at")
-	if not last:
+	if not last or last == datetime.min:
 		return True
 
 	minutes = frappe.db.get_single_value(SETTINGS, "usage_sample_minutes") or DEFAULT_SAMPLE_MINUTES
-	return site_time(now) - get_datetime(last) >= timedelta(minutes=minutes)
+	return now - as_utc(last) >= timedelta(minutes=minutes)
 
 
 def bucket_pages() -> list[tuple[str, list[str]]]:

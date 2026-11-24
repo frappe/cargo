@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import frappe
 from frappe.model.document import Document
 from frappe.query_builder import Criterion, CustomFunction
 from frappe.query_builder.functions import Count, Min
-from frappe.utils import convert_utc_to_system_timezone
+from frappe.utils import convert_utc_to_system_timezone, get_datetime, get_system_timezone
 from pypika.terms import Case, Values
 
 USAGE_DAY = "Bucket Usage Day"
@@ -67,6 +68,12 @@ def utc_now() -> datetime:
 def site_time(moment: datetime) -> datetime:
 	"""A UTC moment as the naive site time Frappe stores in a Datetime."""
 	return convert_utc_to_system_timezone(moment).replace(tzinfo=None)
+
+
+def as_utc(value: datetime | str) -> datetime:
+	"""A stored site time as a UTC moment. An hour a clock change repeats reads as its earlier
+	occurrence."""
+	return get_datetime(value).replace(tzinfo=ZoneInfo(get_system_timezone())).astimezone(UTC)
 
 
 def record_peaks(readings: dict[str, int], at: datetime) -> None:
