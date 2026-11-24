@@ -36,7 +36,7 @@ class Central:
 		self.calls.append({"url": url, "body": data, "headers": headers, "report": json.loads(data)})
 		lines = json.loads(data)["lines"]
 		rejected = [
-			{**line, "dimension": "", "reason": "unknown subject", "retry": self.rejects[line["subject"]]}
+			{**line, "dimension": "", "reason": "not billable", "retry": self.rejects[line["subject"]]}
 			for line in lines
 			if line["subject"] in self.rejects
 		]
@@ -141,13 +141,13 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		self.assertEqual(central.subjects(), ["beta"])
 
 	def test_a_line_central_will_never_take_is_not_sent_again(self):
-		self.sample({"alpha": 1, "atlas-bucket": 1})
-		self.report(Central({"atlas-bucket": False}))
+		self.sample({"alpha": 1, "refused-bucket": 1})
+		self.report(Central({"refused-bucket": False}))
 
-		refused = self.day("atlas-bucket")
+		refused = self.day("refused-bucket")
 		self.assertTrue(refused.refused)
-		self.assertEqual(refused.reason, "unknown subject")
-		self.sample({"atlas-bucket": 5})
+		self.assertEqual(refused.reason, "not billable")
+		self.sample({"refused-bucket": 5})
 		self.assertFalse(self.report(Central()).called)
 
 	def test_days_wait_while_central_is_down(self):
