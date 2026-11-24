@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-import time
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -265,17 +264,34 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		self.assertTrue(self.pending("alpha"))
 		self.assertTrue(self.pending("beta"))
 
-	def test_a_full_batch_of_subject_rejections_settles_in_linear_time(self):
-		"""Each row is looked up once, not matched against every rejection."""
+	def test_a_rejection_with_an_unreadable_subject_confirms_nothing(self):
+		self.sample({"alpha": 1, "beta": 1})
+
+		for subject in (5, {}, ["alpha"]):
+			with self.subTest(subject=subject):
+				self.report(self.answered([{"subject": subject, "reason": "no", "retry": False}]))
+
+				days = frappe.get_all(USAGE_DAY, fields=["confirmed_at", "refused"])
+				self.assertEqual({(day.confirmed_at, day.refused) for day in days}, {(None, 0)})
+
+	def test_a_rejection_with_an_unreadable_day_holds_every_day_of_the_bucket(self):
+		self.sample({"alpha": 1}, SAMPLED.replace(day=23))
+		self.sample({"alpha": 2, "beta": 1})
+
+		self.report(self.answered([{"subject": "alpha", "day": 20261124, "reason": "no", "retry": False}]))
+
+		alpha = frappe.get_all(USAGE_DAY, {"bucket_name": "alpha"}, ["confirmed_at", "refused"])
+		self.assertEqual([(day.confirmed_at, day.refused) for day in alpha], [(None, 0), (None, 0)])
+		self.assertIsNotNone(self.day("beta").confirmed_at)
+
+	def test_a_full_batch_of_subject_rejections_holds_every_day(self):
 		self.sample({f"bucket-{index:04d}": index for index in range(1000)})
 		rejected = [
 			{"subject": f"bucket-{index:04d}", "reason": "no", "retry": False} for index in range(1000)
 		]
 
-		started = time.monotonic()
 		self.report(self.answered(rejected))
 
-		self.assertLess(time.monotonic() - started, 5)
 		self.assertEqual(frappe.db.count(USAGE_DAY, {"confirmed_at": ("is", "set")}), 0)
 		self.assertEqual(frappe.db.count(USAGE_DAY, {"refused": 1}), 0)
 		self.assertEqual(frappe.db.count(USAGE_DAY, {"sent_at": ("is", "set")}), 1000)

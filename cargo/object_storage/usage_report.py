@@ -160,11 +160,15 @@ class Rejections:
 			self.add(line)
 
 	def add(self, line: dict) -> None:
+		"""A line with an unreadable subject holds every row, and one with an unreadable day holds
+		every day of its subject. Neither can refuse."""
 		subject, day = line.get("subject"), line.get("day")
-		if subject is None:
+		if not isinstance(subject, str):
 			self.unscoped = True
-		elif isinstance(subject, str) and (day is None or isinstance(day, str)):
-			self.by_subject.setdefault(subject, {}).setdefault(day, []).append(line)
+			return
+		if not isinstance(day, str):
+			day = None
+		self.by_subject.setdefault(subject, {}).setdefault(day, []).append(line)
 
 	def hold(self, row: frappe._dict) -> bool:
 		"""Whether any rejection could mean this day."""
