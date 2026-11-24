@@ -21,7 +21,7 @@ def sample_usage() -> None:
 	if not is_sample_due(now):
 		return
 
-	frappe.db.set_single_value(SETTINGS, "last_usage_sample_at", site_time(now))
+	frappe.db.set_single_value(SETTINGS, "last_usage_sample_at", site_time(now), update_modified=False)
 	for cluster, names in bucket_pages():
 		frappe.enqueue(
 			sample_page,

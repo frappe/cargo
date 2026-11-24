@@ -179,6 +179,15 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(self.sample_at(NOON.replace(minute=14)), [])
 		self.assertEqual(self.sample_at(NOON.replace(minute=15)), [["alpha"]])
 
+	def test_a_sample_leaves_cargo_settings_unmodified(self):
+		"""An open Cargo Settings form can still be saved after a sample."""
+		frappe.db.set_single_value("Cargo Settings", "last_usage_sample_at", None)
+		modified = frappe.db.get_single_value("Cargo Settings", "modified")
+
+		self.sample_at(NOON)
+
+		self.assertEqual(frappe.db.get_single_value("Cargo Settings", "modified"), modified)
+
 	def test_the_interval_is_a_setting(self):
 		self.make_bucket("alpha")
 		frappe.db.set_single_value("Cargo Settings", "usage_sample_minutes", 5)
