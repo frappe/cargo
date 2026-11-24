@@ -29,8 +29,9 @@ KEPT_IMAGES = 1
 # Leaves room for the live app, so running out of memory kills only the build.
 BUILD_MEMORY_MAX = "80%"
 STOP_TIMEOUT_SECONDS = 30
-LOG_TAIL_LINES = 400
-LOG_TAIL_BYTES = 20_000
+# Central appends each report's lines; a build that prints more than this between ticks sends its newest part.
+MAX_REPORT_CHARACTERS = 256 * 1024
+CURSOR_MARKER = "-- cursor: "
 
 
 @cache
@@ -104,28 +105,49 @@ def read_environment(path: Path) -> dict[str, str]:
 	return dict(line.split("=", 1) for line in path.read_text().splitlines() if line)
 
 
-def get_journal(unit: str) -> str:
-	return subprocess.run(
-		["journalctl", "--unit", unit, "--output", "cat", "--lines", str(LOG_TAIL_LINES), "--no-pager"],
+def get_new_log(unit: Unit) -> tuple[str, str | None]:
+	"""The unit's journal lines since the last report Central accepted, and the cursor after them."""
+	after = ["--after-cursor", unit.cursor_file.read_text()] if unit.cursor_file.exists() else []
+	output = subprocess.run(
+		[
+			"journalctl",
+			"--unit",
+			unit.name,
+			"--output",
+			"cat",
+			"--show-cursor",
+			"--quiet",
+			"--no-pager",
+			*after,
+		],
 		capture_output=True,
 		text=True,
-	).stdout[-LOG_TAIL_BYTES:]
+	).stdout
+	log, marker, cursor = output.rpartition(CURSOR_MARKER)
+	if not marker:
+		return "", None
+	if len(log) > MAX_REPORT_CHARACTERS:
+		log = "... earlier output skipped ...\n" + log[-MAX_REPORT_CHARACTERS:]
+	return log, cursor.strip()
 
 
-def get_build_log(unit: BuildUnit) -> str:
-	log = get_journal(unit.name)
-	if unit.is_out_of_memory:
-		log += (
-			f"\nBuild ran out of memory ({BUILD_MEMORY_MAX} of the VM's memory). "
-			"Your live app is unaffected. Use a larger VM and push again.\n"
-		)
-	return log[-LOG_TAIL_BYTES:]
+def save_cursor(unit: Unit, cursor: str | None) -> None:
+	"""Called after Central accepted the lines, so a failed report sends them again next tick."""
+	if cursor:
+		unit.cursor_file.write_text(cursor)
 
 
 def check_build(unit: BuildUnit) -> Release | None:
 	"""Report the build to Central and clean up once it finished or Central cancelled it.
 	Returns the release to start once the image is built."""
-	reply = call("report_build", **asdict(BuildReport(unit.deploy_request, unit.status, get_build_log(unit))))
+	log, cursor = get_new_log(unit)
+	if unit.is_out_of_memory:
+		log += (
+			f"\nBuild ran out of memory ({BUILD_MEMORY_MAX} of the VM's memory). "
+			"Your live app is unaffected. Use a larger VM and push again.\n"
+		)
+	reply = call("report_build", **asdict(BuildReport(unit.deploy_request, unit.status, log)))
+	save_cursor(unit, cursor)
 	release = None
 	# `cancel` means a newer push replaced the build.
 	if unit.status == BuildStatus.SUCCEEDED and not reply["cancel"]:
@@ -138,10 +160,9 @@ def check_build(unit: BuildUnit) -> Release | None:
 
 def check_release(unit: ReleaseUnit) -> None:
 	"""Report the release to Central and clean up once it finished. Nothing cancels a release."""
-	call(
-		"report_deployment_status",
-		**asdict(ReleaseReport(unit.deploy_request, unit.status, get_journal(unit.name))),
-	)
+	log, cursor = get_new_log(unit)
+	call("report_deployment_status", **asdict(ReleaseReport(unit.deploy_request, unit.status, log)))
+	save_cursor(unit, cursor)
 	if unit.is_finished:
 		remove_unit(unit)
 
@@ -152,6 +173,7 @@ def remove_unit(unit: Unit) -> None:
 	# A unit that succeeded is already unloaded after the stop, so this one may fail.
 	subprocess.run(["systemctl", "reset-failed", unit.name], capture_output=True)
 	unit.environment_file.unlink(missing_ok=True)
+	unit.cursor_file.unlink(missing_ok=True)
 	prune_images()
 
 
