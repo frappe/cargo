@@ -2,8 +2,9 @@
 
 Two conversations, each one way.
 
-**Cargo → Central** is one webhook, and nothing else: a cluster reports whether it can be
-used. Cargo holds no Central credential and calls no Central endpoint.
+**Cargo → Central** is one webhook, where a cluster reports whether it can be used, and the
+hourly bucket usage report. The report is signed with the report secret Central hands over at
+enrolment. Cargo calls no other Central endpoint.
 
 **Central → Cargo** is bucket work: make a bucket, drop it, add, rotate or remove its keys, and
 name the websites that may call it from a browser. Cargo
@@ -24,8 +25,13 @@ X-Cargo-Access-Token: <a token for atlas-cargo:<region-id>>
 
 {"request_url": "https://central.example.com/api/method/central.api.state_delivery.receive",
  "webhook_secret": "a-shared-secret",
+ "report_secret": "the-storage-service-secret",
  "enabled": true}
 ```
+
+`report_secret` is optional. It is the secret on Central's `storage` Service, and Cargo
+stores it as `central_report_secret` to sign the usage report. A call without it keeps the
+secret already stored.
 
 One receiver and one secret serve every service this region runs, so Cargo stores them on
 Cargo Settings and nothing else. Each delivery reads them when it is built, and knows
@@ -73,6 +79,44 @@ never reported has nothing for Central to call it with.
 
 `Active` is not "the nodes joined". It is "this cluster can hold an object", which needs an
 applied layout as well — before that Garage answers but its nodes carry no storage role.
+
+## Cargo reporting bucket usage
+
+Cargo reads each bucket's stored bytes from Garage every `usage_sample_minutes` (15 by
+default) and keeps the highest reading of each UTC day in `Bucket Usage Day`. The row names
+the bucket, not the record, so a deleted bucket's last day is kept: a bucket is read once
+more just before Garage deletes it.
+
+Once an hour Cargo sends every day Central has not confirmed, and every day whose peak rose
+after Central confirmed it:
+
+```
+POST {central_url}/api/method/central.billing.api.metering.report
+X-Central-Service: storage
+X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report secret>
+
+{"as_of": "2026-11-24T10:15:00Z",
+ "lines": [{"subject": "acme-backups", "meter": "bytes_stored", "day": "2026-11-24", "value": 21474836480}]}
+```
+
+| Field | What it is |
+|---|---|
+| `as_of` | The newest sample in the call, in UTC |
+| `subject` | The bucket name |
+| `meter` | `bytes_stored` |
+| `day` | The UTC date |
+| `value` | The day's peak so far, in bytes |
+
+A call carries at most 1,000 lines. Central answers `{"accepted": n, "rejected": [...]}`.
+Each line not in `rejected` is confirmed. A rejected line with `retry` true is sent again
+next hour; with `retry` false it is marked refused and never sent again. Sending a day twice
+is harmless: Central keeps the higher value.
+
+When Central cannot be reached or answers 5xx, the days wait for the next hour. A 4xx stops
+the run and leaves an Error Log. Nothing is sent while `pause_usage_report` is set, or while
+Cargo has no `central_url` or report secret. Days are kept for 30 days, sent or not, so
+Central can be down that long without losing usage. Datum gets the outbox depth and the age
+of the oldest unconfirmed day each hour.
 
 ## Central calling Cargo
 
