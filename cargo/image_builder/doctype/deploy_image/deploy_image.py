@@ -30,6 +30,7 @@ FILES = {
 	"etc/nginx/conf.d/deploy-agent.conf": AGENT_FOLDER / "nginx.conf",
 	"etc/systemd/system/metadata-block.service": AGENT_FOLDER / "metadata-block.service",
 	"etc/deploy-agent/metadata-block.nft": AGENT_FOLDER / "metadata-block.nft",
+	"etc/update-motd.d/60-deploy-app": AGENT_FOLDER / "motd.sh",
 }
 
 
