@@ -58,6 +58,7 @@ class BucketUsageDay(Document):
 
 
 def on_doctype_update():
+	"""A unique index on the pair the name is made from, for looking a day up by bucket."""
 	frappe.db.add_unique(USAGE_DAY, ["bucket_name", "day"], constraint_name="unique_bucket_day")
 
 
@@ -78,7 +79,7 @@ def as_utc(value: datetime | str) -> datetime:
 
 def record_peaks(readings: dict[str, int], at: datetime) -> None:
 	"""Keep the highest reading of each bucket for the UTC date of `at`, the moment before the
-	reads, in one statement."""
+	reads, in one statement. The upsert meets an existing day on its name, `{day}-{bucket}`."""
 	if not readings:
 		return
 
