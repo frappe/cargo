@@ -115,8 +115,13 @@ is harmless: Central keeps the higher value.
 When Central cannot be reached or answers 5xx, the days wait for the next hour. A 4xx stops
 the run and leaves an Error Log. Nothing is sent while `pause_usage_report` is set, or while
 Cargo has no `central_url` or report secret. Days are kept for 30 days, sent or not, so
-Central can be down that long without losing usage. Datum gets the outbox depth and the age
-of the oldest unconfirmed day each hour.
+Central can be down that long without losing usage.
+
+Datum gets two numbers each hour. `cargo_bucket_usage_outbox_depth` counts the days Central
+has never answered for: days not sent yet, and days whose peak rose after the last send.
+`cargo_bucket_usage_oldest_unconfirmed_age_days` is the age in days of the oldest of them.
+A day Central answered with `retry` true is not counted, so the numbers grow only while
+Cargo cannot get an answer from Central, not while Central asks for a day again.
 
 ## Central calling Cargo
 

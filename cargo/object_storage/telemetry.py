@@ -41,7 +41,7 @@ def get_samples() -> list[dict]:
 
 
 def get_outbox_samples(timestamp: str) -> list[dict]:
-	"""Bucket usage days Central has not confirmed, and how many days old the oldest is."""
+	"""Bucket usage days Central has never answered for, and how many days old the oldest is."""
 	depth, oldest = outbox_state()
 	age = (datetime.now(UTC).date() - oldest).days if oldest else 0
 	return [

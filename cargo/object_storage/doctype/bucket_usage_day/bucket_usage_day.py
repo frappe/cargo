@@ -165,9 +165,13 @@ def prune() -> None:
 
 
 def outbox_state() -> tuple[int, date | None]:
-	"""How many days wait for Central, and the oldest of them."""
+	"""How many days Central has never answered for, and the oldest of them: never sent, or
+	read higher since the last send. Days Central asked for again are not counted."""
 	table = frappe.qb.DocType(USAGE_DAY)
+	unanswered = (table.refused == 0) & Criterion.any(
+		[table.sent_at.isnull(), table.peak_bytes > table.sent_bytes]
+	)
 	depth, oldest = (
-		frappe.qb.from_(table).select(Count(table.name), Min(table.day)).where(pending_filter()).run()[0]
+		frappe.qb.from_(table).select(Count(table.name), Min(table.day)).where(unanswered).run()[0]
 	)
 	return depth, oldest

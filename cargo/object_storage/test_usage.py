@@ -144,11 +144,23 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 
 		self.assertEqual(frappe.get_all(USAGE_DAY, pluck="bucket_name"), ["kept"])
 
-	def test_the_outbox_counts_days_waiting_for_central(self):
-		self.record_at(datetime(2026, 11, 20, 12, 0, tzinfo=UTC), {"alpha": 1})
-		self.record_at(NOON, {"alpha": 5, "beta": 5})
+	def test_the_outbox_counts_days_central_never_answered(self):
+		"""Unsent days and days read higher since they were sent; not days Central asked for again."""
+		self.record_at(datetime(2026, 11, 20, 12, 0, tzinfo=UTC), {"unsent": 1})
+		self.record_at(NOON, {"rose": 5, "retry": 5, "confirmed": 5})
+		frappe.db.set_value(USAGE_DAY, {"bucket_name": "rose"}, {"sent_at": site_time(NOON), "sent_bytes": 3})
 		frappe.db.set_value(
-			USAGE_DAY, {"bucket_name": "beta"}, {"confirmed_at": site_time(NOON), "confirmed_bytes": 5}
+			USAGE_DAY, {"bucket_name": "retry"}, {"sent_at": site_time(NOON), "sent_bytes": 5}
+		)
+		frappe.db.set_value(
+			USAGE_DAY,
+			{"bucket_name": "confirmed"},
+			{
+				"sent_at": site_time(NOON),
+				"sent_bytes": 5,
+				"confirmed_at": site_time(NOON),
+				"confirmed_bytes": 5,
+			},
 		)
 
 		self.assertEqual(outbox_state(), (2, date(2026, 11, 20)))
