@@ -103,7 +103,7 @@ The counter clears when the cluster serves, so a fault you fix arms automatic se
 
 ## Reporting to Central
 
-The cluster reports itself. A Frappe Webhook fires on Active and on Failed, which are the two states worth a call. Cargo also samples every bucket's size on an interval (`usage_sample_minutes`, 15 by default), keeps each bucket's peak for the UTC day in Bucket Usage Day, and sends Central the days it has not confirmed every hour, signed with the report secret Central sends at enrolment. Read [what Cargo and Central say to each other](central-contract.md).
+The cluster reports itself. A Frappe Webhook fires on Active and on Failed, which are the two states worth a call. Cargo also samples every bucket's size on an interval (`usage_sample_minutes`, 15 by default), keeps each bucket's peak for the UTC day in Bucket Usage Day, and every hour sends Central the days it has not confirmed, or whose peak has risen since, signed with the report secret Central sends at enrolment. Read [what Cargo and Central say to each other](central-contract.md).
 
 ## Validation
 
