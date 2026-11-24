@@ -13,11 +13,21 @@ The deploy image installs this folder at `/usr/local/lib/deploy-agent/build_agen
                                   │ :80
 ┌─────────────────────────────────▼──────────────────────────────────────┐
 │ VM                         nginx (listen 80)                           │
-│                    upstream app ← /var/lib/deploy-agent/upstream.conf  │
-│                          │                         │                   │
-│                 127.0.0.1:8001             127.0.0.1:8002              │
-│                   app@blue                   app@green                 │
-│              (podman, app:<commit>)     (podman, app:<commit>)         │
+│                                  │                                     │
+│              upstream app: include /var/lib/deploy-agent/upstream.conf │
+│              (one line: server 127.0.0.1:<port of the live slot>;)     │
+│                                  │                                     │
+│                   live: 8001 ┌───┴───┐ live: 8002                      │
+│                              ▼       ▼                                 │
+│                 127.0.0.1:8001       127.0.0.1:8002                    │
+│                   app@blue             app@green                       │
+│              (podman, app:<commit>) (podman, app:<commit>)             │
+│                                                                        │
+│ release.py starts the new commit in the idle slot.                     │
+│ Healthy: upstream.conf names the new slot, then the old slot stops.    │
+│ Not healthy: the new slot stops. upstream.conf does not change.        │
+│ nginx does not reload: upstream.conf names the old slot again, or      │
+│ release.py deletes it when no slot was live. The new slot stops.       │
 │                                                                        │
 │ deploy-agent.timer ─► deploy-agent.service (one tick, then it stops)   │
 │                         ├─► deploy-build-<request>.service  (build.sh) │
