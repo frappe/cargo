@@ -10,7 +10,7 @@ import requests
 from frappe.tests import IntegrationTestCase
 from frappe.utils.password import remove_encrypted_password, set_encrypted_password
 
-from cargo.object_storage.usage import USAGE_DAY, record_peaks
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import USAGE_DAY, record_peaks
 from cargo.object_storage.usage_report import UNCONFIGURED_KEY, report_usage
 from cargo.testing import use_test_settings
 
@@ -60,7 +60,9 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		frappe.cache.delete_value(UNCONFIGURED_KEY)
 
 	def sample(self, readings: dict[str, int], moment: datetime = SAMPLED) -> None:
-		with patch("cargo.object_storage.usage.utc_now", return_value=moment):
+		with patch(
+			"cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day.utc_now", return_value=moment
+		):
 			record_peaks(readings)
 
 	def report(self, central) -> MagicMock:
@@ -130,6 +132,21 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 
 		self.assertEqual(central.calls[0]["report"]["lines"][0]["value"], 4096)
 		self.assertEqual(self.day("alpha").confirmed_bytes, 4096)
+
+	def test_a_peak_that_rises_while_central_answers_is_sent_again(self):
+		"""Central confirms the peak it was sent, not the one read since."""
+		self.sample({"alpha": 2048})
+		central = Central()
+
+		def rising(*args, **kwargs):
+			self.sample({"alpha": 4096})
+			return central(*args, **kwargs)
+
+		self.report(rising)
+
+		self.assertEqual(self.day("alpha").confirmed_bytes, 2048)
+		self.report(central)
+		self.assertEqual(central.calls[-1]["report"]["lines"][0]["value"], 4096)
 
 	def test_a_line_central_asks_for_again_is_sent_again(self):
 		self.sample({"alpha": 1, "beta": 1})

@@ -6,7 +6,7 @@ import frappe
 import requests
 from frappe.utils import get_datetime, now_datetime
 
-from cargo.object_storage.usage import outbox_state
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import outbox_state
 from cargo.telemetry.datum import send_to_datum
 
 METADATA_BACKUP_AGE = "cargo_object_storage_metadata_backup_age_seconds"

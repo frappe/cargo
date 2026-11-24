@@ -13,7 +13,8 @@ import requests
 from frappe.utils import get_datetime, get_system_timezone, now_datetime
 from frappe.utils.password import get_decrypted_password
 
-from cargo.object_storage.usage import SETTINGS, USAGE_DAY, pending_filter
+from cargo.object_storage.doctype.bucket_usage_day import bucket_usage_day as outbox
+from cargo.object_storage.usage import SETTINGS
 
 REPORT_PATH = "/api/method/central.billing.api.metering.report"
 SERVICE = "storage"
@@ -69,16 +70,8 @@ def report_target() -> tuple[str, str] | None:
 
 def pending_batches() -> Iterator[list[frappe._dict]]:
 	"""Pending days in batches Central accepts, each batch after the last by name."""
-	table = frappe.qb.DocType(USAGE_DAY)
 	last = ""
-	while rows := (
-		frappe.qb.from_(table)
-		.select(table.name, table.bucket_name, table.day, table.peak_bytes, table.sampled_at)
-		.where(pending_filter() & (table.name > last))
-		.orderby(table.name)
-		.limit(BATCH_SIZE)
-		.run(as_dict=True)
-	):
+	while rows := outbox.pending(last, BATCH_SIZE):
 		yield rows
 		last = rows[-1].name
 
@@ -128,12 +121,15 @@ def settle(rows: list[frappe._dict], reply: dict) -> None:
 		for line in reply.get("rejected") or []
 		if line.get("meter") == METER
 	}
-	now = now_datetime()
+	accepted, refused = [], {}
 	for row in rows:
-		values = {"sent_at": now, "sent_bytes": row.peak_bytes}
 		line = rejected.get((row.bucket_name, str(row.day)))
 		if not line:
-			values.update(confirmed_at=now, confirmed_bytes=row.peak_bytes)
+			accepted.append(row.name)
 		elif not line.get("retry"):
-			values.update(refused=1, reason=line.get("reason"))
-		frappe.db.set_value(USAGE_DAY, row.name, values, update_modified=False)
+			refused[row.name] = line.get("reason")
+
+	now = now_datetime()
+	outbox.mark_sent(rows, now)
+	outbox.confirm(accepted, now)
+	outbox.refuse(refused)

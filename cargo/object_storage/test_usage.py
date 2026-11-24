@@ -5,16 +5,16 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from cargo.object_storage.client import Client, Error
-from cargo.object_storage.usage import (
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	USAGE_DAY,
-	bucket_pages,
 	outbox_state,
-	prune_usage_days,
+	prune,
 	record_peaks,
-	sample_page,
-	sample_usage,
 	site_time,
 )
+from cargo.object_storage.usage import bucket_pages, sample_page, sample_usage
+
+OUTBOX = "cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day"
 
 NOON = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 
@@ -42,7 +42,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		).db_insert()
 
 	def record_at(self, moment: datetime, readings: dict[str, int]) -> None:
-		with patch("cargo.object_storage.usage.utc_now", return_value=moment):
+		with patch(f"{OUTBOX}.utc_now", return_value=moment):
 			record_peaks(readings)
 
 	def peak(self, bucket: str, day: date) -> int | None:
@@ -80,7 +80,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		with (
 			patch.object(Client, "bucket", side_effect=garage),
 			patch("cargo.object_storage.usage.frappe.log_error") as log_error,
-			patch("cargo.object_storage.usage.utc_now", return_value=NOON),
+			patch(f"{OUTBOX}.utc_now", return_value=NOON),
 		):
 			sample_page(self.cluster, ["alpha", "broken", "gamma"])
 
@@ -92,7 +92,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 	def test_a_bucket_garage_no_longer_has_is_skipped(self):
 		with (
 			patch.object(Client, "bucket", return_value=None),
-			patch("cargo.object_storage.usage.utc_now", return_value=NOON),
+			patch(f"{OUTBOX}.utc_now", return_value=NOON),
 		):
 			sample_page(self.cluster, ["gone"])
 
@@ -139,8 +139,8 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 			USAGE_DAY, {"bucket_name": "confirmed"}, {"confirmed_at": site_time(NOON), "confirmed_bytes": 1}
 		)
 
-		with patch("cargo.object_storage.usage.utc_now", return_value=NOON):
-			prune_usage_days()
+		with patch(f"{OUTBOX}.utc_now", return_value=NOON):
+			prune()
 
 		self.assertEqual(frappe.get_all(USAGE_DAY, pluck="bucket_name"), ["kept"])
 

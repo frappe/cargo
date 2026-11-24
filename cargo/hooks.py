@@ -298,7 +298,7 @@ scheduler_events = {
 		"cargo.object_storage.health.prune_history",
 		"cargo.object_storage.metadata_snapshot.upload_metadata_snapshots",
 		"cargo.object_storage.telemetry.ship_metrics",
-		"cargo.object_storage.usage.prune_usage_days",
+		"cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day.prune",
 		"cargo.image_builder.health.ship_metrics",
 		"cargo.telemetry.credential.renew_datum_token",
 	],
