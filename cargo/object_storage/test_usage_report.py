@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -263,6 +264,21 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 
 		self.assertTrue(self.pending("alpha"))
 		self.assertTrue(self.pending("beta"))
+
+	def test_a_full_batch_of_subject_rejections_settles_in_linear_time(self):
+		"""Each row is looked up once, not matched against every rejection."""
+		self.sample({f"bucket-{index:04d}": index for index in range(1000)})
+		rejected = [
+			{"subject": f"bucket-{index:04d}", "reason": "no", "retry": False} for index in range(1000)
+		]
+
+		started = time.monotonic()
+		self.report(self.answered(rejected))
+
+		self.assertLess(time.monotonic() - started, 5)
+		self.assertEqual(frappe.db.count(USAGE_DAY, {"confirmed_at": ("is", "set")}), 0)
+		self.assertEqual(frappe.db.count(USAGE_DAY, {"refused": 1}), 0)
+		self.assertEqual(frappe.db.count(USAGE_DAY, {"sent_at": ("is", "set")}), 1000)
 
 	def test_an_answer_that_is_not_a_verdict_settles_nothing(self):
 		self.sample({"alpha": 1})

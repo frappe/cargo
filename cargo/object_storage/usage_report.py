@@ -134,12 +134,12 @@ def verdict(response: requests.Response) -> dict | None:
 def settle(rows: list[frappe._dict], reply: dict) -> None:
 	"""Confirm only the days Central took. A day any rejection could mean waits; it is refused
 	only when Central names its bucket and day and says `retry` false."""
+	rejections = Rejections(reply["rejected"])
 	accepted, refused = [], {}
 	for row in rows:
-		against = [line for line in reply["rejected"] if may_mean(line, row)]
-		if not against:
+		if not rejections.hold(row):
 			accepted.append(row.name)
-		elif refusal := refusal_of(row, against):
+		elif refusal := rejections.refusal(row):
 			refused[row.name] = refusal.get("reason")
 
 	now = now_datetime()
@@ -148,14 +148,30 @@ def settle(rows: list[frappe._dict], reply: dict) -> None:
 	outbox.refuse(refused)
 
 
-def may_mean(line: dict, row: frappe._dict) -> bool:
-	"""An older Central names only the subject, so a rejection without a day means every day of
-	it, and one without a subject means every row."""
-	return line.get("subject") in (None, row.bucket_name) and line.get("day") in (None, str(row.day))
+class Rejections:
+	"""Central's rejections indexed once per call, by subject and then by day. An older Central
+	names only the subject, so a rejection without a day means every day of it, and one without
+	a subject means every row."""
 
+	def __init__(self, rejected: list[dict]) -> None:
+		self.unscoped = False
+		self.by_subject: dict[str, dict[str | None, list[dict]]] = {}
+		for line in rejected:
+			self.add(line)
 
-def refusal_of(row: frappe._dict, against: list[dict]) -> dict | None:
-	"""The rejection that names this very day and says never to send it again, if any."""
-	return next(
-		(line for line in against if line.get("retry") is False and line.get("day") == str(row.day)), None
-	)
+	def add(self, line: dict) -> None:
+		subject, day = line.get("subject"), line.get("day")
+		if subject is None:
+			self.unscoped = True
+		elif isinstance(subject, str) and (day is None or isinstance(day, str)):
+			self.by_subject.setdefault(subject, {}).setdefault(day, []).append(line)
+
+	def hold(self, row: frappe._dict) -> bool:
+		"""Whether any rejection could mean this day."""
+		days = self.by_subject.get(row.bucket_name, {})
+		return self.unscoped or None in days or str(row.day) in days
+
+	def refusal(self, row: frappe._dict) -> dict | None:
+		"""The rejection that names this very day and says never to send it again, if any."""
+		lines = self.by_subject.get(row.bucket_name, {}).get(str(row.day), [])
+		return next((line for line in lines if line.get("retry") is False), None)
