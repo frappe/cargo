@@ -69,14 +69,14 @@ def site_time(moment: datetime) -> datetime:
 	return convert_utc_to_system_timezone(moment).replace(tzinfo=None)
 
 
-def record_peaks(readings: dict[str, int]) -> None:
-	"""Keep the highest reading of each bucket for today's UTC date, in one statement."""
+def record_peaks(readings: dict[str, int], at: datetime) -> None:
+	"""Keep the highest reading of each bucket for the UTC date of `at`, the moment before the
+	reads, in one statement."""
 	if not readings:
 		return
 
-	now = utc_now()
-	sampled_at = site_time(now)
-	day = now.date()
+	sampled_at = site_time(at)
+	day = at.date()
 	table = frappe.qb.DocType(USAGE_DAY)
 	rows = [
 		(f"{day}-{bucket}", bucket, day, used_bytes, sampled_at, sampled_at, sampled_at, OWNER, OWNER)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import frappe
+import requests
 from frappe.utils import get_datetime
 
 from cargo.object_storage.client import Client, Error
@@ -11,6 +12,7 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import recor
 SETTINGS = "Cargo Settings"
 DEFAULT_SAMPLE_MINUTES = 15
 PAGE_SIZE = 500
+CHUNK_SIZE = 50
 
 
 def sample_usage() -> None:
@@ -42,8 +44,14 @@ def is_sample_due(now: datetime) -> bool:
 
 
 def bucket_pages() -> list[tuple[str, list[str]]]:
-	"""Each cluster's bucket names, in pages small enough for one job."""
-	buckets = frappe.get_all("Bucket", fields=["name", "cluster"], order_by="cluster, name")
+	"""Each active cluster's bucket names, in pages small enough for one job."""
+	active = frappe.get_all("Object Storage Cluster", filters={"status": "Active"}, pluck="name")
+	if not active:
+		return []
+
+	buckets = frappe.get_all(
+		"Bucket", filters={"cluster": ("in", active)}, fields=["name", "cluster"], order_by="cluster, name"
+	)
 	by_cluster: dict[str, list[str]] = {}
 	for bucket in buckets:
 		by_cluster.setdefault(bucket.cluster, []).append(bucket.name)
@@ -58,20 +66,60 @@ def bucket_pages() -> list[tuple[str, list[str]]]:
 def sample_page(cluster: str, names: list[str]) -> None:
 	"""Read each bucket's bytes from Garage and keep the day's peak. Reads the cluster, never
 	the Bucket record, so a bucket being worked on is not waited for."""
-	garage = Client(frappe.get_cached_doc("Object Storage Cluster", cluster))
-	readings: dict[str, int] = {}
-	failed: list[str] = []
-	for name in names:
-		try:
-			info = garage.bucket(name)
-		except Error as error:
-			failed.append(f"{name}: {error}")
-			continue
-		if info:
-			readings[name] = info["bytes"]
+	PageSample(cluster).run(names)
 
-	record_peaks(readings)
-	if failed:
-		frappe.log_error(
-			title=f"Could not read usage of {len(failed)} buckets on {cluster}", message="\n".join(failed)
-		)
+
+class PageSample:
+	"""One job's read of a page of buckets. Readings are committed chunk by chunk, so a job
+	killed midway keeps what it read, and the first connection failure ends the page."""
+
+	def __init__(self, cluster: str) -> None:
+		self.cluster = cluster
+		self.garage = Client(frappe.get_cached_doc("Object Storage Cluster", cluster))
+		self.failed: list[str] = []
+		self.unreachable = ""
+
+	def run(self, names: list[str]) -> None:
+		try:
+			for start in range(0, len(names), CHUNK_SIZE):
+				self.read_chunk(names[start : start + CHUNK_SIZE])
+				if self.unreachable:
+					break
+		except frappe.ValidationError as error:
+			self.unreachable = str(error)
+		self.log()
+
+	def read_chunk(self, names: list[str]) -> None:
+		read_at = utc_now()
+		readings: dict[str, int] = {}
+		for name in names:
+			info = self.read(name)
+			if self.unreachable:
+				break
+			if info:
+				readings[name] = info["bytes"]
+
+		record_peaks(readings, read_at)
+		frappe.db.commit()  # nosemgrep
+
+	def read(self, name: str) -> dict | None:
+		try:
+			return self.garage.bucket(name)
+		except Error as error:
+			if isinstance(error.__cause__, requests.RequestException):
+				self.unreachable = str(error)
+			else:
+				self.failed.append(f"{name}: {error}")
+			return None
+
+	def log(self) -> None:
+		if self.unreachable:
+			frappe.log_error(
+				title=f"Stopped reading bucket usage on {self.cluster}: not reachable",
+				message=self.unreachable,
+			)
+		if self.failed:
+			frappe.log_error(
+				title=f"Could not read usage of {len(self.failed)} buckets on {self.cluster}",
+				message="\n".join(self.failed),
+			)

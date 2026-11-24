@@ -60,10 +60,7 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		frappe.cache.delete_value(UNCONFIGURED_KEY)
 
 	def sample(self, readings: dict[str, int], moment: datetime = SAMPLED) -> None:
-		with patch(
-			"cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day.utc_now", return_value=moment
-		):
-			record_peaks(readings)
+		record_peaks(readings, moment)
 
 	def report(self, central) -> MagicMock:
 		with patch("cargo.object_storage.usage_report.requests.post", side_effect=central) as post:

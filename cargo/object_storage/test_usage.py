@@ -1,7 +1,8 @@
 from datetime import UTC, date, datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
+import requests
 from frappe.tests import IntegrationTestCase
 
 from cargo.object_storage.client import Client, Error
@@ -12,7 +13,7 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 	record_peaks,
 	site_time,
 )
-from cargo.object_storage.usage import bucket_pages, sample_page, sample_usage
+from cargo.object_storage.usage import CHUNK_SIZE, bucket_pages, sample_page, sample_usage
 
 OUTBOX = "cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day"
 
@@ -30,9 +31,9 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		frappe.db.delete("Bucket")
 		self.cluster = self.make_cluster()
 
-	def make_cluster(self) -> str:
+	def make_cluster(self, status: str = "Active") -> str:
 		name = f"test-cluster-{frappe.generate_hash(length=6)}"
-		frappe.get_doc({"doctype": "Object Storage Cluster", "name": name}).db_insert()
+		frappe.get_doc({"doctype": "Object Storage Cluster", "name": name, "status": status}).db_insert()
 		return name
 
 	def make_bucket(self, name: str, cluster: str | None = None) -> None:
@@ -42,8 +43,19 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		).db_insert()
 
 	def record_at(self, moment: datetime, readings: dict[str, int]) -> None:
-		with patch(f"{OUTBOX}.utc_now", return_value=moment):
-			record_peaks(readings)
+		record_peaks(readings, moment)
+
+	def sample_page_at(self, moment, names: list[str], garage) -> MagicMock:
+		"""Sample a page with Garage answering through `garage`, and return the error log."""
+		utc_now = {"side_effect": moment} if isinstance(moment, list) else {"return_value": moment}
+		with (
+			patch.object(Client, "bucket", side_effect=garage),
+			patch("cargo.object_storage.usage.frappe.log_error") as log_error,
+			patch("cargo.object_storage.usage.frappe.db.commit"),
+			patch("cargo.object_storage.usage.utc_now", **utc_now),
+		):
+			sample_page(self.cluster, names)
+		return log_error
 
 	def peak(self, bucket: str, day: date) -> int | None:
 		return frappe.db.get_value(USAGE_DAY, {"bucket_name": bucket, "day": day}, "peak_bytes")
@@ -77,12 +89,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 				raise Error("GetBucketInfo answered 500: internal")
 			return {"id": alias, "bytes": 42}
 
-		with (
-			patch.object(Client, "bucket", side_effect=garage),
-			patch("cargo.object_storage.usage.frappe.log_error") as log_error,
-			patch(f"{OUTBOX}.utc_now", return_value=NOON),
-		):
-			sample_page(self.cluster, ["alpha", "broken", "gamma"])
+		log_error = self.sample_page_at(NOON, ["alpha", "broken", "gamma"], garage)
 
 		self.assertEqual(self.peak("alpha", NOON.date()), 42)
 		self.assertEqual(self.peak("gamma", NOON.date()), 42)
@@ -90,13 +97,62 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		log_error.assert_called_once()
 
 	def test_a_bucket_garage_no_longer_has_is_skipped(self):
-		with (
-			patch.object(Client, "bucket", return_value=None),
-			patch(f"{OUTBOX}.utc_now", return_value=NOON),
-		):
-			sample_page(self.cluster, ["gone"])
+		self.sample_page_at(NOON, ["gone"], lambda alias: None)
 
 		self.assertFalse(frappe.db.exists(USAGE_DAY, {"bucket_name": "gone"}))
+
+	def test_an_unreachable_cluster_is_not_read_further(self):
+		"""One connection failure ends the page, so a dead cluster holds no worker for hours."""
+		asked = []
+
+		def garage(alias):
+			asked.append(alias)
+			if alias == "beta":
+				raise Error("GetBucketInfo: timed out") from requests.ConnectTimeout("timed out")
+			return {"id": alias, "bytes": 42}
+
+		log_error = self.sample_page_at(NOON, ["alpha", "beta", "gamma"], garage)
+
+		self.assertEqual(asked, ["alpha", "beta"])
+		self.assertEqual(self.peak("alpha", NOON.date()), 42)
+		log_error.assert_called_once()
+
+	def test_a_cluster_without_a_running_gateway_is_logged(self):
+		def garage(alias):
+			frappe.throw("This cluster has no running gateway to reach it at.")
+
+		log_error = self.sample_page_at(NOON, ["alpha"], garage)
+
+		log_error.assert_called_once()
+		self.assertFalse(frappe.db.exists(USAGE_DAY, {"bucket_name": "alpha"}))
+
+	def test_readings_are_kept_chunk_by_chunk(self):
+		"""A job killed midway keeps the chunks it already read."""
+		names = [f"bucket-{index:03d}" for index in range(CHUNK_SIZE + 10)]
+
+		def garage(alias):
+			if alias == names[-1]:
+				raise TimeoutError("job killed")
+			return {"id": alias, "bytes": 1}
+
+		with self.assertRaises(TimeoutError):
+			self.sample_page_at(NOON, names, garage)
+
+		self.assertEqual(frappe.db.count(USAGE_DAY), CHUNK_SIZE)
+
+	def test_a_reading_belongs_to_the_day_it_was_read_on(self):
+		"""A read before midnight UTC written after it still counts for the earlier day."""
+		before, after = datetime(2026, 11, 24, 23, 59, tzinfo=UTC), datetime(2026, 11, 25, 0, 1, tzinfo=UTC)
+
+		self.sample_page_at([before, after], ["alpha"], lambda alias: {"id": alias, "bytes": 7})
+
+		self.assertEqual(self.peak("alpha", before.date()), 7)
+
+	def test_buckets_of_a_cluster_not_active_are_not_read(self):
+		self.make_bucket("alpha")
+		self.make_bucket("beta", self.make_cluster(status="Setting Up"))
+
+		self.assertEqual(bucket_pages(), [(self.cluster, ["alpha"])])
 
 	def test_buckets_are_read_per_cluster(self):
 		"""A region can have more than one cluster, and each answers for its own buckets."""

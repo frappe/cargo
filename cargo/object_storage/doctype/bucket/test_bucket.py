@@ -222,7 +222,7 @@ class UnitTestBucket(UnitTestCase):
 	def test_a_bucket_is_sampled_before_garage_drops_it(self):
 		"""Its last day keeps a usage row, so the day still reaches Central."""
 		order = []
-		self.recorded.side_effect = lambda readings: order.append(readings)
+		self.recorded.side_effect = lambda readings, at: order.append(readings)
 		self.answers(
 			bucket={"return_value": {"id": BUCKET_ID, "bytes": 2048}},
 			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
