@@ -207,7 +207,7 @@ class UnitTestBucket(UnitTestCase):
 		order = []
 		self.holds(OLD, OTHER)
 		_, delete_key, delete_bucket = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"side_effect": lambda access_key_id: order.append(access_key_id)},
 			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
 		)
@@ -243,7 +243,7 @@ class UnitTestBucket(UnitTestCase):
 		"""Garage answers 409 while objects remain, so the bucket stays reachable."""
 		self.holds(OLD)
 		_, delete_key, _ = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error(f"DeleteBucket answered 409: {GARAGE_BUCKET_NOT_EMPTY}")},
 		)
@@ -256,7 +256,7 @@ class UnitTestBucket(UnitTestCase):
 	def test_a_delete_garage_fails_for_another_reason_is_relayed(self):
 		self.holds(OLD)
 		_, delete_key, _ = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error("DeleteBucket answered 500: internal")},
 		)
@@ -476,7 +476,7 @@ class UnitTestBucket(UnitTestCase):
 		"""Garage arbitrates the name, not the key behind it, so Cargo serialises the rest."""
 		self.holds(OLD, OTHER)
 		self.answers(
-			bucket={"return_value": {"id": BUCKET_ID, "keys": [{}, {}]}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0, "keys": [{}, {}]}},
 			create_key={"return_value": KEY},
 			allow_bucket_key={"return_value": {}},
 			delete_key={"return_value": None},
