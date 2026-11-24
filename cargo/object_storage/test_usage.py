@@ -16,8 +16,8 @@ from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import (
 )
 from cargo.object_storage.usage import (
 	CHUNK_SIZE,
+	LOG_KEY,
 	SAMPLE_TIMEOUT_SECONDS,
-	STOPPED_LOG_KEY,
 	bucket_pages,
 	is_sample_due,
 	sample_page,
@@ -47,7 +47,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		frappe.db.delete(USAGE_DAY)
 		frappe.db.delete("Bucket")
 		self.cluster = self.make_cluster()
-		self.addCleanup(frappe.cache.delete_value, f"{STOPPED_LOG_KEY}:{self.cluster}")
+		self.addCleanup(frappe.cache.delete_value, f"{LOG_KEY}:{self.cluster}")
 
 	def make_cluster(self, status: str = "Active") -> str:
 		name = f"test-cluster-{frappe.generate_hash(length=6)}"
@@ -113,6 +113,19 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		self.assertEqual(self.peak("gamma", NOON.date()), 42)
 		self.assertIsNone(self.peak("broken", NOON.date()))
 		log_error.assert_called_once()
+
+	def test_buckets_that_cannot_be_read_are_logged_once_an_hour(self):
+		"""A cluster answering 500 to every read would otherwise log each page each interval."""
+
+		def failing():
+			return Mock(side_effect=Error("GetBucketInfo answered 500: internal"))
+
+		calls = [self.sample_page_at(NOON, ["alpha", "beta"], failing()).call_count for _ in range(3)]
+
+		self.assertEqual(calls, [1, 0, 0])
+
+		frappe.cache.delete_value(f"{LOG_KEY}:{self.cluster}")
+		self.sample_page_at(NOON, ["alpha", "beta"], failing()).assert_called_once()
 
 	def test_a_bucket_garage_no_longer_has_is_skipped(self):
 		self.sample_page_at(NOON, ["gone"], lambda alias: None)
@@ -203,7 +216,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 
 		self.assertEqual(calls, [1, 0, 0])
 
-		frappe.cache.delete_value(f"{STOPPED_LOG_KEY}:{self.cluster}")
+		frappe.cache.delete_value(f"{LOG_KEY}:{self.cluster}")
 		self.sample_page_at(NOON, ["alpha"], Mock(side_effect=Unreachable("refused"))).assert_called_once()
 
 	def test_a_page_that_breaks_is_logged_once_an_hour(self):

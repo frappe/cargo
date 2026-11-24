@@ -16,8 +16,8 @@ PAGE_SIZE = 500
 CHUNK_SIZE = 50
 SAMPLE_TIMEOUT_SECONDS = 5
 TIMEOUTS_BEFORE_UNREACHABLE = 3
-STOPPED_LOG_KEY = "cargo-bucket-usage-sample-stopped"
-STOPPED_LOG_SECONDS = 3600
+LOG_KEY = "cargo-bucket-usage-sample-logged"
+LOG_SECONDS = 3600
 
 
 def sample_usage() -> None:
@@ -129,22 +129,24 @@ class PageSample:
 			raise Unreachable(f"{self.timeouts} reads in a row timed out: {error}")
 
 	def log_stopped(self, reason: str, message: str) -> None:
-		"""An Error Log at most once an hour per cluster: cluster health already reports an outage."""
-		title = f"Stopped reading bucket usage on {self.cluster}: {reason}"
-		key = f"{STOPPED_LOG_KEY}:{self.cluster}"
+		self.log_hourly(f"Stopped reading bucket usage on {self.cluster}: {reason}", message)
+
+	def log_failed(self) -> None:
+		if self.failed:
+			self.log_hourly(
+				f"Could not read usage of {len(self.failed)} buckets on {self.cluster}",
+				"\n".join(self.failed),
+			)
+
+	def log_hourly(self, title: str, message: str) -> None:
+		"""An Error Log at most once an hour per cluster: each page each interval would repeat it."""
+		key = f"{LOG_KEY}:{self.cluster}"
 		if frappe.cache.get_value(key):
 			frappe.logger("cargo.usage").warning(f"{title}: {message}")
 			return
 
-		frappe.cache.set_value(key, 1, expires_in_sec=STOPPED_LOG_SECONDS)
+		frappe.cache.set_value(key, 1, expires_in_sec=LOG_SECONDS)
 		frappe.log_error(title=title, message=message)
-
-	def log_failed(self) -> None:
-		if self.failed:
-			frappe.log_error(
-				title=f"Could not read usage of {len(self.failed)} buckets on {self.cluster}",
-				message="\n".join(self.failed),
-			)
 
 
 def record_by_day(readings: list[tuple[datetime, str, int]]) -> None:
