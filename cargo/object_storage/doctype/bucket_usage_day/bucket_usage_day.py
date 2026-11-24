@@ -62,19 +62,14 @@ def on_doctype_update():
 	frappe.db.add_unique(USAGE_DAY, ["bucket_name", "day"], constraint_name="unique_bucket_day")
 
 
-def record_peaks(readings: dict[str, int], at: datetime) -> None:
-	"""Keep the highest reading of each bucket for the UTC date of `at`, the moment before the
-	reads, in one statement. The upsert meets an existing day on its name, `{day}-{bucket}`."""
+def record_peaks(readings: list[tuple[datetime, str, int]]) -> None:
+	"""Keep the highest of each bucket's (read_at, bucket, bytes) readings for the UTC day it was
+	read on, in one statement. The upsert meets an existing day on its name, `{day}-{bucket}`."""
 	if not readings:
 		return
 
-	sampled_at = site_time(at)
-	day = at.date()
 	table = frappe.qb.DocType(USAGE_DAY)
-	rows = [
-		(f"{day}-{bucket}", bucket, day, used_bytes, sampled_at, sampled_at, sampled_at, OWNER, OWNER)
-		for bucket, used_bytes in readings.items()
-	]
+	rows = [usage_row(read_at, bucket, used_bytes) for read_at, bucket, used_bytes in readings]
 	(
 		frappe.qb.into(table)
 		.columns(*USAGE_COLUMNS)
@@ -83,6 +78,11 @@ def record_peaks(readings: dict[str, int], at: datetime) -> None:
 		.on_duplicate_key_update(table.sampled_at, Greatest(table.sampled_at, Values(table.sampled_at)))
 		.on_duplicate_key_update(table.modified, Values(table.modified))
 	).run()
+
+
+def usage_row(read_at: datetime, bucket: str, used_bytes: int) -> tuple:
+	day, sampled_at = read_at.date(), site_time(read_at)
+	return (f"{day}-{bucket}", bucket, day, used_bytes, sampled_at, sampled_at, sampled_at, OWNER, OWNER)
 
 
 def pending_filter():

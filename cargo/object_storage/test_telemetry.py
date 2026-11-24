@@ -108,7 +108,7 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 
 	def test_the_outbox_is_reported_while_it_holds_usage(self):
 		frappe.db.delete("Object Storage Cluster")
-		record_peaks({"alpha": 1}, datetime.now(UTC))
+		record_peaks([(datetime.now(UTC), "alpha", 1)])
 
 		samples = self.ship().call_args.kwargs["json"]["samples"]
 

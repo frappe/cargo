@@ -95,7 +95,7 @@ class Bucket(Document):
 				return
 
 			bucket_id = info["id"]
-			record_peaks({self.bucket_name: info["bytes"]}, read_at)
+			record_peaks([(read_at, self.bucket_name, info["bytes"])])
 
 			# The bucket first: a refused delete would otherwise leave it live with its keys
 			# already gone, reachable by nobody. A key outliving its bucket opens nothing.

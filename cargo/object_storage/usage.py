@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 
 import frappe
@@ -106,7 +106,7 @@ class PageSample:
 				if info := self.read(name):
 					readings.append((read_at, name, info["bytes"]))
 		finally:
-			record_by_day(readings)
+			record_peaks(readings)
 			frappe.db.commit()  # nosemgrep
 
 	def read(self, name: str) -> dict | None:
@@ -148,14 +148,3 @@ class PageSample:
 		frappe.cache.set_value(key, 1, expires_in_sec=LOG_SECONDS)
 		frappe.log_error(title=title, message=message)
 
-
-def record_by_day(readings: list[tuple[datetime, str, int]]) -> None:
-	"""Each reading counts for the UTC day it was taken on, whenever it is written."""
-	by_day: dict[date, dict[str, int]] = {}
-	latest: dict[date, datetime] = {}
-	for read_at, name, used_bytes in readings:
-		by_day.setdefault(read_at.date(), {})[name] = used_bytes
-		latest[read_at.date()] = read_at
-
-	for day, day_readings in by_day.items():
-		record_peaks(day_readings, latest[day])

@@ -61,7 +61,7 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		).db_insert()
 
 	def record_at(self, moment: datetime, readings: dict[str, int]) -> None:
-		record_peaks(readings, moment)
+		record_peaks([(moment, name, used_bytes) for name, used_bytes in readings.items()])
 
 	def sample_page_at(self, moment, names: list[str], garage) -> MagicMock:
 		"""Sample a page with Garage answering through `garage`, and return the error log."""

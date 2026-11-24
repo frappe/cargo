@@ -61,7 +61,7 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 		frappe.cache.delete_value(UNCONFIGURED_KEY)
 
 	def sample(self, readings: dict[str, int], moment: datetime = SAMPLED) -> None:
-		record_peaks(readings, moment)
+		record_peaks([(moment, name, used_bytes) for name, used_bytes in readings.items()])
 
 	def report(self, central) -> MagicMock:
 		with (
