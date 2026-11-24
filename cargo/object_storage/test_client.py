@@ -1,11 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 import requests
 from frappe.tests import UnitTestCase
 from urllib3.exceptions import MaxRetryError, NewConnectionError, ProtocolError
 
-from cargo.object_storage.client import Client, Error, Unreachable
+from cargo.object_storage.client import Client, Error, NoGateway, Unreachable
 
 
 def client_for(*addresses: str) -> Client:
@@ -44,11 +45,13 @@ class UnitTestGatewayFailover(UnitTestCase):
 		):
 			client_for("fd00::1", "fd00::2").status()
 
-	def test_no_gateway_is_unreachable(self):
-		with patch("requests.request") as sent, self.assertRaises(Unreachable):
+	def test_no_gateway_is_a_validation_error_not_a_failed_call(self):
+		with patch("requests.request") as sent, self.assertRaises(NoGateway) as raised:
 			client_for().status()
 
 		sent.assert_not_called()
+		self.assertIsInstance(raised.exception, frappe.ValidationError)
+		self.assertNotIsInstance(raised.exception, Error)
 
 	def test_a_read_timeout_is_not_unreachable(self):
 		"""The gateway took the request, so the cluster was reached."""

@@ -4,6 +4,7 @@ import typing
 from functools import cached_property
 from typing import Any
 
+import frappe
 import requests
 from frappe import _
 from urllib3.exceptions import ConnectTimeoutError
@@ -25,7 +26,12 @@ class Error(RuntimeError):
 
 
 class Unreachable(Error):
-	"""No gateway of the cluster could be connected to, or none runs."""
+	"""No gateway of the cluster could be connected to."""
+
+
+class NoGateway(frappe.ValidationError):
+	"""The cluster runs no gateway. Not an `Error`, so it reaches the user as a validation
+	error instead of being handled as a failed call."""
 
 
 class Client:
@@ -45,7 +51,7 @@ class Client:
 		mesh: the admin API is never put behind the public proxy."""
 		addresses = [self.address] if self.address else self.cluster.gateway_addresses
 		if not addresses:
-			raise Unreachable(_("This cluster has no running gateway to reach it at."))
+			frappe.throw(_("This cluster has no running gateway to reach it at."), NoGateway)
 
 		return [f"http://{host_port(address, self.cluster.admin_port)}" for address in addresses]
 

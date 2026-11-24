@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import frappe
 
-from cargo.object_storage.client import Client, Error, Unreachable
+from cargo.object_storage.client import Client, Error, NoGateway, Unreachable
 from cargo.object_storage.clock import as_utc, site_time, utc_now
 from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import record_peaks
 
@@ -81,7 +81,7 @@ class PageSample:
 		try:
 			for start in range(0, len(names), CHUNK_SIZE):
 				self.read_chunk(names[start : start + CHUNK_SIZE])
-		except Unreachable as error:
+		except (Unreachable, NoGateway) as error:
 			frappe.log_error(
 				title=f"Stopped reading bucket usage on {self.cluster}: not reachable", message=str(error)
 			)

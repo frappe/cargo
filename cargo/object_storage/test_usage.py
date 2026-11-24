@@ -154,7 +154,9 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		):
 			sample_page(self.cluster, ["alpha", "beta"])
 
+		log_error.assert_called_once()
 		self.assertIn("not reachable", log_error.call_args.kwargs["title"])
+		self.assertIn("no running gateway", log_error.call_args.kwargs["message"])
 		self.assertEqual(frappe.db.count(USAGE_DAY), 0)
 
 	def test_a_job_stopped_midway_keeps_what_it_read(self):
