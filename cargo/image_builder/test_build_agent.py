@@ -9,7 +9,7 @@ from urllib.error import URLError
 from frappe.tests import UnitTestCase
 
 from cargo.image_builder.conf import build_agent
-from cargo.image_builder.conf.build_agent.models import ReleaseUnit
+from cargo.image_builder.conf.build_agent.models import Release, ReleaseUnit
 
 AGENT = "cargo.image_builder.conf.build_agent"
 
@@ -60,3 +60,17 @@ class UnitTestBuildAgentLogs(UnitTestCase):
 		log, _cursor = build_agent.get_new_log(self.unit)
 		self.assertTrue(log.startswith("... earlier output skipped ...\n"))
 		self.assertTrue(log.endswith("end\n"))
+
+
+class UnitTestBuildAgentRelease(UnitTestCase):
+	"""A release names its systemd unit after the deploy request Central sends."""
+
+	def test_a_deploy_request_named_by_app_and_commit_is_accepted(self):
+		for name in ("78n2bfuumh-5b0e33", "78n2bfuumh-5b0e33-1"):
+			with self.subTest(name):
+				self.assertEqual(Release(name, "a" * 40).unit, f"release-build-{name}.service")
+
+	def test_a_deploy_request_that_could_escape_its_unit_name_is_refused(self):
+		for name in ("", "-app", "app-", "app--1", "app/1", "app.1", "App-1", "app 1"):
+			with self.subTest(name), self.assertRaises(ValueError):
+				Release(name, "a" * 40)
