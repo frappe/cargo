@@ -117,3 +117,20 @@ class UnitTestBuildAgentImages(UnitTestCase):
 		with self.assertRaises(ValueError):
 			build_agent.check_release(ReleaseUnit("release-build-abc.service", "exited", "success"))
 		self.assertEqual(report.call_args.args[0], "report_deployment_status")
+
+	def test_a_failed_or_cancelled_build_is_pruned_once_reported(self):
+		patch(f"{AGENT}.subprocess.run").start()
+		patch(f"{AGENT}.get_new_log", return_value=("", None)).start()
+		report = patch(f"{AGENT}.call").start()
+		prune = patch(f"{AGENT}.prune_images").start()
+
+		cases = (
+			(BuildUnit("deploy-build-abc.service", "failed", "exit-code"), {"cancel": False}),
+			(BuildUnit("deploy-build-abc.service", "exited", "success"), {"cancel": True}),
+		)
+		for unit, reply in cases:
+			with self.subTest(unit.status, cancel=reply["cancel"]):
+				prune.reset_mock()
+				report.return_value = reply
+				self.assertIsNone(build_agent.check_build(unit))
+				prune.assert_called_once()

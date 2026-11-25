@@ -155,6 +155,9 @@ def check_build(unit: BuildUnit) -> Release | None:
 		release = Release.from_environment(read_environment(unit.environment_file))
 	if unit.is_finished or reply["cancel"]:
 		remove_unit(unit)
+		# A failed or cancelled build leaves layers and maybe a tagged image. A built one is pruned after its release.
+		if not release:
+			prune_images()
 	return release
 
 
