@@ -117,6 +117,7 @@ class UnitTestBuildAgentImages(UnitTestCase):
 		with self.assertRaises(ValueError):
 			build_agent.check_release(ReleaseUnit("release-build-abc.service", "exited", "success"))
 		self.assertEqual(report.call_args.args[0], "report_deployment_status")
+<<<<<<< HEAD
 
 	def test_a_failed_or_cancelled_build_is_pruned_once_reported(self):
 		patch(f"{AGENT}.subprocess.run").start()
@@ -134,3 +135,5 @@ class UnitTestBuildAgentImages(UnitTestCase):
 				report.return_value = reply
 				self.assertIsNone(build_agent.check_build(unit))
 				prune.assert_called_once()
+=======
+>>>>>>> 90998e6 (fix: Prune in a non-blocking path)
