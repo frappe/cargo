@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 WORK_DIRECTORY = Path("/var/lib/deploy-agent")
@@ -30,12 +31,22 @@ def get_slot_value(slot: str, key: str) -> str | None:
 	return None
 
 
-def write_slot(slot: str, commit: str, deploy_request: str) -> None:
-	"""The image and port for app@<slot>, and the Deploy Request the agent reports the app's health on."""
+def write_slot(slot: str, commit: str, deploy_request: str, secrets: dict[str, str]) -> None:
+	"""The image and port for app@<slot>, the Deploy Request the agent reports the app's health on, and the app's
+	secrets, which app@.service passes to the container. Root-only, since it holds the secrets."""
 	SLOTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
-	(SLOTS_DIRECTORY / f"{slot}.env").write_text(
-		f"IMAGE={IMAGE_PREFIX}{commit}\nPORT={PORTS[slot]}\nDEPLOY_REQUEST={deploy_request}\n"
-	)
+	environment = {
+		**secrets,
+		"IMAGE": f"{IMAGE_PREFIX}{commit}",
+		"PORT": PORTS[slot],
+		"DEPLOY_REQUEST": deploy_request,
+	}
+	with os.fdopen(
+		os.open(SLOTS_DIRECTORY / f"{slot}.env", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
+	) as file:
+		# A slot file an older agent wrote is world-readable, and O_CREAT keeps an existing file's mode.
+		os.fchmod(file.fileno(), 0o600)
+		file.writelines(f"{key}={value}\n" for key, value in environment.items())
 
 
 def switch_upstream(slot: str) -> None:

@@ -17,6 +17,7 @@ from .models import (
 	ReleaseStatus,
 	ReleaseUnit,
 	Unit,
+	payload_file,
 )
 from .slots import WORK_DIRECTORY, get_live_slot, get_slot_value
 
@@ -67,12 +68,22 @@ def get_build() -> Build | None:
 	if payload is None:
 		return None
 	try:
-		return Build(**payload)
+		build = Build.from_payload(payload)
 	except ValueError as error:
 		call(
 			"report_build", **asdict(BuildReport(payload["deploy_request"], BuildStatus.FAILED, f"{error}\n"))
 		)
 		raise
+
+	write_secret_file(payload_file(build.deploy_request), json.dumps(payload))
+	return build
+
+
+def write_secret_file(path: Path, content: str) -> None:
+	"""Root-only, since it holds the clone token or the app's secrets, which must never show in a unit's properties."""
+	SECRETS_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
+	with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
+		file.write(content)
 
 
 def systemctl(*arguments: str) -> str:
@@ -92,17 +103,6 @@ def get_unit(unit_class: type[Unit]) -> Unit | None:
 		line.split("=", 1) for line in systemctl("show", names[0], "--property=SubState,Result").splitlines()
 	)
 	return unit_class(names[0], properties["SubState"], properties["Result"])
-
-
-def write_environment(path: Path, environment: dict[str, str]) -> None:
-	"""Root-only, so a token never shows in a unit's properties."""
-	SECRETS_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
-	with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as file:
-		file.writelines(f"{key}={value}\n" for key, value in environment.items())
-
-
-def read_environment(path: Path) -> dict[str, str]:
-	return dict(line.split("=", 1) for line in path.read_text().splitlines() if line)
 
 
 def get_new_log(unit: Unit) -> tuple[str, str | None]:
@@ -151,12 +151,12 @@ def check_build(unit: BuildUnit) -> Release | None:
 	release = None
 	# `cancel` means a newer push replaced the build.
 	if unit.status == BuildStatus.SUCCEEDED and not reply["cancel"]:
-		# Read before removing the build deletes its environment file.
-		release = Release.from_environment(read_environment(unit.environment_file))
+		release = Release.load(unit.deploy_request)
 	if unit.is_finished or reply["cancel"]:
 		remove_unit(unit)
 		# A failed or cancelled build leaves layers and maybe a tagged image. A built one is pruned after its release.
 		if not release:
+			payload_file(unit.deploy_request).unlink(missing_ok=True)
 			prune_images()
 	return release
 
@@ -168,6 +168,7 @@ def check_release(unit: ReleaseUnit) -> None:
 	save_cursor(unit, cursor)
 	if unit.is_finished:
 		remove_unit(unit)
+		payload_file(unit.deploy_request).unlink(missing_ok=True)
 		prune_images()
 
 
@@ -204,7 +205,9 @@ def prune_images() -> None:
 
 def start_build(build: Build) -> None:
 	"""Systemd runs the build, so it outlives this tick and a restart of the agent."""
-	write_environment(build.environment_file, build.environment)
+	write_secret_file(
+		build.environment_file, "".join(f"{key}={value}\n" for key, value in build.environment.items())
+	)
 	subprocess.run(
 		[
 			"systemd-run",
@@ -226,7 +229,6 @@ def start_build(build: Build) -> None:
 
 def start_release(release: Release) -> None:
 	"""Systemd runs the release in its own unit, so its result and log stay apart from the build's."""
-	write_environment(release.environment_file, release.environment)
 	subprocess.run(
 		[
 			"systemd-run",
@@ -235,7 +237,7 @@ def start_release(release: Release) -> None:
 			"--property=RemainAfterExit=yes",
 			f"--property=TimeoutStopSec={STOP_TIMEOUT_SECONDS}",
 			f"--setenv=PYTHONPATH={Path(__file__).parent.parent}",
-			f"--property=EnvironmentFile={release.environment_file}",
+			f"--setenv=DEPLOY_REQUEST={release.deploy_request}",
 			"/usr/bin/python3",
 			# Keeps the working directory off the import path.
 			"-P",
