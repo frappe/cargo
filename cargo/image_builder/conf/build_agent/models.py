@@ -1,6 +1,7 @@
+import json
 import re
 from base64 import b64encode
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
@@ -13,6 +14,9 @@ DEPLOY_REQUEST = re.compile(r"[0-9a-z]+(-[0-9a-z]+)*")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 HEALTH_PATH = re.compile(r"(/[A-Za-z0-9._~%/-]*)?")
+SECRET_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# The agent sets these for the app's slot, so an app's secret must not take their names.
+RESERVED_SECRET_NAMES = {"IMAGE", "PORT", "DEPLOY_REQUEST"}
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 60
 MAX_HEALTH_TIMEOUT_SECONDS = 600
 
@@ -20,6 +24,16 @@ MAX_HEALTH_TIMEOUT_SECONDS = 600
 def get_environment_file(unit: str) -> Path:
 	"""Root-only, named after its unit, so the agent finds it from the unit alone."""
 	return SECRETS_DIRECTORY / f"{unit.removesuffix('.service')}.env"
+
+
+def payload_file(deploy_request: str) -> Path:
+	"""Central's build payload, kept root-only until the deploy request's release finishes."""
+	return SECRETS_DIRECTORY / f"{deploy_request}.json"
+
+
+def pick(cls: type, payload: dict) -> dict:
+	"""The payload's fields that `cls` has; the rest belong to the other step."""
+	return {item.name: payload[item.name] for item in fields(cls) if item.name in payload}
 
 
 class BuildStatus(StrEnum):
@@ -46,6 +60,7 @@ class Release:
 	commit: str
 	health_path: str = ""
 	health_timeout: int = DEFAULT_HEALTH_TIMEOUT_SECONDS
+	secrets: dict[str, str] = field(default_factory=dict, repr=False)
 
 	def __post_init__(self):
 		if not DEPLOY_REQUEST.fullmatch(self.deploy_request):
@@ -56,55 +71,44 @@ class Release:
 			raise ValueError(f"Invalid health path {self.health_path!r}.")
 		if not 0 < self.health_timeout <= MAX_HEALTH_TIMEOUT_SECONDS:
 			raise ValueError(f"Invalid health timeout {self.health_timeout!r}.")
+		for name, value in self.secrets.items():
+			if not SECRET_NAME.fullmatch(name) or name in RESERVED_SECRET_NAMES:
+				raise ValueError(f"Invalid secret name {name!r}.")
+			# The slot file holds one secret per line.
+			if "\n" in value or "\r" in value:
+				raise ValueError(f"Secret {name} has a line break.")
 
 	@classmethod
-	def from_environment(cls, environment: dict[str, str]) -> "Release":
-		"""The release a build's environment describes."""
-		return cls(
-			environment["DEPLOY_REQUEST"],
-			environment["COMMIT"],
-			environment["HEALTH_PATH"],
-			int(environment["HEALTH_TIMEOUT"]),
-		)
+	def load(cls, deploy_request: str) -> "Release":
+		return cls(**pick(cls, json.loads(payload_file(deploy_request).read_text())))
 
 	@property
 	def unit(self) -> str:
 		return f"{RELEASE_UNIT_PREFIX}{self.deploy_request}.service"
 
-	@property
-	def environment_file(self) -> Path:
-		return get_environment_file(self.unit)
-
-	@property
-	def environment(self) -> dict[str, str]:
-		return {
-			"DEPLOY_REQUEST": self.deploy_request,
-			"COMMIT": self.commit,
-			"HEALTH_PATH": self.health_path,
-			"HEALTH_TIMEOUT": str(self.health_timeout),
-		}
-
 
 @dataclass(frozen=True)
 class Build:
-	"""What get_build hands the agent."""
+	"""What build.sh needs from get_build's payload."""
 
 	deploy_request: str
 	repository: str
 	commit: str
 	token: str = field(repr=False)
-	health_path: str = ""
-	health_timeout: int = DEFAULT_HEALTH_TIMEOUT_SECONDS
 
 	def __post_init__(self):
 		if not REPOSITORY.fullmatch(self.repository):
 			raise ValueError(f"Invalid repository {self.repository!r}.")
-		# Release checks the fields the two share.
-		self.release
+		if not DEPLOY_REQUEST.fullmatch(self.deploy_request):
+			raise ValueError(f"Invalid deploy request {self.deploy_request!r}.")
+		if not COMMIT.fullmatch(self.commit):
+			raise ValueError(f"Invalid commit {self.commit!r}.")
 
-	@property
-	def release(self) -> Release:
-		return Release(self.deploy_request, self.commit, self.health_path, self.health_timeout)
+	@classmethod
+	def from_payload(cls, payload: dict) -> "Build":
+		"""Checks the release's fields too, so a payload that cannot release fails before it builds."""
+		Release(**pick(Release, payload))
+		return cls(**pick(cls, payload))
 
 	@property
 	def unit(self) -> str:
@@ -119,7 +123,7 @@ class Build:
 		"""The token goes in an HTTP header, so it is never written to the clone's config or the log."""
 		basic = b64encode(f"x-access-token:{self.token}".encode()).decode()
 		return {
-			**self.release.environment,
+			"COMMIT": self.commit,
 			"REPOSITORY": self.repository,
 			"GIT_CONFIG_COUNT": "1",
 			"GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
