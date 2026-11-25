@@ -8,7 +8,8 @@ from typing import ClassVar
 SECRETS_DIRECTORY = Path("/run/deploy-agent")
 BUILD_UNIT_PREFIX = "deploy-build-"
 RELEASE_UNIT_PREFIX = "release-build-"
-DEPLOY_REQUEST = re.compile(r"[0-9a-z]+")
+# Central names a deploy request <app>-<6 characters of the commit>, and -1, -2 for a commit deployed again.
+DEPLOY_REQUEST = re.compile(r"[0-9a-z]+(-[0-9a-z]+)*")
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 HEALTH_PATH = re.compile(r"(/[A-Za-z0-9._~%/-]*)?")
