@@ -15,7 +15,7 @@ REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}")
 HEALTH_PATH = re.compile(r"(/[A-Za-z0-9._~%/-]*)?")
 SECRET_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# The slot file sets these for app@.service, so an app's secret must not replace them.
+# The agent sets these for the app's slot, so an app's secret must not take their names.
 RESERVED_SECRET_NAMES = {"IMAGE", "PORT", "DEPLOY_REQUEST"}
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 60
 MAX_HEALTH_TIMEOUT_SECONDS = 600

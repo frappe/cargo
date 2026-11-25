@@ -101,20 +101,18 @@ class UnitTestBuildAgentSecrets(UnitTestCase):
 			with self.subTest(secrets), self.assertRaises(ValueError):
 				Release("app-5b0e33", "a" * 40, secrets=secrets)
 
-	def test_the_slot_file_is_root_only_and_holds_the_secrets(self):
+	def test_the_secrets_get_a_root_only_file_systemd_never_reads(self):
 		directory = tempfile.TemporaryDirectory()
 		self.addCleanup(directory.cleanup)
 		with patch(f"{AGENT}.slots.SLOTS_DIRECTORY", Path(directory.name)):
-			slot_file = Path(directory.name) / "green.env"
-			slot_file.write_text("IMAGE=localhost/app:old\n")
-			slot_file.chmod(0o644)
+			slots.write_slot("green", "a" * 40, "app-5b0e33", {"TOKEN": "ends\\", "QUOTE": '"open'})
 
-			slots.write_slot("green", "a" * 40, "app-5b0e33", {"DATABASE_URL": "postgres://db"})
-
-		self.assertEqual(slot_file.stat().st_mode & 0o777, 0o600)
+		secrets_file = Path(directory.name) / "green.secrets.env"
+		self.assertEqual(secrets_file.stat().st_mode & 0o777, 0o600)
+		self.assertEqual(secrets_file.read_text(), 'TOKEN=ends\\\nQUOTE="open\n')
 		self.assertEqual(
-			slot_file.read_text(),
-			f"DATABASE_URL=postgres://db\nIMAGE=localhost/app:{'a' * 40}\nPORT=8002\nDEPLOY_REQUEST=app-5b0e33\n",
+			(Path(directory.name) / "green.env").read_text(),
+			f"IMAGE=localhost/app:{'a' * 40}\nPORT=8002\nDEPLOY_REQUEST=app-5b0e33\n",
 		)
 
 
