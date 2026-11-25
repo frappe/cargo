@@ -5,6 +5,7 @@ import time
 import urllib.error
 import urllib.request
 
+from .models import Release
 from .slots import PORTS, UPSTREAM_FILE, get_live_slot, switch_upstream, write_slot
 
 CHECK_INTERVAL_SECONDS = 2
@@ -68,9 +69,9 @@ def get_failure(slot: str, health_path: str, timeout: int) -> str | None:
 	return None
 
 
-def switch_to_slot(slot: str, commit: str, deploy_request: str) -> None:
+def switch_to_slot(slot: str, commit: str, deploy_request: str, secrets: dict[str, str]) -> None:
 	"""Start the commit's image in the slot; traffic stays on the live slot."""
-	write_slot(slot, commit, deploy_request)
+	write_slot(slot, commit, deploy_request, secrets)
 	systemctl("restart", f"app@{slot}")
 	print(f"Started app:{commit} in app@{slot} on port {PORTS[slot]}.", flush=True)
 
@@ -97,18 +98,15 @@ def rollback_upstream(live: str | None, slot: str) -> None:
 
 def main() -> None:
 	"""Start the commit in the idle slot, move traffic to it once it is fit, then stop the old slot."""
-	commit = os.environ["COMMIT"]
-	deploy_request = os.environ["DEPLOY_REQUEST"]
-	health_path = os.environ["HEALTH_PATH"]
-	timeout = int(os.environ["HEALTH_TIMEOUT"])
+	release = Release.load(os.environ["DEPLOY_REQUEST"])
 	live = get_live_slot()
 	idle = "green" if live == "blue" else "blue"
 
 	# Switch slot
-	switch_to_slot(idle, commit, deploy_request)
+	switch_to_slot(idle, release.commit, release.deploy_request, release.secrets)
 
 	# Observe failure and exit if required
-	observe_failure_and_exit(idle, health_path, timeout)
+	observe_failure_and_exit(idle, release.health_path, release.health_timeout)
 
 	systemctl("enable", f"app@{idle}")
 	switch_upstream(idle)
@@ -122,7 +120,7 @@ def main() -> None:
 	if live:
 		systemctl("disable", "--now", f"app@{live}")
 
-	print(f"app@{idle} serves app:{commit}.")
+	print(f"app@{idle} serves app:{release.commit}.")
 
 
 if __name__ == "__main__":

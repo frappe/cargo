@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 WORK_DIRECTORY = Path("/var/lib/deploy-agent")
@@ -30,12 +31,18 @@ def get_slot_value(slot: str, key: str) -> str | None:
 	return None
 
 
-def write_slot(slot: str, commit: str, deploy_request: str) -> None:
-	"""The image and port for app@<slot>, and the Deploy Request the agent reports the app's health on."""
+def write_slot(slot: str, commit: str, deploy_request: str, secrets: dict[str, str]) -> None:
+	"""The image and port for app@<slot> and the Deploy Request the agent reports the app's health on, which systemd
+	reads, and the app's secrets in a root-only file only podman reads. Podman takes each value as written; systemd
+	would join the line after a secret ending in a backslash or an open quote."""
 	SLOTS_DIRECTORY.mkdir(parents=True, exist_ok=True)
 	(SLOTS_DIRECTORY / f"{slot}.env").write_text(
 		f"IMAGE={IMAGE_PREFIX}{commit}\nPORT={PORTS[slot]}\nDEPLOY_REQUEST={deploy_request}\n"
 	)
+	with os.fdopen(
+		os.open(SLOTS_DIRECTORY / f"{slot}.secrets.env", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w"
+	) as file:
+		file.writelines(f"{key}={value}\n" for key, value in secrets.items())
 
 
 def switch_upstream(slot: str) -> None:
