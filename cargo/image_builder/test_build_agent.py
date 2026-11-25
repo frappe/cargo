@@ -1,15 +1,16 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from urllib.error import URLError
 
 from frappe.tests import UnitTestCase
 
 from cargo.image_builder.conf import build_agent
-from cargo.image_builder.conf.build_agent.models import Release, ReleaseUnit
+from cargo.image_builder.conf.build_agent.models import BuildUnit, Release, ReleaseUnit
 
 AGENT = "cargo.image_builder.conf.build_agent"
 
@@ -74,3 +75,62 @@ class UnitTestBuildAgentRelease(UnitTestCase):
 		for name in ("", "-app", "app-", "app--1", "app/1", "app.1", "App-1", "app 1"):
 			with self.subTest(name), self.assertRaises(ValueError):
 				Release(name, "a" * 40)
+
+
+class UnitTestBuildAgentImages(UnitTestCase):
+	"""The agent keeps the newest and the live app image, and prunes only once Central has the outcome."""
+
+	def setUp(self):
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		patch(f"{AGENT}.models.SECRETS_DIRECTORY", Path(directory.name)).start()
+		self.addCleanup(patch.stopall)
+
+	def test_old_app_images_are_removed_except_the_newest_and_the_live_one(self):
+		images = [
+			{"id": "live", "names": ["localhost/app:a"], "created": 1},
+			{"id": "newest", "names": ["localhost/app:c"], "created": 3},
+			{"id": "old", "names": ["localhost/app:b"], "created": 2},
+			{"id": "base", "names": ["docker.io/library/python:3"], "created": 4},
+			{"id": "dangling", "names": None, "created": 5},
+		]
+		run = patch(f"{AGENT}.subprocess.run", return_value=Mock(stdout=json.dumps(images))).start()
+		patch(f"{AGENT}.get_live_slot", return_value="blue").start()
+		patch(f"{AGENT}.get_slot_value", return_value="localhost/app:a").start()
+
+		build_agent.prune_images()
+		self.assertIn(call(["buildah", "rmi", "old"], check=True), run.call_args_list)
+
+	def test_a_failed_prune_never_loses_a_build_or_its_release_report(self):
+		patch(f"{AGENT}.subprocess.run").start()
+		patch(f"{AGENT}.get_new_log", return_value=("", None)).start()
+		report = patch(f"{AGENT}.call", return_value={"cancel": False}).start()
+		patch(f"{AGENT}.read_environment", return_value={}).start()
+		release = patch(f"{AGENT}.Release.from_environment").start().return_value
+		prune = patch(f"{AGENT}.prune_images", side_effect=ValueError("bad image list")).start()
+
+		self.assertEqual(
+			build_agent.check_build(BuildUnit("deploy-build-abc.service", "exited", "success")), release
+		)
+		prune.assert_not_called()
+
+		with self.assertRaises(ValueError):
+			build_agent.check_release(ReleaseUnit("release-build-abc.service", "exited", "success"))
+		self.assertEqual(report.call_args.args[0], "report_deployment_status")
+
+	def test_a_failed_or_cancelled_build_is_pruned_once_reported(self):
+		patch(f"{AGENT}.subprocess.run").start()
+		patch(f"{AGENT}.get_new_log", return_value=("", None)).start()
+		report = patch(f"{AGENT}.call").start()
+		prune = patch(f"{AGENT}.prune_images").start()
+
+		cases = (
+			(BuildUnit("deploy-build-abc.service", "failed", "exit-code"), {"cancel": False}),
+			(BuildUnit("deploy-build-abc.service", "exited", "success"), {"cancel": True}),
+		)
+		for unit, reply in cases:
+			with self.subTest(unit.status, cancel=reply["cancel"]):
+				prune.reset_mock()
+				report.return_value = reply
+				self.assertIsNone(build_agent.check_build(unit))
+				prune.assert_called_once()
