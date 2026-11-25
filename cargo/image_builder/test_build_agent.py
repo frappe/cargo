@@ -10,9 +10,19 @@ from urllib.error import URLError
 from frappe.tests import UnitTestCase
 
 from cargo.image_builder.conf import build_agent
-from cargo.image_builder.conf.build_agent.models import BuildUnit, Release, ReleaseUnit
+from cargo.image_builder.conf.build_agent import slots
+from cargo.image_builder.conf.build_agent.models import Build, BuildUnit, Release, ReleaseUnit, payload_file
 
 AGENT = "cargo.image_builder.conf.build_agent"
+PAYLOAD = {
+	"deploy_request": "app-5b0e33",
+	"repository": "octo/app",
+	"commit": "a" * 40,
+	"token": "token",
+	"health_path": "/health",
+	"health_timeout": 30,
+	"secrets": {"DATABASE_URL": "postgres://db"},
+}
 
 
 class UnitTestBuildAgentLogs(UnitTestCase):
@@ -77,6 +87,93 @@ class UnitTestBuildAgentRelease(UnitTestCase):
 				Release(name, "a" * 40)
 
 
+class UnitTestBuildAgentSecrets(UnitTestCase):
+	"""An app's secrets reach its container through the slot file, and never replace what the slot sets."""
+
+	def test_a_secret_that_could_break_or_replace_the_slot_file_is_refused(self):
+		for secrets in (
+			{"PORT": "1"},
+			{"IMAGE": "evil"},
+			{"1KEY": "v"},
+			{"A-B": "v"},
+			{"KEY": "a\nIMAGE=evil"},
+		):
+			with self.subTest(secrets), self.assertRaises(ValueError):
+				Release("app-5b0e33", "a" * 40, secrets=secrets)
+
+	def test_the_slot_file_is_root_only_and_holds_the_secrets(self):
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		with patch(f"{AGENT}.slots.SLOTS_DIRECTORY", Path(directory.name)):
+			slot_file = Path(directory.name) / "green.env"
+			slot_file.write_text("IMAGE=localhost/app:old\n")
+			slot_file.chmod(0o644)
+
+			slots.write_slot("green", "a" * 40, "app-5b0e33", {"DATABASE_URL": "postgres://db"})
+
+		self.assertEqual(slot_file.stat().st_mode & 0o777, 0o600)
+		self.assertEqual(
+			slot_file.read_text(),
+			f"DATABASE_URL=postgres://db\nIMAGE=localhost/app:{'a' * 40}\nPORT=8002\nDEPLOY_REQUEST=app-5b0e33\n",
+		)
+
+
+class UnitTestBuildAgentPayload(UnitTestCase):
+	"""Central's payload waits in one root-only file until its release finishes; each step takes its own fields."""
+
+	def setUp(self):
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		patch(f"{AGENT}.models.SECRETS_DIRECTORY", Path(directory.name)).start()
+		patch(f"{AGENT}.SECRETS_DIRECTORY", Path(directory.name)).start()
+		self.run_command = patch(f"{AGENT}.subprocess.run").start()
+		patch(f"{AGENT}.get_new_log", return_value=("", None)).start()
+		patch(f"{AGENT}.prune_images").start()
+		self.call = patch(f"{AGENT}.call").start()
+		self.addCleanup(patch.stopall)
+		self.file = payload_file("app-5b0e33")
+
+	def get_build(self) -> Build:
+		self.call.return_value = PAYLOAD
+		return build_agent.get_build()
+
+	def test_the_build_gets_its_fields_and_the_release_the_secrets(self):
+		build = self.get_build()
+
+		self.assertEqual(self.file.stat().st_mode & 0o777, 0o600)
+		self.assertEqual(Release.load("app-5b0e33").secrets, {"DATABASE_URL": "postgres://db"})
+		build_agent.start_build(build)
+		self.assertEqual(build.environment_file.stat().st_mode & 0o777, 0o600)
+		self.assertNotIn("token", " ".join(self.run_command.call_args.args[0]))
+		self.assertNotIn("postgres://db", build.environment_file.read_text())
+
+	def test_a_payload_that_cannot_release_is_failed_before_it_is_kept(self):
+		self.call.side_effect = [{**PAYLOAD, "health_timeout": 0}, None]
+		with self.assertRaises(ValueError):
+			build_agent.get_build()
+		self.assertEqual(self.call.call_args.args[0], "report_build")
+		self.assertFalse(self.file.exists())
+
+	def test_the_payload_outlives_a_built_image_until_its_release_finishes(self):
+		self.get_build()
+		self.call.return_value = {"cancel": False}
+
+		release = build_agent.check_build(BuildUnit("deploy-build-app-5b0e33.service", "exited", "success"))
+		build_agent.start_release(release)
+		self.assertIn("--setenv=DEPLOY_REQUEST=app-5b0e33", self.run_command.call_args.args[0])
+		self.assertTrue(self.file.exists())
+
+		build_agent.check_release(ReleaseUnit("release-build-app-5b0e33.service", "exited", "success"))
+		self.assertFalse(self.file.exists())
+
+	def test_a_failed_build_removes_its_payload(self):
+		self.get_build()
+		self.call.return_value = {"cancel": False}
+
+		build_agent.check_build(BuildUnit("deploy-build-app-5b0e33.service", "failed", "exit-code"))
+		self.assertFalse(self.file.exists())
+
+
 class UnitTestBuildAgentImages(UnitTestCase):
 	"""The agent keeps the newest and the live app image, and prunes only once Central has the outcome."""
 
@@ -105,8 +202,7 @@ class UnitTestBuildAgentImages(UnitTestCase):
 		patch(f"{AGENT}.subprocess.run").start()
 		patch(f"{AGENT}.get_new_log", return_value=("", None)).start()
 		report = patch(f"{AGENT}.call", return_value={"cancel": False}).start()
-		patch(f"{AGENT}.read_environment", return_value={}).start()
-		release = patch(f"{AGENT}.Release.from_environment").start().return_value
+		release = patch(f"{AGENT}.Release.load").start().return_value
 		prune = patch(f"{AGENT}.prune_images", side_effect=ValueError("bad image list")).start()
 
 		self.assertEqual(
