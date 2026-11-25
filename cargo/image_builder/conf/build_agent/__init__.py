@@ -165,6 +165,7 @@ def check_release(unit: ReleaseUnit) -> None:
 	save_cursor(unit, cursor)
 	if unit.is_finished:
 		remove_unit(unit)
+		prune_images()
 
 
 def remove_unit(unit: Unit) -> None:
@@ -174,7 +175,6 @@ def remove_unit(unit: Unit) -> None:
 	subprocess.run(["systemctl", "reset-failed", unit.name], capture_output=True)
 	unit.environment_file.unlink(missing_ok=True)
 	unit.cursor_file.unlink(missing_ok=True)
-	prune_images()
 
 
 def prune_images() -> None:
@@ -182,23 +182,19 @@ def prune_images() -> None:
 	live = get_live_slot()
 	in_use = {get_slot_value(live, "IMAGE")} if live else set()
 	output = subprocess.run(
-		[
-			"buildah",
-			"images",
-			"--noheading",
-			"--no-trunc",
-			"--format",
-			"{{.CreatedAtRaw}}\t{{.ID}}\t{{.Name}}:{{.Tag}}",
-		],
-		check=True,
-		capture_output=True,
-		text=True,
+		["buildah", "images", "--json"], check=True, capture_output=True, text=True
 	).stdout
-	# CreatedAtRaw sorts as text because the VM's clock is UTC; one image tagged twice is listed once.
+	# One image tagged twice is one entry with both names.
 	images = sorted(
-		{tuple(line.split("\t")) for line in output.splitlines() if "/app:" in line}, reverse=True
+		(
+			image
+			for image in json.loads(output or "[]")
+			if any("/app:" in name for name in image["names"] or [])
+		),
+		key=lambda image: image["created"],
+		reverse=True,
 	)
-	if old := [image_id for _created, image_id, name in images[KEPT_IMAGES:] if name not in in_use]:
+	if old := [image["id"] for image in images[KEPT_IMAGES:] if in_use.isdisjoint(image["names"])]:
 		subprocess.run(["buildah", "rmi", *old], check=True)
 	subprocess.run(["buildah", "rmi", "--prune"], check=True)
 
