@@ -16,6 +16,8 @@ ExecStartPre=-/usr/bin/podman rm --force --ignore app-%i
 # Only nginx on the VM reaches the app, through loopback; nothing the container opens is public.
 ExecStart=/usr/bin/podman run --rm --name app-%i --env PORT=${PORT} --publish 127.0.0.1:${PORT}:${PORT} ${IMAGE}
 ExecStop=/usr/bin/podman stop --time 30 app-%i
+# systemd can kill --rm's removal once the app exits; a leftover container pins its image against pruning.
+ExecStopPost=-/usr/bin/podman rm --force --ignore app-%i
 TimeoutStopSec=45
 # Every start is a fresh container from the image, so a crash or reboot loses writes outside mounts.
 Restart=always
