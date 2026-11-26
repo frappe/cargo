@@ -1,5 +1,6 @@
 # Copyright (c) 2026, Aradhya-Tripathi and contributors
 # For license information, please see license.txt
+import hashlib
 import shlex
 import shutil
 import tempfile
@@ -21,6 +22,7 @@ PROVISION_SCRIPT = Path(__file__).with_name("provision.sh")
 # Users to define via frappe_cloud_deploy.toml
 OS, OS_VERSION = "Ubuntu", "24.04"
 PACKAGES = ("rsync", "git", "podman", "buildah", "nginx", "nftables")
+IN_PROGRESS_STATUSES = ("Provisioning", "Building", "Snapshotting")
 # Where each agent file lives on the VM, relative to /.
 FILES = {
 	"usr/local/lib/deploy-agent/build_agent": AGENT_FOLDER,
@@ -48,6 +50,7 @@ class DeployImage(BuildMachineOwner, PipelineBuilder):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		agent_hash: DF.Data | None
 		build_log: DF.Code | None
 		built_at: DF.Datetime | None
 		commit: DF.Data | None
@@ -58,8 +61,9 @@ class DeployImage(BuildMachineOwner, PipelineBuilder):
 	# end: auto-generated types
 
 	def before_insert(self):
-		"""The Cargo commit whose agent the image carries."""
+		"""The Cargo commit and the agent files the image carries."""
 		self.commit = get_app_last_commit_ref("cargo")
+		self.agent_hash = get_agent_hash()
 
 	def after_insert(self):
 		self.request_build_machine()
@@ -143,3 +147,50 @@ class DeployImage(BuildMachineOwner, PipelineBuilder):
 
 	def run_on_build_machine(self, script: str, log: OutputLog, timeout: int = PROVISION_TIMEOUT) -> None:
 		self.build_machine.ssh_client.run(script, timeout_seconds=timeout, on_output=log.write)
+
+
+def get_agent_hash() -> str:
+	"""A hash of everything the image takes from Cargo: its packages, the agent files and provision.sh."""
+	parts = [shlex.join(PACKAGES), hashlib.sha256(PROVISION_SCRIPT.read_bytes()).hexdigest()]
+	for destination, source in sorted(FILES.items()):
+		files = sorted(source.rglob("*")) if source.is_dir() else [source]
+		for file in files:
+			if file.is_file() and "__pycache__" not in file.parts:
+				path = Path(destination) / file.relative_to(source) if source.is_dir() else Path(destination)
+				parts.append(f"{path} {hashlib.sha256(file.read_bytes()).hexdigest()}")
+	return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def create_new_deploy_images() -> str | None:
+	"""Retire the images a newer completed one replaces, then start an image when the agent files changed.
+	An image that fails is not tried again."""
+	retire_older_deploy_images()
+	agent_hash = get_agent_hash()
+	images = frappe.get_all("Deploy Image", fields=["status", "agent_hash"])
+
+	if any(image.status in IN_PROGRESS_STATUSES for image in images):
+		return None
+
+	if any(image.agent_hash == agent_hash for image in images):
+		return None
+
+	return frappe.get_doc({"doctype": "Deploy Image"}).insert().name
+
+
+def retire_older_deploy_images() -> list[str]:
+	"""Retire every completed image older than the newest one, so Central boots only the newest."""
+	older = frappe.get_all(
+		"Deploy Image", filters={"status": "Completed"}, order_by="creation desc", pluck="name"
+	)[1:]
+	retired = []
+	for name in older:
+		try:
+			frappe.get_doc("Deploy Image", name).retire()
+			# One image's retirement must not roll back another's, whose Atlas image is already gone.
+			frappe.db.commit()  # nosemgrep
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(title=f"Could not retire Deploy Image {name}")
+			continue
+		retired.append(name)
+	return retired

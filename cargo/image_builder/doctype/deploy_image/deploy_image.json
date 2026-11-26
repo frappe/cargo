@@ -7,6 +7,7 @@
  "field_order": [
   "status",
   "commit",
+  "agent_hash",
   "column_break_build",
   "machine",
   "snapshot_id",
@@ -30,6 +31,13 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Cargo Commit",
+   "read_only": 1
+  },
+  {
+   "description": "Of the packages, agent files and provision.sh. A new image is built when Cargo's differs.",
+   "fieldname": "agent_hash",
+   "fieldtype": "Data",
+   "label": "Agent Hash",
    "read_only": 1
   },
   {
@@ -85,7 +93,7 @@
    "link_fieldname": "linked_docname"
   }
  ],
- "modified": "2026-11-23 21:00:00.000000",
+ "modified": "2026-11-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Image Builder",
  "name": "Deploy Image",
