@@ -301,6 +301,7 @@ scheduler_events = {
 		"cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day.prune",
 		"cargo.image_builder.health.ship_metrics",
 		"cargo.telemetry.credential.renew_datum_token",
+		"cargo.image_builder.doctype.deploy_image.deploy_image.create_new_deploy_images",
 	],
 	"hourly_long": [
 		"cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry",
