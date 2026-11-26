@@ -1,11 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 import requests
 from frappe.tests import UnitTestCase
 from urllib3.exceptions import MaxRetryError, NewConnectionError, ProtocolError
 
-from cargo.object_storage.client import Client, Error
+from cargo.object_storage.client import Client, Error, NoGateway, Unreachable
 
 
 def client_for(*addresses: str) -> Client:
@@ -37,20 +38,48 @@ class UnitTestGatewayFailover(UnitTestCase):
 
 		self.assertIn("[fd00::2]", sent.call_args_list[1].args[1])
 
-	def test_every_gateway_down_raises(self):
+	def test_every_gateway_down_is_unreachable(self):
 		with (
 			patch("requests.request", side_effect=[refused("first"), refused("second")]),
-			self.assertRaises(Error),
+			self.assertRaises(Unreachable),
 		):
 			client_for("fd00::1", "fd00::2").status()
+
+	def test_no_gateway_is_a_validation_error_not_a_failed_call(self):
+		with patch("requests.request") as sent, self.assertRaises(NoGateway) as raised:
+			client_for().status()
+
+		sent.assert_not_called()
+		self.assertIsInstance(raised.exception, frappe.ValidationError)
+		self.assertNotIsInstance(raised.exception, Error)
+
+	def test_a_read_timeout_is_not_unreachable(self):
+		"""The gateway took the request, so the cluster was reached."""
+		with (
+			patch("requests.request", side_effect=requests.ReadTimeout("slow")),
+			self.assertRaises(Error) as raised,
+		):
+			client_for("fd00::1").status()
+
+		self.assertNotIsInstance(raised.exception, Unreachable)
+
+	def test_a_timeout_can_be_set_for_one_client(self):
+		cluster = SimpleNamespace(gateway_addresses=["fd00::1"], admin_port=3903, get_password=lambda _: "t")
+		answer = Mock(ok=True, status_code=200, content=b"{}", json=lambda: {})
+		with patch("requests.request", return_value=answer) as sent:
+			Client(cluster, timeout=5).status()
+			Client(cluster).status()
+
+		self.assertEqual([call.kwargs["timeout"] for call in sent.call_args_list], [5, 30])
 
 	def test_a_call_cut_off_after_it_was_sent_is_not_repeated(self):
 		"""CreateKey sent twice would make two keys."""
 		aborted = requests.ConnectionError(ProtocolError("Connection aborted."))
-		with patch("requests.request", side_effect=[aborted]) as sent, self.assertRaises(Error):
+		with patch("requests.request", side_effect=[aborted]) as sent, self.assertRaises(Error) as raised:
 			client_for("fd00::1", "fd00::2").create_key("k")
 
 		self.assertEqual(sent.call_count, 1)
+		self.assertNotIsInstance(raised.exception, Unreachable)
 
 
 class UnitTestBucketQuota(UnitTestCase):

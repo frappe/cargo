@@ -29,6 +29,7 @@ class CargoSettings(Document):
 		build_machine_disk_gb: DF.Int
 		build_machine_memory: DF.Int
 		cargo_url: DF.Data
+		central_report_secret: DF.Password | None
 		central_url: DF.Data
 		central_webhook_enabled: DF.Check
 		central_webhook_secret: DF.Password
@@ -39,12 +40,14 @@ class CargoSettings(Document):
 		is_letsencrypt_staging: DF.Check
 		jwks_url: DF.Data
 		last_repository_refresh: DF.Datetime | None
+		last_usage_sample_at: DF.Datetime | None
 		letsencrypt_account_key: DF.Password | None
 		letsencrypt_email: DF.Data | None
 		max_auto_retry_count: DF.Int
 		max_storage_node_disk: DF.Int
 		one_click_repository_branch: DF.Data | None
 		one_click_repository_url: DF.Data | None
+		pause_usage_report: DF.Check
 		region: DF.Data
 		region_id: DF.Int
 		signup_apps: DF.Table[SignupApp]
@@ -56,6 +59,7 @@ class CargoSettings(Document):
 		storage_node_spread_within: DF.Data | None
 		track_pilot_releases: DF.Check
 		update_pilot_in_base_image: DF.Check
+		usage_sample_minutes: DF.Int
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 

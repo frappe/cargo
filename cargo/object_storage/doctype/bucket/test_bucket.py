@@ -7,6 +7,7 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from cargo.object_storage.client import Client, Error
+from cargo.object_storage.doctype.bucket import bucket as bucket_module
 from cargo.object_storage.doctype.bucket.bucket import Bucket
 from cargo.patches import apply_bucket_cors_rules
 
@@ -33,6 +34,7 @@ class UnitTestBucket(UnitTestCase):
 		self.patch(Bucket, "garage", Client(frappe._dict(doctype="Object Storage Cluster", name="OSC-0001")))
 		self.saved = self.patch(Bucket, "save")
 		self.patch(Client, "status", return_value={"nodes": [{"garageVersion": "v2.3.0", "isUp": True}]})
+		self.recorded = self.patch(bucket_module, "record_peaks")
 
 	def patch(self, target, attribute, *args, **kwargs):
 		patcher = patch.object(target, attribute, *args, **kwargs)
@@ -205,7 +207,7 @@ class UnitTestBucket(UnitTestCase):
 		order = []
 		self.holds(OLD, OTHER)
 		_, delete_key, delete_bucket = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"side_effect": lambda access_key_id: order.append(access_key_id)},
 			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
 		)
@@ -217,11 +219,31 @@ class UnitTestBucket(UnitTestCase):
 		# The bucket first: a 409 must not leave it live with its keys already gone.
 		self.assertEqual(order, ["bucket", "GK-old", "GK-other"])
 
+	def test_a_bucket_is_sampled_before_garage_drops_it(self):
+		"""Its last day keeps a usage row, so the day still reaches Central."""
+		order = []
+		self.recorded.side_effect = lambda readings: order.extend(reading[1:] for reading in readings)
+		self.answers(
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 2048}},
+			delete_bucket={"side_effect": lambda bucket_id: order.append("bucket")},
+		)
+
+		self.bucket.on_trash()
+
+		self.assertEqual(order, [(BUCKET, 2048), "bucket"])
+
+	def test_a_bucket_already_gone_records_no_usage(self):
+		self.answers(bucket={"return_value": None})
+
+		self.bucket.on_trash()
+
+		self.recorded.assert_not_called()
+
 	def test_a_bucket_whose_delete_is_refused_keeps_its_keys(self):
 		"""Garage answers 409 while objects remain, so the bucket stays reachable."""
 		self.holds(OLD)
 		_, delete_key, _ = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error(f"DeleteBucket answered 409: {GARAGE_BUCKET_NOT_EMPTY}")},
 		)
@@ -234,7 +256,7 @@ class UnitTestBucket(UnitTestCase):
 	def test_a_delete_garage_fails_for_another_reason_is_relayed(self):
 		self.holds(OLD)
 		_, delete_key, _ = self.answers(
-			bucket={"return_value": {"id": BUCKET_ID}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0}},
 			delete_key={"return_value": None},
 			delete_bucket={"side_effect": Error("DeleteBucket answered 500: internal")},
 		)
@@ -454,7 +476,7 @@ class UnitTestBucket(UnitTestCase):
 		"""Garage arbitrates the name, not the key behind it, so Cargo serialises the rest."""
 		self.holds(OLD, OTHER)
 		self.answers(
-			bucket={"return_value": {"id": BUCKET_ID, "keys": [{}, {}]}},
+			bucket={"return_value": {"id": BUCKET_ID, "bytes": 0, "keys": [{}, {}]}},
 			create_key={"return_value": KEY},
 			allow_bucket_key={"return_value": {}},
 			delete_key={"return_value": None},

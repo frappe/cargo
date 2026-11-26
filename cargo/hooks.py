@@ -285,6 +285,7 @@ scheduler_events = {
 			"cargo.object_storage.health.refresh_health",
 			"cargo.telemetry.error_logs.publish_error_logs",
 			"cargo.telemetry.inventory.ship_machines",
+			"cargo.object_storage.usage.sample_usage",
 		],
 		"*/2 * * * *": [
 			"cargo.object_storage.health.live.increase_disk_size_if_required",
@@ -297,10 +298,14 @@ scheduler_events = {
 		"cargo.object_storage.health.prune_history",
 		"cargo.object_storage.metadata_snapshot.upload_metadata_snapshots",
 		"cargo.object_storage.telemetry.ship_metrics",
+		"cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day.prune",
 		"cargo.image_builder.health.ship_metrics",
 		"cargo.telemetry.credential.renew_datum_token",
 		"cargo.image_builder.doctype.deploy_image.deploy_image.create_new_deploy_images",
 	],
-	"hourly_long": ["cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry"],
+	"hourly_long": [
+		"cargo.image_builder.doctype.one_click_image.one_click_image.refresh_latest_registry",
+		"cargo.object_storage.usage_report.report_usage",
+	],
 	"daily_long": ["cargo.tls.doctype.service_certificate.service_certificate.renew_certificates"],
 }
