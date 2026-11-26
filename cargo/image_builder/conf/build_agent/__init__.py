@@ -182,7 +182,13 @@ def remove_unit(unit: Unit) -> None:
 
 
 def prune_images() -> None:
-	"""Keep the newest app image and the live one; remove the others, then the layers no image uses."""
+	"""Remove a killed build's working containers, then app images but the newest and the live one, then unused layers."""
+	containers = subprocess.run(
+		["buildah", "containers", "--all", "--json"], check=True, capture_output=True, text=True
+	).stdout
+	# A build killed mid-stage leaves its working containers, which pin their images; app slots are not builder ones.
+	if leftover := [container["id"] for container in json.loads(containers or "[]") if container["builder"]]:
+		subprocess.run(["buildah", "rm", *leftover], check=True)
 	live = get_live_slot()
 	in_use = {get_slot_value(live, "IMAGE")} if live else set()
 	output = subprocess.run(
