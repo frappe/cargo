@@ -126,10 +126,10 @@ class IntegrationTestDeployImageRebuild(IntegrationTestCase):
 
 	def test_a_change_to_a_file_the_image_takes_changes_the_hash(self):
 		before = get_agent_hash()
-		with tempfile.NamedTemporaryFile("w", suffix=".sh") as script:
-			script.write("changed\n")
-			script.flush()
-			with patch.object(deploy_image, "PROVISION_SCRIPT", Path(script.name)):
+		with tempfile.TemporaryDirectory() as directory:
+			script = Path(directory) / "provision.sh"
+			script.write_text("changed\n")
+			with patch.object(deploy_image, "PROVISION_SCRIPT", script):
 				self.assertNotEqual(get_agent_hash(), before)
 
 	def test_changed_agent_files_start_a_new_image(self):
