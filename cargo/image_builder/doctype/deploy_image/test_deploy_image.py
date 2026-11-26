@@ -150,6 +150,11 @@ class IntegrationTestDeployImageRebuild(IntegrationTestCase):
 		self.image("Failed", get_agent_hash())
 		self.assertIsNone(deploy_image.create_new_deploy_images())
 
+	def test_going_back_to_the_files_of_a_retired_image_starts_a_new_image(self):
+		self.image("Retired", get_agent_hash())
+		self.image("Completed")
+		self.assertIsNotNone(deploy_image.create_new_deploy_images())
+
 	def test_only_the_newest_completed_image_is_kept(self):
 		older = self.image("Completed")
 		newer = self.image("Completed")
