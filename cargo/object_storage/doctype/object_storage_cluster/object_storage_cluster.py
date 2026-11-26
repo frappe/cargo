@@ -178,17 +178,13 @@ class ObjectStorageCluster(PipelineBuilder):
 	def add_node(self, role: Role, cpu_millicores: int, ram_gb: int, disk_gb: int) -> Machine:
 		"""Ask Atlas for one machine and put it in this cluster. Throws, rolling the row back."""
 		spec = NodeSpec(role=role, cpu_millicores=cpu_millicores, ram_gb=ram_gb, disk_gb=disk_gb)
-		tags, placement_rules = None, None
-		if role == STORAGE:
-			tags, placement_rules = self.storage_node_tags, self.get_storage_node_placement_rules()
-
 		machine: Machine = MachineDoc.request(
 			self,
 			spec,
 			base_image=base_image_id(),
 			zone=self.region,
-			tags=tags,
-			placement_rules=placement_rules,
+			tags=self.get_node_tags(role),
+			placement_rules=self.get_node_placement_rules(role),
 			is_termination_protected=True,
 			has_public_ipv4=role == GATEWAY,
 			is_privileged=role == GATEWAY,
@@ -199,13 +195,12 @@ class ObjectStorageCluster(PipelineBuilder):
 
 		return machine
 
-	@property
-	def storage_node_tags(self) -> dict[str, str]:
-		"""The Atlas tags on each storage node of this cluster."""
-		return {"cargo-storage-cluster": self.name, "role": STORAGE}
+	def get_node_tags(self, role: Role) -> dict[str, str]:
+		"""The Atlas tags on each node of this role in this cluster."""
+		return {"cargo-storage-cluster": self.name, "role": role}
 
-	def get_storage_node_placement_rules(self) -> list[PlacementRule]:
-		"""Keep a new storage node away from the others of this cluster, as Cargo Settings asks."""
+	def get_node_placement_rules(self, role: Role) -> list[PlacementRule]:
+		"""Keep a new node away from the others of its role in this cluster, as Cargo Settings asks."""
 		settings: CargoSettings = frappe.get_cached_doc("Cargo Settings")
 		if settings.storage_node_spread == "Off":
 			return []
@@ -214,7 +209,7 @@ class ObjectStorageCluster(PipelineBuilder):
 			PlacementRule(
 				resource="virtual_machine",
 				operator="has_not",
-				tags=self.storage_node_tags,
+				tags=self.get_node_tags(role),
 				within=(settings.storage_node_spread_within or "").strip(),
 			)
 		]
