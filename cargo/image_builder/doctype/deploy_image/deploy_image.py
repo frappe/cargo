@@ -171,7 +171,7 @@ def create_new_deploy_images() -> str | None:
 	if any(image.status in IN_PROGRESS_STATUSES for image in images):
 		return None
 
-	if any(image.agent_hash == agent_hash for image in images):
+	if any(image.agent_hash == agent_hash and image.status != "Retired" for image in images):
 		return None
 
 	return frappe.get_doc({"doctype": "Deploy Image"}).insert().name
