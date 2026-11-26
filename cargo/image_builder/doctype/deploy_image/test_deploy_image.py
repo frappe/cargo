@@ -1,13 +1,16 @@
 # Copyright (c) 2026, Aradhya-Tripathi and Contributors
 # See license.txt
 
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import frappe
 from cloudtoolkit.pipeline.utils import called_methods_in_order
 from frappe.tests import IntegrationTestCase
 
-from cargo.image_builder.doctype.deploy_image.deploy_image import DeployImage
+from cargo.image_builder.doctype.deploy_image import deploy_image
+from cargo.image_builder.doctype.deploy_image.deploy_image import DeployImage, get_agent_hash
 from cargo.image_builder.doctype.pilot_image.builder import Builder, get_build_spec
 from cargo.testing import use_test_settings
 
@@ -98,3 +101,65 @@ class IntegrationTestDeployImage(IntegrationTestCase):
 		):
 			self.assertIn(path, copied)
 		self.assertFalse([path for path in copied if "__pycache__" in path])
+
+
+class IntegrationTestDeployImageRebuild(IntegrationTestCase):
+	"""Cargo builds a new image when the agent files change, and retires the images it replaces."""
+
+	def setUp(self):
+		frappe.set_user("Administrator")
+		frappe.db.savepoint("deploy_image_rebuild_test")
+		self.addCleanup(frappe.db.rollback, save_point="deploy_image_rebuild_test")
+		frappe.db.delete("Deploy Image")
+		patch.object(DeployImage, "after_insert").start()
+		patch(f"{CONTROLLER}.frappe.db.commit").start()
+		self.addCleanup(patch.stopall)
+
+	def image(self, status: str, agent_hash: str = "old") -> str:
+		image = frappe.get_doc({"doctype": "Deploy Image"}).insert()
+		image.db_set({"status": status, "agent_hash": agent_hash})
+		return image.name
+
+	def test_a_new_image_records_the_hash_of_the_files_it_takes(self):
+		image = frappe.get_doc({"doctype": "Deploy Image"}).insert()
+		self.assertEqual(image.agent_hash, get_agent_hash())
+
+	def test_a_change_to_a_file_the_image_takes_changes_the_hash(self):
+		before = get_agent_hash()
+		with tempfile.TemporaryDirectory() as directory:
+			script = Path(directory) / "provision.sh"
+			script.write_text("changed\n")
+			with patch.object(deploy_image, "PROVISION_SCRIPT", script):
+				self.assertNotEqual(get_agent_hash(), before)
+
+	def test_changed_agent_files_start_a_new_image(self):
+		self.image("Completed")
+		name = deploy_image.create_new_deploy_images()
+		self.assertEqual(frappe.db.get_value("Deploy Image", name, "agent_hash"), get_agent_hash())
+
+	def test_the_first_image_is_started_without_one_built_by_hand(self):
+		self.assertIsNotNone(deploy_image.create_new_deploy_images())
+
+	def test_no_image_is_started_while_one_is_building(self):
+		self.image("Completed")
+		self.image("Building")
+		self.assertIsNone(deploy_image.create_new_deploy_images())
+
+	def test_an_image_of_the_current_files_is_not_built_again_even_if_it_failed(self):
+		self.image("Completed")
+		self.image("Failed", get_agent_hash())
+		self.assertIsNone(deploy_image.create_new_deploy_images())
+
+	def test_going_back_to_the_files_of_a_retired_image_starts_a_new_image(self):
+		self.image("Retired", get_agent_hash())
+		self.image("Completed")
+		self.assertIsNotNone(deploy_image.create_new_deploy_images())
+
+	def test_only_the_newest_completed_image_is_kept(self):
+		older = self.image("Completed")
+		newer = self.image("Completed")
+		building = self.image("Building", get_agent_hash())
+
+		self.assertEqual(deploy_image.retire_older_deploy_images(), [older])
+		self.assertEqual(frappe.db.get_value("Deploy Image", newer, "status"), "Completed")
+		self.assertEqual(frappe.db.get_value("Deploy Image", building, "status"), "Building")
