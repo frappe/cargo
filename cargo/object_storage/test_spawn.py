@@ -226,7 +226,7 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 		rule = PlacementRule(resource="virtual_machine", operator="has_not", tags=tags)
 		placement = self.placement_by_role(client)
 		self.assertEqual(placement[STORAGE], [(tags, [rule])] * CONFIG["storage_node_count"])
-		self.assertEqual(placement[GATEWAY], [(None, None)])
+		self.assertEqual(placement[GATEWAY], [(None, [rule])])
 
 	def test_storage_nodes_spread_within_a_host_tag_key(self):
 		frappe.db.set_single_value("Cargo Settings", "storage_node_spread_within", "rack")
