@@ -4,7 +4,7 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 from urllib.error import URLError
 
 from frappe.tests import UnitTestCase
@@ -181,20 +181,44 @@ class UnitTestBuildAgentImages(UnitTestCase):
 		patch(f"{AGENT}.models.SECRETS_DIRECTORY", Path(directory.name)).start()
 		self.addCleanup(patch.stopall)
 
-	def test_old_app_images_are_removed_except_the_newest_and_the_live_one(self):
-		images = [
-			{"id": "live", "names": ["localhost/app:a"], "created": 1},
-			{"id": "newest", "names": ["localhost/app:c"], "created": 3},
-			{"id": "old", "names": ["localhost/app:b"], "created": 2},
-			{"id": "base", "names": ["docker.io/library/python:3"], "created": 4},
-			{"id": "dangling", "names": None, "created": 5},
-		]
-		run = patch(f"{AGENT}.subprocess.run", return_value=Mock(stdout=json.dumps(images))).start()
+	def prune(self, containers=(), images=()):
+		"""Runs the prune against buildah listing these containers and images, and returns the commands it ran."""
+		listings = {"containers": json.dumps(list(containers)), "images": json.dumps(list(images))}
+		run = patch(
+			f"{AGENT}.subprocess.run",
+			side_effect=lambda command, **_: Mock(stdout=listings.get(command[1], "")),
+		).start()
 		patch(f"{AGENT}.get_live_slot", return_value="blue").start()
 		patch(f"{AGENT}.get_slot_value", return_value="localhost/app:a").start()
-
 		build_agent.prune_images()
-		self.assertIn(call(["buildah", "rmi", "old"], check=True), run.call_args_list)
+		return [command for (command,), _ in run.call_args_list]
+
+	def test_old_app_images_are_removed_except_the_newest_and_the_live_one(self):
+		commands = self.prune(
+			images=[
+				{"id": "live", "names": ["localhost/app:a"], "created": 1},
+				{"id": "newest", "names": ["localhost/app:c"], "created": 3},
+				{"id": "old", "names": ["localhost/app:b"], "created": 2},
+				{"id": "base", "names": ["docker.io/library/python:3"], "created": 4},
+				{"id": "dangling", "names": None, "created": 5},
+			]
+		)
+		self.assertIn(["buildah", "rmi", "old"], commands)
+
+	def test_a_killed_builds_working_containers_are_removed_before_its_images(self):
+		commands = self.prune(
+			containers=[
+				{"id": "runtime-stage", "builder": True},
+				{"id": "test-stage", "builder": True},
+				{"id": "app-green", "builder": False},
+			]
+		)
+		removed = commands.index(["buildah", "rm", "runtime-stage", "test-stage"])
+		self.assertLess(removed, commands.index(["buildah", "rmi", "--prune"]))
+
+	def test_an_app_slot_container_is_never_removed(self):
+		commands = self.prune(containers=[{"id": "app-green", "builder": False}])
+		self.assertFalse([command for command in commands if command[:2] == ["buildah", "rm"]])
 
 	def test_a_failed_prune_never_loses_a_build_or_its_release_report(self):
 		patch(f"{AGENT}.subprocess.run").start()
