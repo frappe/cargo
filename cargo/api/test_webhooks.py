@@ -55,6 +55,25 @@ class UnitTestWebhookEnrolment(IntegrationTestCase):
 			SECRET,
 		)
 
+	def test_the_report_secret_is_stored_for_the_usage_report(self):
+		self.enrol(report_secret="report-secret")
+
+		self.assertEqual(
+			get_decrypted_password("Cargo Settings", "Cargo Settings", "central_report_secret"),
+			"report-secret",
+		)
+
+	def test_an_enrolment_without_a_report_secret_keeps_the_stored_one(self):
+		"""An older Central sends no report secret; the receiver is still stored."""
+		self.enrol(report_secret="report-secret")
+		self.enrol(webhook_secret="rotated")
+
+		self.assertEqual(frappe.get_doc("Cargo Settings").central_webhook_url, RECEIVER)
+		self.assertEqual(
+			get_decrypted_password("Cargo Settings", "Cargo Settings", "central_report_secret"),
+			"report-secret",
+		)
+
 	def test_a_delivery_built_after_enrolment_carries_the_receiver(self):
 		self.enrol()
 		self.telemetry_host()

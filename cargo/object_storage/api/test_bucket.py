@@ -170,6 +170,19 @@ class IntegrationTestBucketApi(IntegrationTestCase):
 			},
 		)
 
+	def test_usage_on_a_cluster_without_a_running_gateway_says_so(self):
+		with self.caller():
+			self.existing_bucket()
+
+		with (
+			patch("cargo.auth.authenticate_request", return_value=frappe._dict(aud="central-admin")),
+			self.assertRaises(frappe.ValidationError) as raised,
+		):
+			get_usage(name=BUCKET, region=self.region)
+
+		self.assertEqual(raised.exception.http_status_code, 417)
+		self.assertEqual(str(raised.exception), "This cluster has no running gateway to reach it at.")
+
 	def test_deleting_names_what_went(self):
 		with self.caller() as garage:
 			self.existing_bucket()

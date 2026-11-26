@@ -11,12 +11,15 @@ SETTINGS = "Cargo Settings"
 # nosemgrep: guest-whitelisted-method -- verify_token authenticates the caller below.
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @verify_token
-def configure(request_url: str, webhook_secret: str, enabled: bool = True) -> dict:
+def configure(
+	request_url: str, webhook_secret: str, enabled: bool = True, report_secret: str | None = None
+) -> dict:
 	"""Point every Cargo delivery at one Central receiver.
 
 	One receiver and one secret serve every service this region runs, so they live on
 	Cargo Settings rather than on any one host or cluster. Each delivery reads them when it
-	is built. A repeated call refreshes a rotated secret."""
+	is built. A repeated call refreshes a rotated secret. `report_secret` signs the usage
+	report; a call without it keeps the one stored."""
 	if not request_url or not webhook_secret:
 		frappe.throw(_("A receiver needs a URL and a secret."), frappe.ValidationError)
 
@@ -26,6 +29,8 @@ def configure(request_url: str, webhook_secret: str, enabled: bool = True) -> di
 	frappe.db.set_single_value(SETTINGS, "central_webhook_url", request_url)
 	frappe.db.set_single_value(SETTINGS, "central_webhook_enabled", int(enabled))
 	set_encrypted_password(SETTINGS, SETTINGS, webhook_secret, "central_webhook_secret")
+	if report_secret:
+		set_encrypted_password(SETTINGS, SETTINGS, report_secret, "central_report_secret")
 	frappe.clear_document_cache(SETTINGS, SETTINGS)
 
 	return {"request_url": request_url, "enabled": enabled}

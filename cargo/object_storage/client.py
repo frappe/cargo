@@ -4,7 +4,9 @@ import typing
 from functools import cached_property
 from typing import Any
 
+import frappe
 import requests
+from frappe import _
 from urllib3.exceptions import ConnectTimeoutError
 
 from cargo.atlas_client import host_port
@@ -23,22 +25,38 @@ class Error(RuntimeError):
 	that is how the pipeline engine carries an exception back to the flow that raised it."""
 
 
+class Unreachable(Error):
+	"""No gateway of the cluster could be connected to."""
+
+
+class NoGateway(frappe.ValidationError):
+	"""The cluster runs no gateway. Not an `Error`, so it reaches the user as a validation
+	error instead of being handled as a failed call."""
+
+
 class Client:
 	"""Garage's Admin API v2, for one cluster. Setting it up, judging its health and working
 	its buckets all subclass this. Object traffic goes to the S3 endpoint, not here."""
 
 	timeout: float = 30
 
-	def __init__(self, cluster: ObjectStorageCluster, address: str | None = None) -> None:
+	def __init__(
+		self, cluster: ObjectStorageCluster, address: str | None = None, timeout: float | None = None
+	) -> None:
 		"""`address` asks that one node instead of the gateways."""
 		self.cluster = cluster
 		self.address = address
+		if timeout:
+			self.timeout = timeout
 
 	@cached_property
 	def urls(self) -> list[str]:
 		"""Every node serves the same API, so any gateway answers for the cluster. Over the
 		mesh: the admin API is never put behind the public proxy."""
 		addresses = [self.address] if self.address else self.cluster.gateway_addresses
+		if not addresses:
+			frappe.throw(_("This cluster has no running gateway to reach it at."), NoGateway)
+
 		return [f"http://{host_port(address, self.cluster.admin_port)}" for address in addresses]
 
 	@cached_property
@@ -65,7 +83,7 @@ class Client:
 			except requests.RequestException as exception:
 				raise Error(f"{endpoint}: {exception}") from exception
 		else:
-			raise Error(f"{endpoint}: {error}") from error
+			raise Unreachable(f"{endpoint}: {error}") from error
 
 		if response.status_code == 404:
 			return None

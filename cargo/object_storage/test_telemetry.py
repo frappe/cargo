@@ -1,12 +1,20 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 from frappe.utils import now_datetime
 
+from cargo.object_storage.doctype.bucket_usage_day.bucket_usage_day import USAGE_DAY, record_peaks
 from cargo.object_storage.health import refresh_health
-from cargo.object_storage.telemetry import HEALTH, METADATA_BACKUP_AGE, get_samples, ship_metrics
+from cargo.object_storage.telemetry import (
+	HEALTH,
+	METADATA_BACKUP_AGE,
+	USAGE_OUTBOX_AGE,
+	USAGE_OUTBOX_DEPTH,
+	get_samples,
+	ship_metrics,
+)
 
 METRICS_INFO = {"endpoint": "https://datum.test/", "token": "datum-jwt"}
 
@@ -26,7 +34,9 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 		frappe.db.set_value("Object Storage Cluster", self.cluster, values, update_modified=False)
 
 	def age_of_cluster(self) -> float | None:
-		ages = [sample["value"] for sample in get_samples() if sample["labels"]["cluster"] == self.cluster]
+		ages = [
+			sample["value"] for sample in get_samples() if sample["labels"].get("cluster") == self.cluster
+		]
 		return ages[0] if ages else None
 
 	def test_the_age_counts_from_the_newest_backup(self):
@@ -74,3 +84,33 @@ class IntegrationTestObjectStorageTelemetry(IntegrationTestCase):
 			if sample["metric"] == HEALTH
 		}
 		self.assertEqual(samples[self.cluster], "Unknown")
+
+	def ship(self) -> MagicMock:
+		with (
+			patch("cargo.telemetry.datum.get_application_credential", return_value=METRICS_INFO),
+			patch("cargo.telemetry.datum.requests.post", return_value=MagicMock()) as post,
+		):
+			ship_metrics()
+		return post
+
+	def test_a_site_without_clusters_or_usage_does_not_call_datum(self):
+		frappe.db.delete("Object Storage Cluster")
+		frappe.db.delete(USAGE_DAY)
+
+		self.assertFalse(self.ship().called)
+
+	def test_the_outbox_is_reported_while_a_cluster_exists(self):
+		frappe.db.delete(USAGE_DAY)
+
+		metrics = [sample["metric"] for sample in self.ship().call_args.kwargs["json"]["samples"]]
+
+		self.assertEqual(metrics, [USAGE_OUTBOX_DEPTH, USAGE_OUTBOX_AGE])
+
+	def test_the_outbox_is_reported_while_it_holds_usage(self):
+		frappe.db.delete("Object Storage Cluster")
+		record_peaks([(datetime.now(UTC), "alpha", 1)])
+
+		samples = self.ship().call_args.kwargs["json"]["samples"]
+
+		self.assertEqual(samples[0]["metric"], USAGE_OUTBOX_DEPTH)
+		self.assertEqual(samples[0]["value"], 1)
