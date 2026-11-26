@@ -217,16 +217,16 @@ class IntegrationTestSpawnMachines(SpawnTestCase):
 
 		return placement
 
-	def test_storage_nodes_are_kept_on_separate_hosts(self):
+	def test_each_node_is_kept_away_from_others_of_its_role(self):
 		client = self.atlas()
 		with self.configured():
 			ensure_cluster()
 
-		tags = {"cargo-storage-cluster": self.auto_cluster().name, "role": STORAGE}
-		rule = PlacementRule(resource="virtual_machine", operator="has_not", tags=tags)
 		placement = self.placement_by_role(client)
-		self.assertEqual(placement[STORAGE], [(tags, [rule])] * CONFIG["storage_node_count"])
-		self.assertEqual(placement[GATEWAY], [(None, [rule])])
+		for role, count in ((STORAGE, CONFIG["storage_node_count"]), (GATEWAY, 1)):
+			tags = {"cargo-storage-cluster": self.auto_cluster().name, "role": role}
+			rule = PlacementRule(resource="virtual_machine", operator="has_not", tags=tags)
+			self.assertEqual(placement[role], [(tags, [rule])] * count)
 
 	def test_storage_nodes_spread_within_a_host_tag_key(self):
 		frappe.db.set_single_value("Cargo Settings", "storage_node_spread_within", "rack")
