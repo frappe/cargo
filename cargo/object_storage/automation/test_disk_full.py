@@ -15,7 +15,6 @@ from cargo.object_storage.automation.disk_full import (
 	predict_linear,
 )
 from cargo.object_storage.doctype.object_storage_cluster.object_storage_cluster import ObjectStorageCluster
-from cargo.object_storage.doctype.object_storage_cluster.setup import ConnectedNodes, Setup
 from cargo.object_storage.health.live import increase_disk_size_if_required
 from cargo.testing import use_test_settings
 
@@ -364,17 +363,10 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 		self,
 		samples: list[Sample],
 		grow_error: Exception | None = None,
-		unjoined: list[str] | None = None,
-		connected: ConnectedNodes | None = None,
 	):
-		if connected is None:
-			joined = {self.gateway, *self.storage} - set(unjoined or [])
-			connected = ConnectedNodes(peers=["gateway@[::1]:3901"], machines=joined)
-
 		with (
 			patch.object(GrowStorageNodeDisks, "get_samples", return_value=samples),
 			patch.object(GrowStorageNodeDisks, "grow", side_effect=grow_error) as grow,
-			patch.object(Setup, "get_connected_nodes", return_value=connected),
 			patch.object(ObjectStorageCluster, "setup") as setup,
 		):
 			increase_disk_size_if_required()
@@ -394,27 +386,12 @@ class IntegrationTestIncreaseDiskSizeIfRequired(GrowStorageDisksTestCase):
 	def test_a_booting_storage_node_is_waited_for(self):
 		frappe.db.set_value("Machine", self.storage[0], "status", "Pending")
 
-		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
+		grow = self.run_job([self.usage(used_gb=85)])
 
 		grow.assert_not_called()
-		self.setup.assert_not_called()
 
-	def test_an_unreadable_gateway_does_not_trigger_setup(self):
-		grow = self.run_job([self.usage(used_gb=85)], connected=ConnectedNodes(peers=[], machines=set()))
-
-		self.setup.assert_not_called()
-		grow.assert_not_called()
-
-	def test_a_booted_node_that_has_not_joined_is_set_up(self):
-		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
-
-		self.setup.assert_called_once()
-		grow.assert_not_called()
-
-	def test_a_stopped_node_does_not_trigger_setup(self):
-		frappe.db.set_value("Machine", self.storage[0], "status", "Stopped")
-
-		grow = self.run_job([self.usage(used_gb=85)], unjoined=[self.storage[0]])
+	def test_growing_never_sets_up_the_cluster(self):
+		grow = self.run_job([self.usage(used_gb=85)])
 
 		self.setup.assert_not_called()
 		grow.assert_called_once()
