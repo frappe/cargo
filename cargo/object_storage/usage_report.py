@@ -11,13 +11,14 @@ import requests
 from frappe.utils import now_datetime
 from frappe.utils.password import get_decrypted_password
 
-from cargo.object_storage.clock import as_utc
+from cargo.object_storage.clock import utc_text
 from cargo.object_storage.doctype.bucket_usage_day import bucket_usage_day as outbox
 from cargo.object_storage.usage import SETTINGS
 
 REPORT_PATH = "/api/method/central.billing.api.metering.report"
 SERVICE = "storage"
 METER = "bytes_stored"
+EVIDENCE_VERSION = 1
 BATCH_SIZE = 1000
 TIMEOUT_SECONDS = 30
 UNCONFIGURED_KEY = "cargo-bucket-usage-report-unconfigured"
@@ -78,14 +79,36 @@ def pending_batches() -> Iterator[list[frappe._dict]]:
 
 
 def report_body(rows: list[frappe._dict]) -> bytes:
-	"""The report as signed and sent: `as_of` is the newest sample in it, in UTC."""
-	as_of = max(as_utc(row.sampled_at) for row in rows)
-	lines = [
-		{"subject": row.bucket_name, "meter": METER, "day": str(row.day), "value": int(row.peak_bytes)}
-		for row in rows
-	]
-	report = {"as_of": as_of.strftime("%Y-%m-%dT%H:%M:%SZ"), "lines": lines}
+	"""The report as signed and sent: `as_of` is the newest sample in it, in UTC. UTC text
+	sorts as the moments do, so the newest is the largest."""
+	as_of = max(utc_text(row.sampled_at) for row in rows)
+	report = {"as_of": as_of, "lines": [report_line(row) for row in rows]}
 	return json.dumps(report, separators=(",", ":")).encode()
+
+
+def report_line(row: frappe._dict) -> dict:
+	line = {"subject": row.bucket_name, "meter": METER, "day": str(row.day), "value": int(row.peak_bytes)}
+	if evidence := day_evidence(row):
+		line["evidence"] = evidence
+	return line
+
+
+def day_evidence(row: frappe._dict) -> dict | None:
+	"""How the day's peak was read. A day first read before readings were kept has no first
+	reading, so it sends none rather than a partial account."""
+	if not row.readings or not row.first_at or not row.peak_at:
+		return None
+
+	return {
+		"v": EVIDENCE_VERSION,
+		"peak": int(row.peak_bytes),
+		"peak_at": utc_text(row.peak_at),
+		"readings": row.readings,
+		"first": int(row.first_bytes),
+		"first_at": utc_text(row.first_at),
+		"last": int(row.last_bytes),
+		"last_at": utc_text(row.sampled_at),
+	}
 
 
 def sign(secret: str, body: bytes) -> str:

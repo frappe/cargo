@@ -21,6 +21,11 @@ USAGE_COLUMNS = (
 	"bucket_name",
 	"day",
 	"peak_bytes",
+	"peak_at",
+	"readings",
+	"first_bytes",
+	"first_at",
+	"last_bytes",
 	"sampled_at",
 	"creation",
 	"modified",
@@ -29,6 +34,7 @@ USAGE_COLUMNS = (
 )
 
 Greatest = CustomFunction("GREATEST", ["first", "second"])
+If = CustomFunction("IF", ["condition", "then", "otherwise"])
 
 
 class BucketUsageDay(Document):
@@ -46,7 +52,12 @@ class BucketUsageDay(Document):
 		confirmed_at: DF.Datetime | None
 		confirmed_bytes: DF.LongInt
 		day: DF.Date
+		first_at: DF.Datetime | None
+		first_bytes: DF.LongInt
+		last_bytes: DF.LongInt
+		peak_at: DF.Datetime | None
 		peak_bytes: DF.LongInt
+		readings: DF.Int
 		reason: DF.SmallText | None
 		refused: DF.Check
 		sampled_at: DF.Datetime | None
@@ -64,25 +75,54 @@ def on_doctype_update():
 
 def record_peaks(readings: list[tuple[datetime, str, int]]) -> None:
 	"""Keep the highest of each bucket's (read_at, bucket, bytes) readings for the UTC day it was
-	read on, in one statement. The upsert meets an existing day on its name, `{day}-{bucket}`."""
+	read on, with when it was read, the day's first and last reading and how many there were, in
+	one statement. The upsert meets an existing day on its name, `{day}-{bucket}`."""
 	if not readings:
 		return
 
 	table = frappe.qb.DocType(USAGE_DAY)
 	rows = [usage_row(read_at, bucket, used_bytes) for read_at, bucket, used_bytes in readings]
+	# MariaDB runs these assignments left to right, each seeing the ones before it, so a column is
+	# compared before it is overwritten. A reading equal to the peak keeps the earlier peak time,
+	# whichever page commits first. A day read before peak times were kept has none to compare.
+	higher = Values(table.peak_bytes) > table.peak_bytes
+	earlier_tie = (Values(table.peak_bytes) == table.peak_bytes) & (Values(table.sampled_at) < table.peak_at)
+	newer = Values(table.sampled_at) >= table.sampled_at
 	(
 		frappe.qb.into(table)
 		.columns(*USAGE_COLUMNS)
 		.insert(*rows)
+		.on_duplicate_key_update(
+			table.peak_at,
+			If(higher | earlier_tie, Values(table.sampled_at), table.peak_at),
+		)
 		.on_duplicate_key_update(table.peak_bytes, Greatest(table.peak_bytes, Values(table.peak_bytes)))
+		.on_duplicate_key_update(table.last_bytes, If(newer, Values(table.last_bytes), table.last_bytes))
 		.on_duplicate_key_update(table.sampled_at, Greatest(table.sampled_at, Values(table.sampled_at)))
+		.on_duplicate_key_update(table.readings, table.readings + 1)
 		.on_duplicate_key_update(table.modified, Values(table.modified))
 	).run()
 
 
 def usage_row(read_at: datetime, bucket: str, used_bytes: int) -> tuple:
 	day, sampled_at = read_at.date(), site_time(read_at)
-	return (f"{day}-{bucket}", bucket, day, used_bytes, sampled_at, sampled_at, sampled_at, OWNER, OWNER)
+	values = {
+		"name": f"{day}-{bucket}",
+		"bucket_name": bucket,
+		"day": day,
+		"peak_bytes": used_bytes,
+		"peak_at": sampled_at,
+		"readings": 1,
+		"first_bytes": used_bytes,
+		"first_at": sampled_at,
+		"last_bytes": used_bytes,
+		"sampled_at": sampled_at,
+		"creation": sampled_at,
+		"modified": sampled_at,
+		"owner": OWNER,
+		"modified_by": OWNER,
+	}
+	return tuple(values[column] for column in USAGE_COLUMNS)
 
 
 def pending_filter():
@@ -98,7 +138,18 @@ def pending(after: str, limit: int) -> list[frappe._dict]:
 	table = frappe.qb.DocType(USAGE_DAY)
 	return (
 		frappe.qb.from_(table)
-		.select(table.name, table.bucket_name, table.day, table.peak_bytes, table.sampled_at)
+		.select(
+			table.name,
+			table.bucket_name,
+			table.day,
+			table.peak_bytes,
+			table.peak_at,
+			table.readings,
+			table.first_bytes,
+			table.first_at,
+			table.last_bytes,
+			table.sampled_at,
+		)
 		.where(pending_filter() & (table.name > after))
 		.orderby(table.name)
 		.limit(limit)

@@ -102,7 +102,10 @@ X-Central-Service: storage
 X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report secret>
 
 {"as_of": "2026-11-24T10:15:00Z",
- "lines": [{"subject": "acme-backups", "meter": "bytes_stored", "day": "2026-11-24", "value": 21474836480}]}
+ "lines": [{"subject": "acme-backups", "meter": "bytes_stored", "day": "2026-11-24", "value": 21474836480,
+            "evidence": {"v": 1, "peak": 21474836480, "peak_at": "2026-11-24T08:30:00Z", "readings": 42,
+                         "first": 21000000000, "first_at": "2026-11-24T00:00:00Z",
+                         "last": 21400000000, "last_at": "2026-11-24T10:15:00Z"}}]}
 ```
 
 | Field | What it is |
@@ -112,6 +115,12 @@ X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report 
 | `meter` | `bytes_stored` |
 | `day` | The UTC date |
 | `value` | The day's peak so far, in bytes |
+| `evidence` | How the peak was read: the peak and when it was first read, how many readings the day has, the first reading saved and the newest reading, with their times. Bytes are integers and times are UTC. A day first read before Cargo kept readings has no `evidence` |
+
+`evidence` describes the readings up to the call that carries it. A day is sent again only
+when its peak rises, so a confirmed day's `readings` and last reading stop at the last send.
+Central ignores line keys it does not know, so `evidence` is safe to send to a Central that
+does not read it. Cargo ignores answer keys it does not know, such as `underived`.
 
 A call carries at most 1,000 lines. Central answers `{"accepted": n, "rejected": [...]}`.
 A day is confirmed only when no rejection could mean it. A rejection is matched by its
