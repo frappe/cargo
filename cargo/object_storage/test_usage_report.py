@@ -125,7 +125,7 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 	def test_a_line_carries_how_its_peak_was_read(self):
 		self.sample({"alpha": 100}, SAMPLED.replace(hour=9))
 		self.sample({"alpha": 300}, SAMPLED.replace(hour=10))
-		self.sample({"alpha": 50})
+		self.sample({"alpha": 50}, SAMPLED.replace(hour=11))
 		central = Central()
 
 		self.report(central)
@@ -140,18 +140,24 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 				"first": 100,
 				"first_at": "2026-11-24T09:15:30Z",
 				"last": 50,
-				"last_at": "2026-11-24T10:15:30Z",
+				"last_at": "2026-11-24T11:15:30Z",
 			},
 		)
 
 	def test_evidence_times_are_utc_whatever_the_site_time_zone(self):
-		with patch("cargo.object_storage.clock.get_system_timezone", return_value="Asia/Kolkata"):
+		"""Chatham is UTC+13:45 in November, a zone no test site runs in."""
+		with patch("cargo.object_storage.clock.site_zone", return_value="Pacific/Chatham"):
 			self.sample({"alpha": 1})
 			central = Central()
 			self.report(central)
 
-		evidence = central.calls[0]["report"]["lines"][0]["evidence"]
+		stored = frappe.db.get_value(USAGE_DAY, {"bucket_name": "alpha"}, "peak_at")
+		self.assertEqual(stored, datetime(2026, 11, 25, 0, 0, 30))
+		report = central.calls[0]["report"]
+		self.assertEqual(report["as_of"], "2026-11-24T10:15:30Z")
+		evidence = report["lines"][0]["evidence"]
 		self.assertEqual(evidence["peak_at"], "2026-11-24T10:15:30Z")
+		self.assertEqual(evidence["first_at"], "2026-11-24T10:15:30Z")
 		self.assertEqual(evidence["last_at"], "2026-11-24T10:15:30Z")
 
 	def test_a_day_read_before_readings_were_kept_sends_no_evidence(self):
