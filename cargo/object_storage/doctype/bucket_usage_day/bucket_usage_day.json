@@ -73,14 +73,14 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "The day's oldest reading.",
+   "description": "The first reading saved for the day; a reading saved later stays out of it even if it was read earlier.",
    "fieldname": "first_bytes",
    "fieldtype": "Long Int",
    "label": "First Bytes",
    "read_only": 1
   },
   {
-   "description": "When the oldest reading was read.",
+   "description": "When the first saved reading was read.",
    "fieldname": "first_at",
    "fieldtype": "Datetime",
    "label": "First At",
@@ -150,7 +150,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-27 13:00:00.000000",
+ "modified": "2026-11-27 21:20:41.477010",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket Usage Day",

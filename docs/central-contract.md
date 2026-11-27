@@ -115,7 +115,7 @@ X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report 
 | `meter` | `bytes_stored` |
 | `day` | The UTC date |
 | `value` | The day's peak so far, in bytes |
-| `evidence` | How the peak was read: the peak and when it was first read, how many readings the day has, and the first and last reading with their times. Bytes are integers and times are UTC. A day first read before Cargo kept readings has no `evidence` |
+| `evidence` | How the peak was read: the peak and when it was first read, how many readings the day has, the first reading saved and the newest reading, with their times. Bytes are integers and times are UTC. A day first read before Cargo kept readings has no `evidence` |
 
 `evidence` describes the readings up to the call that carries it. A day is sent again only
 when its peak rises, so a confirmed day's `readings` and last reading stop at the last send.
