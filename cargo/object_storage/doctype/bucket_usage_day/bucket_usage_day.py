@@ -106,22 +106,23 @@ def record_peaks(readings: list[tuple[datetime, str, int]]) -> None:
 
 def usage_row(read_at: datetime, bucket: str, used_bytes: int) -> tuple:
 	day, sampled_at = read_at.date(), site_time(read_at)
-	return (
-		f"{day}-{bucket}",
-		bucket,
-		day,
-		used_bytes,
-		sampled_at,
-		1,
-		used_bytes,
-		sampled_at,
-		used_bytes,
-		sampled_at,
-		sampled_at,
-		sampled_at,
-		OWNER,
-		OWNER,
-	)
+	values = {
+		"name": f"{day}-{bucket}",
+		"bucket_name": bucket,
+		"day": day,
+		"peak_bytes": used_bytes,
+		"peak_at": sampled_at,
+		"readings": 1,
+		"first_bytes": used_bytes,
+		"first_at": sampled_at,
+		"last_bytes": used_bytes,
+		"sampled_at": sampled_at,
+		"creation": sampled_at,
+		"modified": sampled_at,
+		"owner": OWNER,
+		"modified_by": OWNER,
+	}
+	return tuple(values[column] for column in USAGE_COLUMNS)
 
 
 def pending_filter():
