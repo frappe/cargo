@@ -123,6 +123,20 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 
 		self.assertEqual(self.day("alpha").peak_at, site_time(NOON.replace(hour=9)))
 
+	def test_a_peak_read_twice_keeps_the_earlier_time_when_pages_commit_out_of_order(self):
+		for hour in (10, 9):
+			self.record_at(NOON.replace(hour=hour), {"alpha": 300})
+
+		self.assertEqual(self.day("alpha").peak_at, site_time(NOON.replace(hour=9)))
+
+	def test_a_peak_read_again_on_a_day_without_a_peak_time_keeps_none(self):
+		"""Days read before peak times were kept have nothing to compare a tie with."""
+		self.record_at(NOON.replace(hour=10), {"alpha": 300})
+		frappe.db.set_value(USAGE_DAY, {"bucket_name": "alpha"}, "peak_at", None)
+		self.record_at(NOON.replace(hour=9), {"alpha": 300})
+
+		self.assertIsNone(self.day("alpha").peak_at)
+
 	def test_a_day_counts_its_readings_and_keeps_the_first_and_last(self):
 		for hour, used_bytes in ((9, 100), (10, 300), (11, 50)):
 			self.record_at(NOON.replace(hour=hour), {"alpha": used_bytes})

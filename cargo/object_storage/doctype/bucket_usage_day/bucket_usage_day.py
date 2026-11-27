@@ -83,7 +83,10 @@ def record_peaks(readings: list[tuple[datetime, str, int]]) -> None:
 	table = frappe.qb.DocType(USAGE_DAY)
 	rows = [usage_row(read_at, bucket, used_bytes) for read_at, bucket, used_bytes in readings]
 	# MariaDB runs these assignments left to right, each seeing the ones before it, so a column is
-	# compared before it is overwritten. A reading equal to the peak keeps the earlier peak time.
+	# compared before it is overwritten. A reading equal to the peak keeps the earlier peak time,
+	# whichever page commits first. A day read before peak times were kept has none to compare.
+	higher = Values(table.peak_bytes) > table.peak_bytes
+	earlier_tie = (Values(table.peak_bytes) == table.peak_bytes) & (Values(table.sampled_at) < table.peak_at)
 	newer = Values(table.sampled_at) >= table.sampled_at
 	(
 		frappe.qb.into(table)
@@ -91,7 +94,7 @@ def record_peaks(readings: list[tuple[datetime, str, int]]) -> None:
 		.insert(*rows)
 		.on_duplicate_key_update(
 			table.peak_at,
-			If(Values(table.peak_bytes) > table.peak_bytes, Values(table.sampled_at), table.peak_at),
+			If(higher | earlier_tie, Values(table.sampled_at), table.peak_at),
 		)
 		.on_duplicate_key_update(table.peak_bytes, Greatest(table.peak_bytes, Values(table.peak_bytes)))
 		.on_duplicate_key_update(table.last_bytes, If(newer, Values(table.last_bytes), table.last_bytes))
