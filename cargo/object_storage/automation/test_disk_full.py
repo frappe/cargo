@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import frappe
+from cloudtoolkit.pipeline.doctype.pipeline.exceptions import PipelineWaitTimeoutError
+from cloudtoolkit.ssh.client import SSHConnectionError, SSHError, SSHResult
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from cargo.client_models import GATEWAY, STORAGE
@@ -329,6 +331,42 @@ class IntegrationTestGrowStorageDisksFlow(GrowStorageDisksTestCase):
 		self.assertEqual(ssh.call_count, 2)
 		self.assertIn(f"export DATA_DIR={self.cluster.data_dir}", ssh.call_args.args[0])
 		self.assertIn("resize2fs", ssh.call_args.args[0])
+
+	def test_a_node_that_refuses_ssh_is_waited_for(self):
+		cluster = self.cluster_doc()
+		with (
+			patch(
+				"cloudtoolkit.ssh.client.SSHClient.run",
+				side_effect=[SSHResult("", 0), SSHConnectionError("exited 255")],
+			),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+		):
+			cluster.grow_storage_filesystems()
+
+		defer.assert_called_once()
+		self.assertIn(self.storage[1], defer.call_args.args[0])
+
+	def test_a_node_unreachable_past_the_wait_fails_the_step(self):
+		started = frappe.utils.add_to_date(None, minutes=-16)
+		with (
+			patch("cloudtoolkit.ssh.client.SSHClient.run", side_effect=SSHConnectionError("exited 255")),
+			patch.object(ObjectStorageCluster, "step_started", started),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+			self.assertRaises(PipelineWaitTimeoutError),
+		):
+			self.cluster_doc().grow_storage_filesystems()
+
+		defer.assert_not_called()
+
+	def test_a_failed_resize_fails_the_step(self):
+		with (
+			patch("cloudtoolkit.ssh.client.SSHClient.run", side_effect=SSHError("exited 1")),
+			patch.object(ObjectStorageCluster, "defer_current_task") as defer,
+			self.assertRaises(SSHError),
+		):
+			self.cluster_doc().grow_storage_filesystems()
+
+		defer.assert_not_called()
 
 	def test_only_a_changed_capacity_is_staged_and_applied(self):
 		frappe.db.set_value("Machine", self.storage[0], "disk_size_gb", 150)
