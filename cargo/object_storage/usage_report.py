@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 from collections.abc import Iterator
+from datetime import datetime
 
 import frappe
 import requests
@@ -18,6 +19,7 @@ from cargo.object_storage.usage import SETTINGS
 REPORT_PATH = "/api/method/central.billing.api.metering.report"
 SERVICE = "storage"
 METER = "bytes_stored"
+EVIDENCE_VERSION = 1
 BATCH_SIZE = 1000
 TIMEOUT_SECONDS = 30
 UNCONFIGURED_KEY = "cargo-bucket-usage-report-unconfigured"
@@ -80,12 +82,37 @@ def pending_batches() -> Iterator[list[frappe._dict]]:
 def report_body(rows: list[frappe._dict]) -> bytes:
 	"""The report as signed and sent: `as_of` is the newest sample in it, in UTC."""
 	as_of = max(as_utc(row.sampled_at) for row in rows)
-	lines = [
-		{"subject": row.bucket_name, "meter": METER, "day": str(row.day), "value": int(row.peak_bytes)}
-		for row in rows
-	]
-	report = {"as_of": as_of.strftime("%Y-%m-%dT%H:%M:%SZ"), "lines": lines}
+	report = {"as_of": utc_text(as_of), "lines": [report_line(row) for row in rows]}
 	return json.dumps(report, separators=(",", ":")).encode()
+
+
+def report_line(row: frappe._dict) -> dict:
+	line = {"subject": row.bucket_name, "meter": METER, "day": str(row.day), "value": int(row.peak_bytes)}
+	if evidence := day_evidence(row):
+		line["evidence"] = evidence
+	return line
+
+
+def day_evidence(row: frappe._dict) -> dict | None:
+	"""How the day's peak was read. A day first read before readings were kept has no first
+	reading, so it sends none rather than a partial account."""
+	if not row.readings or not row.first_at or not row.peak_at:
+		return None
+
+	return {
+		"v": EVIDENCE_VERSION,
+		"peak": int(row.peak_bytes),
+		"peak_at": utc_text(as_utc(row.peak_at)),
+		"readings": row.readings,
+		"first": int(row.first_bytes),
+		"first_at": utc_text(as_utc(row.first_at)),
+		"last": int(row.last_bytes),
+		"last_at": utc_text(as_utc(row.sampled_at)),
+	}
+
+
+def utc_text(moment: datetime) -> str:
+	return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def sign(secret: str, body: bytes) -> str:

@@ -101,6 +101,55 @@ class IntegrationTestBucketUsage(IntegrationTestCase):
 		sampled_at = frappe.db.get_value(USAGE_DAY, {"bucket_name": "alpha"}, "sampled_at")
 		self.assertEqual(sampled_at, site_time(later))
 
+	def day(self, bucket: str) -> frappe._dict:
+		return frappe.db.get_value(
+			USAGE_DAY,
+			{"bucket_name": bucket},
+			["peak_bytes", "peak_at", "readings", "first_bytes", "first_at", "last_bytes", "sampled_at"],
+			as_dict=True,
+		)
+
+	def test_a_day_records_when_its_peak_was_read(self):
+		for hour, used_bytes in ((9, 100), (10, 300), (11, 50)):
+			self.record_at(NOON.replace(hour=hour), {"alpha": used_bytes})
+
+		day = self.day("alpha")
+		self.assertEqual(day.peak_bytes, 300)
+		self.assertEqual(day.peak_at, site_time(NOON.replace(hour=10)))
+
+	def test_a_reading_equal_to_the_peak_keeps_the_earlier_peak_time(self):
+		for hour in (9, 10):
+			self.record_at(NOON.replace(hour=hour), {"alpha": 300})
+
+		self.assertEqual(self.day("alpha").peak_at, site_time(NOON.replace(hour=9)))
+
+	def test_a_day_counts_its_readings_and_keeps_the_first_and_last(self):
+		for hour, used_bytes in ((9, 100), (10, 300), (11, 50)):
+			self.record_at(NOON.replace(hour=hour), {"alpha": used_bytes})
+
+		day = self.day("alpha")
+		self.assertEqual(day.readings, 3)
+		self.assertEqual((day.first_bytes, day.first_at), (100, site_time(NOON.replace(hour=9))))
+		self.assertEqual((day.last_bytes, day.sampled_at), (50, site_time(NOON.replace(hour=11))))
+
+	def test_a_reading_older_than_the_last_does_not_replace_it(self):
+		"""Two pages can commit out of order."""
+		self.record_at(NOON.replace(hour=11), {"alpha": 50})
+		self.record_at(NOON.replace(hour=10), {"alpha": 70})
+
+		day = self.day("alpha")
+		self.assertEqual((day.last_bytes, day.sampled_at), (50, site_time(NOON.replace(hour=11))))
+		self.assertEqual((day.peak_bytes, day.peak_at), (70, site_time(NOON.replace(hour=10))))
+		self.assertEqual(day.readings, 2)
+
+	def test_a_first_reading_is_the_peak_first_and_last(self):
+		self.record_at(NOON, {"alpha": 100})
+
+		day = self.day("alpha")
+		self.assertEqual(day.readings, 1)
+		self.assertEqual({day.peak_bytes, day.first_bytes, day.last_bytes}, {100})
+		self.assertEqual({day.peak_at, day.first_at, day.sampled_at}, {site_time(NOON)})
+
 	def test_a_bucket_that_cannot_be_read_does_not_stop_the_others(self):
 		def garage(alias):
 			if alias == "broken":

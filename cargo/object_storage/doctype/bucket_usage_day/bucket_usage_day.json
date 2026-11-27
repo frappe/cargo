@@ -9,6 +9,12 @@
   "bucket_name",
   "day",
   "peak_bytes",
+  "peak_at",
+  "readings",
+  "column_break_readings",
+  "first_bytes",
+  "first_at",
+  "last_bytes",
   "sampled_at",
   "column_break_report",
   "sent_at",
@@ -48,10 +54,48 @@
    "read_only": 1
   },
   {
+   "description": "When the peak was first read.",
+   "fieldname": "peak_at",
+   "fieldtype": "Datetime",
+   "label": "Peak At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many readings the day has. Zero on days read before readings were counted.",
+   "fieldname": "readings",
+   "fieldtype": "Int",
+   "label": "Readings",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_readings",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "first_bytes",
+   "fieldtype": "Long Int",
+   "label": "First Bytes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_at",
+   "fieldtype": "Datetime",
+   "label": "First At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_bytes",
+   "fieldtype": "Long Int",
+   "label": "Last Bytes",
+   "read_only": 1
+  },
+  {
    "fieldname": "sampled_at",
    "fieldtype": "Datetime",
    "label": "Sampled At",
-   "read_only": 1
+   "read_only": 1,
+   "description": "When the day was last read."
   },
   {
    "fieldname": "column_break_report",
@@ -103,7 +147,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-24 20:05:00.000000",
+ "modified": "2026-11-27 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket Usage Day",

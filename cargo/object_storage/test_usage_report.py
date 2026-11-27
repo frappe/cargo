@@ -101,9 +101,91 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 			call["report"],
 			{
 				"as_of": "2026-11-24T10:15:30Z",
-				"lines": [{"subject": "alpha", "meter": "bytes_stored", "day": "2026-11-24", "value": 2048}],
+				"lines": [
+					{
+						"subject": "alpha",
+						"meter": "bytes_stored",
+						"day": "2026-11-24",
+						"value": 2048,
+						"evidence": {
+							"v": 1,
+							"peak": 2048,
+							"peak_at": "2026-11-24T10:15:30Z",
+							"readings": 1,
+							"first": 2048,
+							"first_at": "2026-11-24T10:15:30Z",
+							"last": 2048,
+							"last_at": "2026-11-24T10:15:30Z",
+						},
+					}
+				],
 			},
 		)
+
+	def test_a_line_carries_how_its_peak_was_read(self):
+		self.sample({"alpha": 100}, SAMPLED.replace(hour=9))
+		self.sample({"alpha": 300}, SAMPLED.replace(hour=10))
+		self.sample({"alpha": 50})
+		central = Central()
+
+		self.report(central)
+
+		self.assertEqual(
+			central.calls[0]["report"]["lines"][0]["evidence"],
+			{
+				"v": 1,
+				"peak": 300,
+				"peak_at": "2026-11-24T10:15:30Z",
+				"readings": 3,
+				"first": 100,
+				"first_at": "2026-11-24T09:15:30Z",
+				"last": 50,
+				"last_at": "2026-11-24T10:15:30Z",
+			},
+		)
+
+	def test_evidence_times_are_utc_whatever_the_site_time_zone(self):
+		with patch("cargo.object_storage.clock.get_system_timezone", return_value="Asia/Kolkata"):
+			self.sample({"alpha": 1})
+			central = Central()
+			self.report(central)
+
+		evidence = central.calls[0]["report"]["lines"][0]["evidence"]
+		self.assertEqual(evidence["peak_at"], "2026-11-24T10:15:30Z")
+		self.assertEqual(evidence["last_at"], "2026-11-24T10:15:30Z")
+
+	def test_a_day_read_before_readings_were_kept_sends_no_evidence(self):
+		self.sample({"alpha": 2048})
+		frappe.db.set_value(
+			USAGE_DAY,
+			{"bucket_name": "alpha"},
+			{"readings": 0, "peak_at": None, "first_at": None, "first_bytes": 0, "last_bytes": 0},
+		)
+		central = Central()
+
+		self.report(central)
+
+		self.assertNotIn("evidence", central.calls[0]["report"]["lines"][0])
+
+	def test_a_day_first_read_before_readings_were_kept_sends_no_evidence(self):
+		"""Read again after the deploy, it counts readings but has no first reading."""
+		self.sample({"alpha": 2048})
+		frappe.db.set_value(
+			USAGE_DAY, {"bucket_name": "alpha"}, {"readings": 0, "peak_at": None, "first_at": None}
+		)
+		self.sample({"alpha": 1024}, SAMPLED.replace(hour=11))
+		central = Central()
+
+		self.report(central)
+
+		self.assertNotIn("evidence", central.calls[0]["report"]["lines"][0])
+
+	def test_an_answer_with_keys_cargo_does_not_know_is_still_a_verdict(self):
+		self.sample({"alpha": 1})
+
+		self.report(lambda *args, **kwargs: reply(message={"accepted": 1, "rejected": [], "underived": 0}))
+
+		self.assertIsNotNone(self.day("alpha").confirmed_at)
 
 	def test_as_of_is_the_newest_sample_in_the_batch(self):
 		self.sample({"alpha": 1}, SAMPLED.replace(day=23))
