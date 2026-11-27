@@ -10,19 +10,15 @@ def utc_now() -> datetime:
 	return datetime.now(UTC)
 
 
-def site_zone() -> str:
-	return get_system_timezone()
-
-
 def site_time(moment: datetime) -> datetime:
 	"""A UTC moment as the naive site time Frappe stores in a Datetime."""
-	return convert_utc_to_timezone(moment, site_zone()).replace(tzinfo=None)
+	return convert_utc_to_timezone(moment, get_system_timezone()).replace(tzinfo=None)
 
 
 def as_utc(value: datetime | str) -> datetime:
 	"""A stored site time as a UTC moment. An hour a clock change repeats reads as its earlier
 	occurrence."""
-	return get_datetime(value).replace(tzinfo=ZoneInfo(site_zone())).astimezone(UTC)
+	return get_datetime(value).replace(tzinfo=ZoneInfo(get_system_timezone())).astimezone(UTC)
 
 
 def utc_text(value: datetime | str) -> str:

@@ -146,7 +146,7 @@ class IntegrationTestBucketUsageReport(IntegrationTestCase):
 
 	def test_evidence_times_are_utc_whatever_the_site_time_zone(self):
 		"""Chatham is UTC+13:45 in November, a zone no test site runs in."""
-		with patch("cargo.object_storage.clock.site_zone", return_value="Pacific/Chatham"):
+		with patch("cargo.object_storage.clock.get_system_timezone", return_value="Pacific/Chatham"):
 			self.sample({"alpha": 1})
 			central = Central()
 			self.report(central)
