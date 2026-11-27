@@ -62,7 +62,7 @@
   },
   {
    "default": "0",
-   "description": "How many readings the day has. Zero on days read before readings were counted.",
+   "description": "How many readings the day has since readings were counted.",
    "fieldname": "readings",
    "fieldtype": "Int",
    "label": "Readings",
@@ -73,29 +73,32 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "The day's oldest reading.",
    "fieldname": "first_bytes",
    "fieldtype": "Long Int",
    "label": "First Bytes",
    "read_only": 1
   },
   {
+   "description": "When the oldest reading was read.",
    "fieldname": "first_at",
    "fieldtype": "Datetime",
    "label": "First At",
    "read_only": 1
   },
   {
+   "description": "The newest reading; its time is Sampled At.",
    "fieldname": "last_bytes",
    "fieldtype": "Long Int",
    "label": "Last Bytes",
    "read_only": 1
   },
   {
+   "description": "When the day was last read.",
    "fieldname": "sampled_at",
    "fieldtype": "Datetime",
    "label": "Sampled At",
-   "read_only": 1,
-   "description": "When the day was last read."
+   "read_only": 1
   },
   {
    "fieldname": "column_break_report",
@@ -147,7 +150,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-27 12:00:00.000000",
+ "modified": "2026-11-27 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Object Storage",
  "name": "Bucket Usage Day",

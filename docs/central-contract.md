@@ -119,9 +119,8 @@ X-Central-Signature: <base64 HMAC-SHA256 of the raw body, keyed with the report 
 
 `evidence` describes the readings up to the call that carries it. A day is sent again only
 when its peak rises, so a confirmed day's `readings` and last reading stop at the last send.
-Central ignores keys it does not know, on a line and in its answer, so `evidence` is safe to
-send to a Central that does not read it, and Cargo ignores answer keys it does not know, such
-as `underived`.
+Central ignores line keys it does not know, so `evidence` is safe to send to a Central that
+does not read it. Cargo ignores answer keys it does not know, such as `underived`.
 
 A call carries at most 1,000 lines. Central answers `{"accepted": n, "rejected": [...]}`.
 A day is confirmed only when no rejection could mean it. A rejection is matched by its
