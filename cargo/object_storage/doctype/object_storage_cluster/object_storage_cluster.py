@@ -9,7 +9,7 @@ from functools import cached_property
 import frappe
 from cloudtoolkit.pipeline.doctype.pipeline.decorators import flow, task
 from cloudtoolkit.pipeline.doctype.pipeline.pipeline_builder import PipelineBuilder
-from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS
+from cloudtoolkit.ssh.client import DEFAULT_TIMEOUT_SECONDS, SSHConnectionError
 from cloudtoolkit.ssh.output_log import OutputLog
 from frappe import _
 from frappe.utils import now_datetime
@@ -43,6 +43,7 @@ MACHINE_STEP_TIMEOUT = 3 * DEFAULT_TIMEOUT_SECONDS
 # Fetches run one machine after another: a gateway and up to four storage nodes.
 FETCH_STEP_TIMEOUT = 5 * BACKUP_SSH_TIMEOUT
 MIN_SCRAPE_SECONDS = 60
+UNREACHABLE_NODE_WAIT_SECONDS = 15 * 60
 
 if typing.TYPE_CHECKING:
 	from cargo.cargo.doctype.machine.machine import Machine
@@ -599,10 +600,23 @@ class ObjectStorageCluster(PipelineBuilder):
 
 	@task(queue="long", timeout=MACHINE_STEP_TIMEOUT)
 	def grow_storage_filesystems(self) -> None:
+		"""Atlas has grown the disks already, so a node still booting is waited for, not failed.
+		Growing again is a no-op, so every node is retried."""
 		garage = self.garage_setup
+		unreachable = []
 		for machine in garage.machines:
-			if machine["role"] == STORAGE:
+			if machine["role"] != STORAGE:
+				continue
+			try:
 				garage.grow_filesystem(machine)
+			except SSHConnectionError:
+				unreachable.append(machine["name"])
+
+		if unreachable:
+			self.wait(
+				_("Waiting for {0} to accept SSH to grow their filesystems.").format(", ".join(unreachable)),
+				for_=UNREACHABLE_NODE_WAIT_SECONDS,
+			)
 
 	@task(queue="short")
 	def apply_storage_capacities(self) -> None:
