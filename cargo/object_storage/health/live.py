@@ -246,18 +246,7 @@ def increase_disk_size_if_required():
 	if get_running_pipeline(cluster):
 		return
 
-	# A booting node joins here on a later run.
 	if any(node.status == "Pending" for node in cluster.storage_nodes):
-		return
-
-	# A failed read reports no peers, not even the gateway: never take that as nodes to set up.
-	connected = cluster.garage_setup.get_connected_nodes()
-	if not connected.peers:
-		return
-
-	running = {node.name for node in cluster.all_nodes if node.status == "Running"}
-	if running - connected.machines:
-		cluster.setup()
 		return
 
 	cluster_settings: ObjectStorageHealthSettings = frappe.get_cached_doc("Object Storage Health Settings")
